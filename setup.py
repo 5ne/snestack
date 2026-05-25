@@ -20,7 +20,7 @@ setup(
         "pydantic>=2.0,<3.0",
         "python-dotenv>=1.0,<2.0",
         "anthropic>=0.25,<1.0",
-        "finnhub-python>=1.2,<2.0",
+        "finnhub-python>=2.0,<3.0",
         "requests>=2.31,<3.0",
         "google-auth-oauthlib>=1.0,<2.0",
         "google-auth-httplib2>=0.2,<1.0",

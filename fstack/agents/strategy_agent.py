@@ -53,11 +53,11 @@ class StrategyAgent(BaseAgent):
                     date=datetime.now(),
                 )
 
-            # Extract indicators
-            rsi = quote.get("rsi")
-            ma_50 = quote.get("ma_50")
-            ma_200 = quote.get("ma_200")
-            close = quote.get("close")
+            # Extract indicators (quote is sqlite3.Row)
+            rsi = quote["rsi"] if quote["rsi"] is not None else None
+            ma_50 = quote["ma_50"] if quote["ma_50"] is not None else None
+            ma_200 = quote["ma_200"] if quote["ma_200"] is not None else None
+            close = quote["close"]
 
             signals = []
             weights = []
@@ -77,7 +77,7 @@ class StrategyAgent(BaseAgent):
                     weights.append(ma_weight)
 
             # Volume signal (if available)
-            volume = quote.get("volume")
+            volume = quote["volume"] if quote["volume"] is not None else None
             if volume:
                 vol_signal, vol_weight = self._volume_signal(ticker, volume)
                 if vol_signal:
