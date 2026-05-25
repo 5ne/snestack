@@ -105,6 +105,19 @@ def main():
 
     watch_list = watchlist_subparsers.add_parser("list", help="List watchlist")
 
+    # Scheduler commands
+    scheduler_parser = subparsers.add_parser("scheduler", help="Manage cron scheduling")
+    scheduler_parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="Interactive cron setup",
+    )
+    scheduler_parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List installed crontab",
+    )
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -125,6 +138,8 @@ def main():
         return cmd_position(args)
     elif args.command == "watchlist":
         return cmd_watchlist(args)
+    elif args.command == "scheduler":
+        return cmd_scheduler(args)
     else:
         parser.print_help()
         return 1
@@ -341,6 +356,25 @@ def cmd_watchlist(args) -> int:
 
     except Exception as e:
         logger.error(f"Watchlist command failed: {e}")
+        return 1
+
+
+def cmd_scheduler(args) -> int:
+    """Scheduler/cron management command."""
+    from fstack.scheduler import setup_cron_interactive, list_cron_jobs
+
+    try:
+        if args.setup:
+            success = setup_cron_interactive()
+            return 0 if success else 1
+        elif args.list:
+            success = list_cron_jobs()
+            return 0 if success else 1
+        else:
+            print("scheduler: --setup or --list required")
+            return 1
+    except Exception as e:
+        logger.error(f"Scheduler command failed: {e}")
         return 1
 
 

@@ -24,6 +24,15 @@ from fstack.core.errors import (
     EmailServiceError,
     DatabaseError,
 )
+from fstack.core.logger import (
+    setup_logging,
+    log_analysis_start,
+    log_analysis_result,
+    log_batch_start,
+    log_batch_complete,
+    log_email_sent,
+    log_email_failed,
+)
 
 __all__ = [
     "Database",
@@ -46,4 +55,11 @@ __all__ = [
     "EquityServiceError",
     "EmailServiceError",
     "DatabaseError",
+    "setup_logging",
+    "log_analysis_start",
+    "log_analysis_result",
+    "log_batch_start",
+    "log_batch_complete",
+    "log_email_sent",
+    "log_email_failed",
 ]
