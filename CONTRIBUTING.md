@@ -33,7 +33,7 @@ pre-commit install
 
 Reports are stored in `fstack/reports/` and synced via Git LFS across all machines.
 
-**To add a report:**
+**To add a report (manual, until Selenium automation is complete):**
 1. Log into Schwab → Research
 2. Search for ticker (e.g., "MU")
 3. Download Morningstar PDF to `fstack/reports/{TICKER}-morningstar.pdf`
@@ -43,6 +43,13 @@ Reports are stored in `fstack/reports/` and synced via Git LFS across all machin
    git commit -m "data: add MU Morningstar report"
    git push
    ```
+
+**Automated download (in development):**
+Once Selenium automation is complete, reports will be downloaded automatically:
+```bash
+python -m fstack download-reports MU NVDA GOOG
+```
+This will use Selenium to automate the Schwab research download workflow.
 
 **To pull reports on another machine:**
 ```bash
