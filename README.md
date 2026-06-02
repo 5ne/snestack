@@ -1,26 +1,45 @@
 # fstack — Personal Investment Decision-Support System
 
-A system that analyzes your investment portfolio and watchlist using Claude, providing proactive buy/sell/hold recommendations based on multiple signals: technical analysis, fundamental metrics, and sentiment synthesis.
+An AI-powered system that synthesizes technical, fundamental, and qualitative signals to generate investment recommendations for your portfolio and watchlist. Powered by Claude API, Finnhub, and Morningstar research.
 
-**Note: Early Alpha. Use at your own risk.**
+**Note: Early Alpha. Use at your own risk. Always conduct independent due diligence.**
 
 ## Features
 
-- **Multi-agent analysis**: Quotes (OHLCV), Strategy (RSI/MA), Equity (fundamentals), CFO (Claude synthesis)
-- **Batched Claude calls**: One API call analyzes all 20+ tickers (cost-optimized ~$0.02/run)
+- **Multi-agent analysis**: 
+  - **QuoteAgent**: Real-time OHLCV + technical indicators (RSI, moving averages)
+  - **StrategyAgent**: Rules-based technical signals (oversold/overbought, crossovers, volume)
+  - **EquityAgent**: Fundamental metrics from Morningstar (P/E, debt/equity, FCF, growth, red flags)
+  - **CFOAgent**: Claude synthesizes all signals into unified BUY/SELL/HOLD recommendations
+  
+- **Morningstar integration**: Download research PDFs from Schwab, extract fair value estimates and qualitative insights
+- **Batched Claude calls**: Analyze 20+ tickers in one API call (~$0.02/run)
+- **Cross-machine sync**: Git LFS syncs Morningstar reports across all your development machines
 - **Proactive notifications**: Daily batch analysis via cron, email or SMS
-- **Interactive mode**: Single-ticker analysis on-demand via CLI
-- **Private + public companies**: Support for both ticker symbols and private investments
-- **Graceful degradation**: One failed ticker doesn't block the rest
-- **SQLite backend**: Positions, watchlist, quotes, signals all in one place
+- **Interactive CLI**: Single-ticker analysis on-demand
+- **Portfolio tracking**: Manage positions and watchlist items
+- **Signal history**: SQLite storage of all signals for backtesting and analysis
 
 ## Installation
+
+### Prerequisites
+
+- Python 3.9+
+- git
+- git-lfs (for syncing Morningstar reports)
+
+### Install fstack
 
 ```bash
 git clone https://github.com/yourusername/fstack.git
 cd fstack
 
-# Install with dev dependencies
+# Install git-lfs (needed for Morningstar PDFs)
+brew install git-lfs  # macOS
+# apt-get install git-lfs  # Linux
+git lfs install
+
+# Install fstack with dev dependencies
 pip install -e ".[dev]"
 
 # Or just the base dependencies
@@ -58,7 +77,28 @@ fstack position list
 fstack watchlist list
 ```
 
-### 3. Run analysis
+### 3. Add Morningstar research (optional but recommended)
+
+Download research PDFs from Schwab and add them to the reports folder:
+
+```bash
+# 1. Log into Schwab → Research → Search ticker
+# 2. Download Morningstar PDF
+# 3. Save to fstack/reports/{TICKER}-morningstar.pdf
+
+# Example:
+# fstack/reports/NVDA-morningstar.pdf
+# fstack/reports/TSLA-morningstar.pdf
+
+# Commit reports (synced via Git LFS)
+git add fstack/reports/*.pdf
+git commit -m "data: add Morningstar reports for NVDA, TSLA"
+git push
+```
+
+See `fstack/reports/README.md` for details.
+
+### 4. Run analysis
 
 ```bash
 # Batch analysis (all positions + watchlist)
@@ -106,12 +146,41 @@ Positions + Watchlist
 
 ```
 tickers           → Master list (PUBLIC/PRIVATE)
-positions         → Current portfolio
-watchlist         → Monitoring list
-quotes            → Historical OHLCV + indicators
-signals           → Analysis recommendations (timestamped)
-pending_notifications → Failed emails for retry
+positions         → Current portfolio holdings
+watchlist         → Stocks under consideration
+quotes            → Historical OHLCV + technical indicators
+signals           → CFO recommendations with confidence and reasoning
+pending_notifications → Failed emails queued for retry
 ```
+
+## How Signals Work
+
+Each signal represents fstack's synthesis of multiple factors:
+
+### Technical Signals (StrategyAgent)
+- **RSI**: Oversold (<30) = BUY, overbought (>70) = SELL
+- **Moving Averages**: Golden cross (50MA > 200MA) = bullish, death cross = bearish
+- **Volume**: High volume increases confidence in the signal
+
+### Fundamental Signals (EquityAgent)
+- **Valuation**: P/E, P/B, price-to-fair-value from Morningstar
+- **Quality**: FCF yield, debt/equity, earnings/revenue growth
+- **Red Flags**: Declining fundamentals, high leverage, shrinking margins
+
+### Final Recommendation (CFOAgent)
+Claude synthesizes all signals:
+```
+Recommendation: BUY | SELL | HOLD
+Confidence: 0-100%
+Reasoning: Plain-English explanation of the decision
+```
+
+**Interpretation:**
+- **BUY (>70% confidence)**: Strong technical + fundamental case
+- **SELL (>60% confidence)**: Overvalued or deteriorating technicals
+- **HOLD**: Conflicting signals or insufficient data
+
+Always combine fstack recommendations with your own research.
 
 ## Configuration
 
@@ -172,19 +241,34 @@ mypy fstack/
 
 ## Limitations
 
+- **Manual report downloads**: Morningstar reports must be manually downloaded from Schwab (automation pending Schwab API approval)
 - **Private companies**: Tracked by name, not ticker. Company name normalization required.
-- **Real API integration**: EquityAgent uses mock data. Swap with Alpha Vantage, Yahoo Finance, or IEX Cloud.
-- **Notifications**: Email only (for now). SMS requires Twilio setup.
-- **No backtest**: Signals are forward-looking only.
+- **Fundamentals API**: Currently sourced from Morningstar PDFs. Full API integration planned.
+- **Technical indicators**: Limited to RSI and moving averages. Can be extended with MACD, Bollinger Bands, etc.
+- **Notifications**: Email and SMS only. No in-app alerts yet.
+- **No backtesting**: Signals are forward-looking; backtesting framework is in the roadmap.
+- **No broker integration**: Recommendations must be acted on manually.
 
-## Future
+## Roadmap
 
-- [ ] Web UI for viewing signals
-- [ ] Backtesting framework
-- [ ] Custom rule engine (beyond RSI/MA)
-- [ ] Options/derivatives support
-- [ ] Integration with brokers (automatic execution)
+### Near-term
+- [ ] Schwab API integration for automated Morningstar report downloads
+- [ ] Morningstar PDF parser (extract fair value, debt/equity, growth rates, red flags)
+- [ ] Real-time Finnhub fundamentals fallback when reports unavailable
+- [ ] Extended technical indicators (MACD, Bollinger Bands, volume profile)
+
+### Medium-term
+- [ ] Web dashboard for viewing signals and portfolio performance
+- [ ] Backtesting framework with historical signal accuracy
+- [ ] Custom rule engine for non-technical signals (news sentiment, insider trading, etc.)
+- [ ] Slack/Discord notifications
+- [ ] SQLite → PostgreSQL migration for team deployments
+
+### Long-term
+- [ ] Options/derivatives support (Greeks, IV analysis)
+- [ ] Broker integrations (Schwab, Interactive Brokers, Alpaca)
 - [ ] Mobile app
+- [ ] ML-based signal refinement (training on historical signals + returns)
 
 ## License
 
