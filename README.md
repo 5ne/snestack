@@ -241,7 +241,7 @@ mypy fstack/
 
 ## Limitations
 
-- **Manual report downloads**: Morningstar reports must be manually downloaded from Schwab (automation pending Schwab API approval)
+- **Manual report downloads**: Morningstar reports must be downloaded from Schwab's web UI (Schwab API does not expose research). Selenium automation is in development.
 - **Private companies**: Tracked by name, not ticker. Company name normalization required.
 - **Fundamentals API**: Currently sourced from Morningstar PDFs. Full API integration planned.
 - **Technical indicators**: Limited to RSI and moving averages. Can be extended with MACD, Bollinger Bands, etc.
@@ -252,9 +252,9 @@ mypy fstack/
 ## Roadmap
 
 ### Near-term
-- [ ] Schwab API integration for automated Morningstar report downloads
+- [ ] Selenium automation for downloading Morningstar reports from Schwab website
 - [ ] Morningstar PDF parser (extract fair value, debt/equity, growth rates, red flags)
-- [ ] Real-time Finnhub fundamentals fallback when reports unavailable
+- [ ] Cached fundamentals with fallback to Finnhub when reports unavailable
 - [ ] Extended technical indicators (MACD, Bollinger Bands, volume profile)
 
 ### Medium-term
