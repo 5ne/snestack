@@ -8,6 +8,7 @@ Thank you for your interest in contributing! This guide explains how to set up y
 - Python 3.9+
 - pip
 - git
+- git-lfs (for syncing Morningstar reports across machines)
 - crontab (for scheduler testing)
 
 ### Install for Development
@@ -16,12 +17,40 @@ Thank you for your interest in contributing! This guide explains how to set up y
 git clone https://github.com/yourusername/fstack.git
 cd fstack
 
+# Install git-lfs (for syncing Morningstar reports)
+brew install git-lfs  # macOS
+# or apt-get install git-lfs  # Linux
+git lfs install
+
 # Install with dev dependencies
 pip install -e ".[dev]"
 
 # Install pre-commit hooks (optional)
 pre-commit install
 ```
+
+### Morningstar Reports
+
+Reports are stored in `fstack/reports/` and synced via Git LFS across all machines.
+
+**To add a report:**
+1. Log into Schwab → Research
+2. Search for ticker (e.g., "MU")
+3. Download Morningstar PDF to `fstack/reports/{TICKER}-morningstar.pdf`
+4. Commit and push:
+   ```bash
+   git add fstack/reports/MU-morningstar.pdf
+   git commit -m "data: add MU Morningstar report"
+   git push
+   ```
+
+**To pull reports on another machine:**
+```bash
+git pull          # Automatically fetches LFS files
+git lfs pull      # If LFS files don't sync automatically
+```
+
+See `fstack/reports/README.md` for more details.
 
 ### Run Tests
 
