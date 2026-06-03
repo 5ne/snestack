@@ -26,6 +26,7 @@ setup(
         "google-auth-httplib2>=0.2,<1.0",
         "google-api-python-client>=2.100,<3.0",
         "twilio>=8.0,<9.0",
+        "pdfplumber>=0.10,<1.0",
     ],
     extras_require={
         "dev": [

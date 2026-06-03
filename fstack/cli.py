@@ -118,6 +118,29 @@ def main():
         help="List installed crontab",
     )
 
+    # Organize reports command
+    organize_parser = subparsers.add_parser("organize-reports", help="Organize Morningstar PDFs from staging")
+    organize_parser.add_argument(
+        "--staging-dir",
+        default="fstack/reports/staging",
+        help="Staging directory (default: fstack/reports/staging)",
+    )
+    organize_parser.add_argument(
+        "--target-dir",
+        default="fstack/reports",
+        help="Target reports directory (default: fstack/reports)",
+    )
+    organize_parser.add_argument(
+        "--archive-dir",
+        default="fstack/reports/archive",
+        help="Archive directory (default: fstack/reports/archive)",
+    )
+    organize_parser.add_argument(
+        "--error-dir",
+        default="fstack/reports/error",
+        help="Error directory (default: fstack/reports/error)",
+    )
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -140,6 +163,8 @@ def main():
         return cmd_watchlist(args)
     elif args.command == "scheduler":
         return cmd_scheduler(args)
+    elif args.command == "organize-reports":
+        return cmd_organize_reports(args)
     else:
         parser.print_help()
         return 1
@@ -158,6 +183,26 @@ def cmd_setup(args) -> int:
 def cmd_batch(args) -> int:
     """Batch analysis command."""
     try:
+        # Check for staging files first
+        staging_dir = Path("fstack/reports/staging")
+        if staging_dir.exists():
+            staging_files = list(staging_dir.glob("*.pdf"))
+            if staging_files:
+                print(f"\nFound {len(staging_files)} report(s) in staging folder.")
+                response = input("Organize reports first? (y/n): ").lower().strip()
+                if response == "y":
+                    from fstack.tools.report_organizer import organize_reports
+
+                    asyncio.run(
+                        organize_reports(
+                            staging_dir=staging_dir,
+                            target_dir=Path("fstack/reports"),
+                            archive_dir=Path("fstack/reports/archive"),
+                            error_dir=Path("fstack/reports/error"),
+                            interactive=True,
+                        )
+                    )
+
         # Validate config
         if not validate_env():
             return 1
@@ -375,6 +420,33 @@ def cmd_scheduler(args) -> int:
             return 1
     except Exception as e:
         logger.error(f"Scheduler command failed: {e}")
+        return 1
+
+
+def cmd_organize_reports(args) -> int:
+    """Organize Morningstar PDFs from staging folder."""
+    try:
+        from fstack.tools.report_organizer import organize_reports
+
+        staging_dir = Path(args.staging_dir)
+        target_dir = Path(args.target_dir)
+        archive_dir = Path(args.archive_dir)
+        error_dir = Path(args.error_dir)
+
+        result = asyncio.run(
+            organize_reports(
+                staging_dir=staging_dir,
+                target_dir=target_dir,
+                archive_dir=archive_dir,
+                error_dir=error_dir,
+                interactive=True,
+            )
+        )
+
+        return 0 if not result["failed"] else 1
+
+    except Exception as e:
+        logger.error(f"Report organization failed: {e}")
         return 1
 
 
