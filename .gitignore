@@ -50,6 +50,9 @@ htmlcov/
 # gstack
 .gstack/
 
+# Claude Code (local settings only — settings.json can be committed)
+.claude/settings.local.json
+
 # Reports (archived/staged — keep only active reports)
 fstack/reports/archive/
 fstack/reports/staging/
