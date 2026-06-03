@@ -1,3 +1,0 @@
-[console_scripts]
-fstack = fstack.cli:main
-

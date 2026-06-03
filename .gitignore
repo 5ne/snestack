@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg-link
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+!test.env
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+
+# gstack
+.gstack/
+
+# Reports (archived/staged — keep only active reports)
+fstack/reports/archive/
+fstack/reports/staging/
+fstack/reports/bak/
+fstack/reports/error/
