@@ -189,6 +189,13 @@ class EquityData(BaseModel):
     earnings_growth: Optional[float] = None
     revenue_growth: Optional[float] = None
     red_flags: list[str] = Field(default_factory=list, description="Warning signs detected")
+    # Morningstar-specific fields
+    fair_value: Optional[float] = None
+    price_to_fair_value: Optional[float] = None
+    economic_moat: Optional[str] = None
+    morningstar_rating: Optional[int] = None
+    uncertainty: Optional[str] = None
+    capital_allocation: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.now)
 
 

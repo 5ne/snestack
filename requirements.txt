@@ -5,6 +5,7 @@ anthropic>=0.25,<1.0
 
 # API clients
 finnhub-python>=1.2,<2.0
+yfinance>=0.2,<1.0
 requests>=2.31,<3.0
 
 # Email and SMS

@@ -124,31 +124,32 @@ class QuoteAgent(ThrottledAPIAgent):
             raise APIError(f"Finnhub quote API failed: {e}")
 
     async def _fetch_historical(self, ticker: str, days: int = 250) -> Optional[list]:
-        """Fetch historical daily data for technical indicators.
+        """Fetch historical daily close prices for technical indicators via yfinance.
 
         Args:
             ticker: Stock ticker
             days: Number of days of history (default 250 ≈ 1 year trading days)
 
         Returns:
-            List of daily close prices, newest last
+            List of daily close prices, oldest first
         """
         try:
             loop = asyncio.get_event_loop()
-            # Finnhub candle endpoint: resolution='D' for daily
-            candles = await loop.run_in_executor(
-                None, self.client.candles, ticker, "D", 1, int((datetime.now() - timedelta(days=days)).timestamp()), int(datetime.now().timestamp())
-            )
-
-            if not candles or "c" not in candles:
-                return None
-
-            # Return list of close prices
-            return candles.get("c", [])
-
+            closes = await loop.run_in_executor(None, self._yfinance_closes, ticker, days)
+            return closes
         except Exception as e:
             self.logger.warning(f"Failed to fetch historical data for {ticker}: {e}")
             return None
+
+    @staticmethod
+    def _yfinance_closes(ticker: str, days: int) -> Optional[list]:
+        import yfinance as yf
+        period = "1y" if days >= 250 else f"{max(days // 30, 1)}mo"
+        hist = yf.Ticker(ticker).history(period=period, interval="1d")
+        if hist.empty:
+            return None
+        closes = hist["Close"].dropna().tolist()
+        return closes if closes else None
 
     @staticmethod
     def _calculate_rsi(prices: list, period: int = 14) -> Optional[float]:

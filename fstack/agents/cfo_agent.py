@@ -286,7 +286,7 @@ class CFOAgent(BaseAgent):
         Returns:
             Formatted context
         """
-        lines = ["Analyze these investments and provide recommendations for each:\n"]
+        lines = ["Analyze these investments and provide recommendations for each.\n"]
 
         for i, item in enumerate(batch_input, 1):
             ticker = item["ticker"]
@@ -298,21 +298,36 @@ class CFOAgent(BaseAgent):
 
             if quote:
                 lines.append(f"   Price: ${quote.price:.2f}")
-            if strategy:
+            if strategy and strategy.confidence > 0:
                 lines.append(f"   Technical: {strategy.recommendation} ({strategy.confidence:.0%})")
+                if strategy.reasoning and strategy.reasoning != "No technical signals detected":
+                    lines.append(f"   Detail: {strategy.reasoning}")
             if equity:
+                if equity.fair_value:
+                    lines.append(f"   Fair Value: ${equity.fair_value:.2f}  P/FVE: {equity.price_to_fair_value:.2f}")
+                if equity.morningstar_rating:
+                    stars = "★" * equity.morningstar_rating + "☆" * (5 - equity.morningstar_rating)
+                    lines.append(f"   Morningstar: {stars}  Moat: {equity.economic_moat or 'Unknown'}")
+                if equity.uncertainty:
+                    lines.append(f"   Uncertainty: {equity.uncertainty}  Capital Alloc: {equity.capital_allocation or 'Unknown'}")
                 if equity.pe_ratio:
-                    lines.append(f"   P/E: {equity.pe_ratio:.1f}")
+                    lines.append(f"   P/E: {equity.pe_ratio:.1f}  P/B: {equity.pb_ratio:.1f}" if equity.pb_ratio else f"   P/E: {equity.pe_ratio:.1f}")
+                if equity.fcf:
+                    lines.append(f"   FCF: ${equity.fcf/1e9:.1f}B")
+                if equity.revenue_growth is not None:
+                    lines.append(f"   Revenue Growth: {equity.revenue_growth:.1%}")
+                if equity.earnings_growth is not None:
+                    lines.append(f"   EPS Growth: {equity.earnings_growth:.1%}")
+                if equity.dividend_yield:
+                    lines.append(f"   Dividend Yield: {equity.dividend_yield:.2%}")
                 if equity.red_flags:
-                    lines.append(f"   Flags: {', '.join(equity.red_flags)}")
+                    lines.append(f"   RED FLAGS: {'; '.join(equity.red_flags)}")
             lines.append("")
 
-        lines.append("For each, provide:")
-        lines.append("TICKER: [symbol]")
-        lines.append("RECOMMENDATION: [BUY|SELL|HOLD]")
-        lines.append("CONFIDENCE: [0.0-1.0]")
-        lines.append("REASONING: [Brief explanation]")
-        lines.append("")
+        lines.append(
+            'Return a JSON array, one object per ticker, with keys "ticker", "recommendation" (BUY/SELL/HOLD), '
+            '"confidence" (0.0-1.0), and "reasoning" (1-2 sentences). No markdown, just the JSON array.'
+        )
 
         return "\n".join(lines)
 
@@ -320,74 +335,92 @@ class CFOAgent(BaseAgent):
     def _parse_batch_response(
         response_text: str, batch_input: list[dict]
     ) -> list[Signal]:
-        """Parse batch response.
+        """Parse batch JSON response.
 
         Args:
-            response_text: Raw Claude response
+            response_text: Raw Claude response (JSON array expected)
             batch_input: Original batch input (for fallback)
 
         Returns:
             List of Signals
         """
         signals = []
+        signal_tickers: set[str] = set()
 
-        # Simple line-by-line parsing
-        # Production: more robust parsing (JSON, structured output)
-        lines = response_text.strip().split("\n")
+        try:
+            # Strip any markdown fencing
+            text = response_text.strip()
+            if text.startswith("```"):
+                text = "\n".join(text.split("\n")[1:])
+            if text.endswith("```"):
+                text = "\n".join(text.split("\n")[:-1])
 
-        current_ticker = None
-        current_rec = "HOLD"
-        current_conf = 0.5
-        current_reasoning = ""
-
-        for line in lines:
-            line = line.strip()
-            if line.startswith("TICKER:"):
-                current_ticker = line.split("TICKER:")[1].strip().upper()
-            elif line.startswith("RECOMMENDATION:"):
-                rec = line.split("RECOMMENDATION:")[1].strip().upper()
-                if rec in ["BUY", "SELL", "HOLD"]:
-                    current_rec = rec
-            elif line.startswith("CONFIDENCE:"):
+            items = json.loads(text)
+            for item in items:
+                ticker = item.get("ticker", "").upper()
+                rec = item.get("recommendation", "HOLD").upper()
+                if rec not in ("BUY", "SELL", "HOLD"):
+                    rec = "HOLD"
                 try:
-                    conf_str = line.split("CONFIDENCE:")[1].strip()
-                    if "%" in conf_str:
-                        current_conf = float(conf_str.replace("%", "")) / 100
-                    else:
-                        current_conf = float(conf_str)
-                    current_conf = max(0.0, min(1.0, current_conf))
-                except ValueError:
-                    current_conf = 0.5
-            elif line.startswith("REASONING:"):
-                current_reasoning = line.split("REASONING:")[1].strip()
-                # Create signal at reasoning line (end of record)
-                if current_ticker:
-                    signals.append(
-                        Signal(
-                            ticker=current_ticker,
-                            recommendation=current_rec,
-                            confidence=current_conf,
-                            reasoning=current_reasoning,
-                            date=datetime.now(),
-                        )
-                    )
+                    conf = float(item.get("confidence", 0.5))
+                    conf = max(0.0, min(1.0, conf))
+                except (ValueError, TypeError):
+                    conf = 0.5
+                reasoning = str(item.get("reasoning", ""))
+                if ticker:
+                    signals.append(Signal(
+                        ticker=ticker,
+                        recommendation=rec,
+                        confidence=conf,
+                        reasoning=reasoning,
+                        date=datetime.now(),
+                    ))
+                    signal_tickers.add(ticker)
+
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"JSON parse failed ({e}), trying line-by-line fallback")
+            # Line-by-line fallback for non-JSON responses
+            current_ticker = None
+            current_rec = "HOLD"
+            current_conf = 0.5
+            current_reasoning = ""
+            for line in response_text.strip().split("\n"):
+                line = line.strip()
+                if line.startswith("TICKER:"):
+                    current_ticker = line.split("TICKER:")[1].strip().upper()
+                elif line.startswith("RECOMMENDATION:"):
+                    rec = line.split("RECOMMENDATION:")[1].strip().upper()
+                    if rec in ("BUY", "SELL", "HOLD"):
+                        current_rec = rec
+                elif line.startswith("CONFIDENCE:"):
+                    try:
+                        conf_str = line.split("CONFIDENCE:")[1].strip().replace("%", "")
+                        current_conf = max(0.0, min(1.0, float(conf_str)))
+                    except ValueError:
+                        current_conf = 0.5
+                elif line.startswith("REASONING:") and current_ticker:
+                    current_reasoning = line.split("REASONING:")[1].strip()
+                    signals.append(Signal(
+                        ticker=current_ticker,
+                        recommendation=current_rec,
+                        confidence=current_conf,
+                        reasoning=current_reasoning,
+                        date=datetime.now(),
+                    ))
+                    signal_tickers.add(current_ticker)
                     current_ticker = None
                     current_rec = "HOLD"
                     current_conf = 0.5
-                    current_reasoning = ""
 
-        # Ensure we have signals for all inputs (fill with defaults)
-        signal_tickers = {s.ticker for s in signals}
+        # Fill missing tickers with HOLD defaults
         for item in batch_input:
             if item["ticker"] not in signal_tickers:
-                signals.append(
-                    Signal(
-                        ticker=item["ticker"],
-                        recommendation="HOLD",
-                        confidence=0.5,
-                        reasoning="Parsed from batch response",
-                        date=datetime.now(),
-                    )
-                )
+                signals.append(Signal(
+                    ticker=item["ticker"],
+                    recommendation="HOLD",
+                    confidence=0.5,
+                    reasoning="No signal parsed from response",
+                    date=datetime.now(),
+                ))
 
         return signals

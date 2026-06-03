@@ -2,12 +2,14 @@
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
 from fstack.agents.base import ThrottledAPIAgent
 from fstack.core.models import EquityData
 from fstack.core.errors import EquityServiceError, APIError
+from fstack.tools.morningstar_parser import find_report, parse_morningstar_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +17,16 @@ logger = logging.getLogger(__name__)
 class EquityAgent(ThrottledAPIAgent):
     """Fetch and analyze fundamental equity data."""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, reports_dir: Optional[Path] = None):
         """Initialize EquityAgent.
 
         Args:
             api_key: API key for equity data provider (Alpha Vantage, etc.)
+            reports_dir: Directory containing Morningstar PDFs (default: fstack/reports)
         """
         super().__init__(name="EquityAgent", max_calls_per_minute=5)
         self.api_key = api_key
+        self.reports_dir = reports_dir or Path("fstack/reports")
 
     async def analyze(self, ticker: str, **kwargs) -> Optional[EquityData]:
         """Fetch fundamental data and detect red flags.
@@ -58,6 +62,12 @@ class EquityAgent(ThrottledAPIAgent):
                 earnings_growth=fundamentals.get("earnings_growth"),
                 revenue_growth=fundamentals.get("revenue_growth"),
                 red_flags=red_flags,
+                fair_value=fundamentals.get("fair_value"),
+                price_to_fair_value=fundamentals.get("price_to_fair_value"),
+                economic_moat=fundamentals.get("economic_moat"),
+                morningstar_rating=fundamentals.get("morningstar_rating"),
+                uncertainty=fundamentals.get("uncertainty"),
+                capital_allocation=fundamentals.get("capital_allocation"),
                 timestamp=datetime.now(),
             )
 
@@ -73,88 +83,30 @@ class EquityAgent(ThrottledAPIAgent):
             raise EquityServiceError(f"Equity analysis failed for {ticker}: {e}")
 
     async def _fetch_fundamentals(self, ticker: str) -> Optional[dict]:
-        """Fetch fundamental data from API.
-
-        For MVP, returns mock data with realistic structure.
-        In production, integrate with Alpha Vantage, Yahoo Finance API, etc.
+        """Fetch fundamental data from Morningstar PDF if available.
 
         Args:
             ticker: Stock ticker
 
         Returns:
-            Dict with fundamentals or None
+            Dict with fundamentals, or None if no report found
         """
         try:
-            # Mock implementation for MVP
-            # In production, call actual API:
-            # loop = asyncio.get_event_loop()
-            # data = await loop.run_in_executor(None, self._call_api, ticker)
-
             loop = asyncio.get_event_loop()
-            data = await loop.run_in_executor(None, self._mock_fundamentals, ticker)
-            return data
+            data = await loop.run_in_executor(None, self._parse_morningstar, ticker)
+            return data if data else None
 
         except Exception as e:
             self.logger.error(f"Failed to fetch fundamentals for {ticker}: {e}")
             raise APIError(f"Fundamentals API failed: {e}")
 
-    @staticmethod
-    def _mock_fundamentals(ticker: str) -> dict:
-        """Mock fundamental data for MVP.
-
-        Replace with real API calls in production.
-
-        Args:
-            ticker: Stock ticker
-
-        Returns:
-            Mock fundamental data
-        """
-        # Simulate realistic fundamentals
-        # In production, this is replaced with real API calls
-        mock_data = {
-            "NVDA": {
-                "pe_ratio": 45.2,
-                "pb_ratio": 8.5,
-                "debt_to_equity": 0.35,
-                "fcf": 12.5e9,  # $12.5B
-                "fcf_yield": 0.032,  # 3.2%
-                "dividend_yield": 0.005,  # 0.5%
-                "earnings_growth": 0.35,  # 35% YoY
-                "revenue_growth": 0.28,  # 28% YoY
-            },
-            "TSLA": {
-                "pe_ratio": 62.1,
-                "pb_ratio": 15.2,
-                "debt_to_equity": 0.42,
-                "fcf": 8.2e9,  # $8.2B
-                "fcf_yield": 0.018,  # 1.8%
-                "dividend_yield": 0.0,  # No dividend
-                "earnings_growth": 0.25,  # 25% YoY
-                "revenue_growth": 0.20,  # 20% YoY
-            },
-            "F": {
-                "pe_ratio": 5.8,
-                "pb_ratio": 0.8,
-                "debt_to_equity": 1.8,  # High debt
-                "fcf": 2.1e9,  # $2.1B
-                "fcf_yield": 0.005,  # 0.5%
-                "dividend_yield": 0.045,  # 4.5%
-                "earnings_growth": -0.05,  # -5% YoY (declining)
-                "revenue_growth": -0.08,  # -8% YoY (declining)
-            },
-        }
-
-        return mock_data.get(ticker, {
-            "pe_ratio": 25.0,
-            "pb_ratio": 3.5,
-            "debt_to_equity": 0.6,
-            "fcf": 5e9,
-            "fcf_yield": 0.02,
-            "dividend_yield": 0.02,
-            "earnings_growth": 0.10,
-            "revenue_growth": 0.08,
-        })
+    def _parse_morningstar(self, ticker: str) -> Optional[dict]:
+        """Parse Morningstar PDF for this ticker."""
+        pdf_path = find_report(ticker, self.reports_dir)
+        if not pdf_path:
+            self.logger.warning(f"No Morningstar report found for {ticker} in {self.reports_dir}")
+            return None
+        return parse_morningstar_pdf(pdf_path) or None
 
     @staticmethod
     def _detect_red_flags(fundamentals: dict) -> list[str]:
