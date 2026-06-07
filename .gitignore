@@ -1,6 +1,7 @@
 # Node.js
-node_modules/
-dist/
+node/node_modules/
+node/dist/
+node/coverage/
 *.tsbuildinfo
 
 # Python
@@ -11,27 +12,26 @@ __pycache__/
 *.so
 *.egg
 *.egg-info/
-dist/
 build/
 .eggs/
 *.egg-link
-
-# Virtual environments
-.venv/
-venv/
-env/
-.env/
+python/.venv/
+python/venv/
 
 # Environment variables
 .env
+node/.env
+python/.env
 .env.*
 !.env.example
+!node/.env.example
 !test.env
 
-# Database
+# Database (shared db is committed; temp dbs are not)
 *.db
 *.sqlite
 *.sqlite3
+!fstack.db
 
 # macOS
 .DS_Store
@@ -39,6 +39,7 @@ env/
 
 # Logs
 logs/
+node/logs/
 *.log
 
 # IDE
@@ -55,11 +56,15 @@ htmlcov/
 # gstack
 .gstack/
 
-# Claude Code (local settings only — settings.json can be committed)
+# Claude Code
 .claude/settings.local.json
 
-# Reports (archived/staged — keep only active reports)
-fstack/reports/archive/
-fstack/reports/staging/
-fstack/reports/bak/
-fstack/reports/error/
+# Reports (archived/staged — keep only active PDFs)
+reports/archive/
+reports/staging/
+reports/bak/
+reports/error/
+
+# Python build artifacts
+fstack.egg-info/
+python/fstack.egg-info/

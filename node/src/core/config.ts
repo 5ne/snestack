@@ -14,7 +14,7 @@ export class Config {
   static readonly TWILIO_AUTH_TOKEN = "FSTACK_TWILIO_AUTH_TOKEN";
   static readonly SMS_PHONE = "FSTACK_SMS_PHONE";
   static readonly DATABASE_PATH = "FSTACK_DATABASE_PATH";
-  static readonly DEFAULT_DB_PATH = "fstack.db";
+  static readonly DEFAULT_DB_PATH = "../fstack.db";
 
   constructor(envFile?: string) {
     const file = envFile ?? path.join(process.cwd(), ".env");

@@ -33,7 +33,7 @@ class Config:
     DATABASE_PATH = "FSTACK_DATABASE_PATH"
 
     # Defaults
-    DEFAULT_DB_PATH = "fstack.db"
+    DEFAULT_DB_PATH = "../fstack.db"
 
     def __init__(self, env_file: Optional[str] = None):
         """Initialize config from environment.
