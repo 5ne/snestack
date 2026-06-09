@@ -8,8 +8,8 @@ export class EquityAgent extends ThrottledAPIAgent<EquityData> {
   private readonly reportsDir: string;
 
   constructor(reportsDir?: string) {
-    super("EquityAgent", 5, 0.8);
-    this.reportsDir = reportsDir ?? path.join(process.cwd(), "fstack", "reports");
+    super("EquityAgent", 60, 0.9);
+    this.reportsDir = reportsDir ?? path.join(process.cwd(), "..", "reports");
   }
 
   async analyze(ticker: string): Promise<EquityData | null> {

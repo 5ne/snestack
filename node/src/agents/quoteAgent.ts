@@ -113,9 +113,8 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
     days: number
   ): Promise<number[] | null> {
     try {
-      // Dynamic import to avoid issues when not installed in tests
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const yahooFinance = require("yahoo-finance2").default;
+      // yahoo-finance2 is ESM-only in v2.x — must use dynamic import()
+      const { default: yahooFinance } = await import("yahoo-finance2");
       const endDate = new Date();
       const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
       const result = await yahooFinance.historical(ticker, {

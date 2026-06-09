@@ -48,6 +48,7 @@ export class TraderAgent extends BaseAgent<boolean> {
           `Email sent: ${signals.length} signals (${buys.length} BUY, ${sells.length} SELL, ${holds.length} HOLD)`
         );
         for (const signal of signals) {
+          this.db.addTicker(signal.ticker, signal.ticker, "PUBLIC");
           this.db.addSignal(
             signal.ticker,
             signal.date.toISOString(),
@@ -60,6 +61,7 @@ export class TraderAgent extends BaseAgent<boolean> {
       } else {
         this.logger.warn("Email send failed, queueing for retry");
         for (const signal of signals) {
+          this.db.addTicker(signal.ticker, signal.ticker, "PUBLIC");
           const signalId = this.db.addSignal(
             signal.ticker,
             signal.date.toISOString(),
