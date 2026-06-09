@@ -14,9 +14,9 @@ interface FinnhubQuote {
   t: number;   // timestamp
 }
 
-interface YahooHistorical {
-  date: Date;
-  close: number;
+interface FinnhubCandles {
+  c: number[];  // close prices
+  s: string;    // status: "ok" | "no_data"
 }
 
 export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
@@ -107,30 +107,38 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
     });
   }
 
-  /** Fetch historical close prices via yahoo-finance2. */
+  /** Fetch historical close prices from Finnhub candles API. */
   private async fetchHistoricalCloses(
     ticker: string,
     days: number
   ): Promise<number[] | null> {
-    try {
-      // yahoo-finance2 is ESM-only in v2.x — must use dynamic import()
-      const { default: yahooFinance } = await import("yahoo-finance2");
-      const endDate = new Date();
-      const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
-      const result = await yahooFinance.historical(ticker, {
-        period1: startDate.toISOString().split("T")[0],
-        period2: endDate.toISOString().split("T")[0],
-        interval: "1d",
-      }) as YahooHistorical[];
-      const closes = result
-        .filter((r) => r.close != null)
-        .map((r) => r.close)
-        .sort((a, b) => a - b); // oldest first by sorting (historical returns sorted)
-      return closes.length > 0 ? closes : null;
-    } catch (e) {
-      this.logger.warn(`Failed to fetch historical data for ${ticker}: ${e}`);
-      return null;
-    }
+    const to = Math.floor(Date.now() / 1000);
+    const from = to - days * 24 * 60 * 60;
+    const url =
+      `https://finnhub.io/api/v1/stock/candle` +
+      `?symbol=${encodeURIComponent(ticker)}&resolution=D` +
+      `&from=${from}&to=${to}&token=${this.apiKey}`;
+
+    return new Promise((resolve) => {
+      https
+        .get(url, (res) => {
+          let data = "";
+          res.on("data", (chunk) => (data += chunk));
+          res.on("end", () => {
+            try {
+              const parsed = JSON.parse(data) as FinnhubCandles;
+              if (parsed.s !== "ok" || !parsed.c?.length) {
+                resolve(null);
+              } else {
+                resolve(parsed.c); // oldest-first (Finnhub returns chronological order)
+              }
+            } catch {
+              resolve(null);
+            }
+          });
+        })
+        .on("error", () => resolve(null));
+    });
   }
 
   /** Calculate RSI-14 from an array of closing prices (oldest first). */
