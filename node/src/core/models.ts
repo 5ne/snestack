@@ -95,6 +95,28 @@ export interface QuoteData {
   high?: number;
   low?: number;
   volume?: number;
+  // Live fundamentals from Finnhub's Basic Financials endpoint (/stock/metric),
+  // fetched alongside the price quote. These take priority over the matching
+  // EquityData fields (which come from a Morningstar PDF snapshot that can be
+  // weeks/months stale) wherever Finnhub returns a value — see
+  // orchestrator.ts's withLiveFundamentals(). Morningstar's own analyst
+  // judgments (fair value, moat, star rating, uncertainty, capital allocation)
+  // have no real-time equivalent and are never overridden.
+  //
+  // fcf (absolute free cash flow in dollars) is deliberately NOT sourced from
+  // Finnhub here — Finnhub's raw freeCashFlowTTM figure's unit scale wasn't
+  // verified against a live response in the session that wrote this (no
+  // network access to finnhub.io from that sandbox), and guessing wrong would
+  // silently show a wildly incorrect dollar figure. fcfYield (a self-normalizing
+  // ratio, safe regardless of unit scale) is included; the raw fcf dollar
+  // amount still comes from Morningstar only.
+  peRatio?: number | null;
+  pbRatio?: number | null;
+  debtToEquity?: number | null;
+  fcfYield?: number | null;
+  dividendYield?: number | null;
+  earningsGrowth?: number | null;
+  revenueGrowth?: number | null;
   timestamp: Date;
 }
 

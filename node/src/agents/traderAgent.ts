@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import { BaseAgent } from "./base";
 import { EmailServiceError } from "../core/errors";
-import type { Signal } from "../core/models";
+import type { Signal, EquityData } from "../core/models";
 import type { Db } from "../core/db";
 
 const COLORS: Record<"BUY" | "SELL" | "HOLD", { fg: string; bg: string; border: string }> = {
@@ -9,6 +9,25 @@ const COLORS: Record<"BUY" | "SELL" | "HOLD", { fg: string; bg: string; border: 
   SELL: { fg: "#b91c1c", bg: "#fdeeee", border: "#dc2626" },
   HOLD: { fg: "#475569", bg: "#f1f5f9", border: "#94a3b8" },
 };
+
+// Signals at or above this confidence get called out as "act now" — a direct,
+// immediate call to action rather than just another line in the BUY/SELL list.
+// Applies to BUY/SELL only: a high-confidence HOLD means "confidently do
+// nothing," which isn't something to act on right now the way a BUY/SELL is.
+const ACTION_THRESHOLD = 0.75;
+
+type Recommendation = "BUY" | "SELL" | "HOLD";
+
+function isActionable(s: Signal): boolean {
+  return (
+    (s.recommendation === "BUY" || s.recommendation === "SELL") &&
+    s.confidence > ACTION_THRESHOLD
+  );
+}
+
+function byConfidenceDesc(a: Signal, b: Signal): number {
+  return b.confidence - a.confidence;
+}
 
 export class TraderAgent extends BaseAgent<boolean> {
   private readonly db: Db;
@@ -34,25 +53,32 @@ export class TraderAgent extends BaseAgent<boolean> {
     return false;
   }
 
-  async sendBatchEmail(signals: Signal[], runDate?: string): Promise<boolean> {
+  async sendBatchEmail(
+    signals: Signal[],
+    equities: Record<string, EquityData | null | undefined> = {},
+    runDate?: string
+  ): Promise<boolean> {
     if (signals.length === 0) {
       this.logger.info("No signals to send");
       return true;
     }
     const date = runDate ?? new Date().toISOString().split("T")[0];
     try {
-      const buys = signals.filter((s) => s.recommendation === "BUY");
-      const sells = signals.filter((s) => s.recommendation === "SELL");
-      const holds = signals.filter((s) => s.recommendation === "HOLD");
+      // Highest confidence first within each group.
+      const buys = signals.filter((s) => s.recommendation === "BUY").sort(byConfidenceDesc);
+      const sells = signals.filter((s) => s.recommendation === "SELL").sort(byConfidenceDesc);
+      const holds = signals.filter((s) => s.recommendation === "HOLD").sort(byConfidenceDesc);
+      const actionNow = signals.filter(isActionable).sort(byConfidenceDesc);
 
-      const subject = TraderAgent.buildSubject(buys, sells, holds, date);
-      const text = TraderAgent.buildEmailBody(buys, sells, holds, date);
-      const html = TraderAgent.buildEmailHtml(buys, sells, holds, date);
+      const subject = TraderAgent.buildSubject(buys, sells, holds, actionNow, date);
+      const text = TraderAgent.buildEmailBody(buys, sells, holds, actionNow, equities, date);
+      const html = TraderAgent.buildEmailHtml(buys, sells, holds, actionNow, equities, date);
       const success = await this.sendEmail(subject, text, html);
 
       if (success) {
         this.logger.info(
-          `Email sent: ${signals.length} signals (${buys.length} BUY, ${sells.length} SELL, ${holds.length} HOLD)`
+          `Email sent: ${signals.length} signals (${buys.length} BUY, ${sells.length} SELL, ` +
+            `${holds.length} HOLD, ${actionNow.length} act-now)`
         );
         for (const signal of signals) {
           this.db.addTicker(signal.ticker, signal.ticker, "PUBLIC");
@@ -135,15 +161,65 @@ export class TraderAgent extends BaseAgent<boolean> {
     buys: Signal[],
     sells: Signal[],
     holds: Signal[],
+    actionNow: Signal[],
     date: string
   ): string {
-    return `fstack analysis ${date} — ${buys.length} BUY, ${sells.length} SELL, ${holds.length} HOLD`;
+    const base = `fstack analysis ${date} — ${buys.length} BUY, ${sells.length} SELL, ${holds.length} HOLD`;
+    return actionNow.length ? `${base} · ⚡ ${actionNow.length} ACT NOW` : base;
+  }
+
+  // ---------- shared financials formatting (used by both text and HTML) ----------
+
+  private static fmtRatio(v: number | null | undefined, digits = 1): string | null {
+    return v != null && isFinite(v) ? v.toFixed(digits) : null;
+  }
+
+  private static fmtPct(v: number | null | undefined, digits = 1): string | null {
+    return v != null && isFinite(v) ? `${(v * 100).toFixed(digits)}%` : null;
+  }
+
+  /** Compact list of "Label value" pairs for whatever fields are actually present. */
+  private static financialsFields(equity: EquityData | null | undefined): Array<[string, string]> {
+    if (!equity) return [];
+    const out: Array<[string, string]> = [];
+    const pe = TraderAgent.fmtRatio(equity.peRatio);
+    if (pe) out.push(["P/E", pe]);
+    const pb = TraderAgent.fmtRatio(equity.pbRatio);
+    if (pb) out.push(["P/B", pb]);
+    const div = TraderAgent.fmtPct(equity.dividendYield, 2);
+    if (div) out.push(["Div Yield", div]);
+    const de = TraderAgent.fmtRatio(equity.debtToEquity, 2);
+    if (de) out.push(["D/E", de]);
+    const fcfYield = TraderAgent.fmtPct(equity.fcfYield);
+    if (fcfYield) out.push(["FCF Yield", fcfYield]);
+    const eg = TraderAgent.fmtPct(equity.earningsGrowth);
+    if (eg) out.push(["EPS Growth", equity.earningsGrowth! >= 0 ? `+${eg}` : eg]);
+    const rg = TraderAgent.fmtPct(equity.revenueGrowth);
+    if (rg) out.push(["Rev Growth", equity.revenueGrowth! >= 0 ? `+${rg}` : rg]);
+    return out;
+  }
+
+  /** Morningstar's own analyst view — fair value, moat, star rating — has no real-time equivalent. */
+  private static analystFields(equity: EquityData | null | undefined): string | null {
+    if (!equity) return null;
+    const parts: string[] = [];
+    if (equity.fairValue != null) {
+      const pfve = equity.priceToFairValue != null ? ` (${equity.priceToFairValue.toFixed(2)}x)` : "";
+      parts.push(`Fair Value $${equity.fairValue.toFixed(2)}${pfve}`);
+    }
+    if (equity.economicMoat) parts.push(`${equity.economicMoat} Moat`);
+    if (equity.morningstarRating != null) {
+      parts.push("★".repeat(equity.morningstarRating) + "☆".repeat(5 - equity.morningstarRating));
+    }
+    return parts.length ? parts.join("  ·  ") : null;
   }
 
   static buildEmailBody(
     buys: Signal[],
     sells: Signal[],
     holds: Signal[],
+    actionNow: Signal[],
+    equities: Record<string, EquityData | null | undefined>,
     date: string
   ): string {
     const lines: string[] = [
@@ -153,27 +229,45 @@ export class TraderAgent extends BaseAgent<boolean> {
       "",
     ];
 
+    const writeSignal = (s: Signal, withFinancials: boolean) => {
+      lines.push(
+        s.ticker.toUpperCase(),
+        `  Confidence: ${(s.confidence * 100).toFixed(0)}%`,
+        `  Reason: ${s.reasoning}`
+      );
+      if (withFinancials) {
+        const equity = equities[s.ticker];
+        const fields = TraderAgent.financialsFields(equity);
+        if (fields.length) {
+          lines.push(`  Financials: ${fields.map(([k, v]) => `${k} ${v}`).join("  ")}`);
+        }
+        const analyst = TraderAgent.analystFields(equity);
+        if (analyst) lines.push(`  Morningstar: ${analyst}`);
+        if (equity?.redFlags.length) {
+          lines.push(`  Red flags: ${equity.redFlags.join("; ")}`);
+        }
+      }
+      lines.push("");
+    };
+
+    if (actionNow.length) {
+      lines.push(
+        `>>> ACT NOW — confidence over ${(ACTION_THRESHOLD * 100).toFixed(0)}% <<<`,
+        "-".repeat(50)
+      );
+      for (const s of actionNow) {
+        lines.push(`[${s.recommendation}]`);
+        writeSignal(s, true);
+      }
+    }
+
     if (buys.length) {
       lines.push("BUY SIGNALS", "-".repeat(50));
-      for (const s of buys) {
-        lines.push(
-          s.ticker.toUpperCase(),
-          `  Confidence: ${(s.confidence * 100).toFixed(0)}%`,
-          `  Reason: ${s.reasoning}`,
-          ""
-        );
-      }
+      for (const s of buys) writeSignal(s, true);
     }
     if (sells.length) {
       lines.push("SELL SIGNALS", "-".repeat(50));
-      for (const s of sells) {
-        lines.push(
-          s.ticker.toUpperCase(),
-          `  Confidence: ${(s.confidence * 100).toFixed(0)}%`,
-          `  Reason: ${s.reasoning}`,
-          ""
-        );
-      }
+      for (const s of sells) writeSignal(s, true);
     }
     if (holds.length) {
       lines.push("HOLD SIGNALS", "-".repeat(50));
@@ -208,13 +302,41 @@ export class TraderAgent extends BaseAgent<boolean> {
     });
   }
 
-  private static confidencePill(confidence: number, kind: "BUY" | "SELL" | "HOLD"): string {
+  private static confidencePill(confidence: number, kind: Recommendation): string {
     const c = COLORS[kind];
     const pct = Math.round(confidence * 100);
     return `<span style="display:inline-block;padding:3px 10px;border-radius:999px;background:${c.bg};color:${c.fg};font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${pct}% confidence</span>`;
   }
 
-  private static signalCard(s: Signal, kind: "BUY" | "SELL" | "HOLD"): string {
+  private static financialsHtml(equity: EquityData | null | undefined): string {
+    if (!equity) return "";
+    const fields = TraderAgent.financialsFields(equity);
+    const analyst = TraderAgent.analystFields(equity);
+    const font = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+    let out = "";
+    if (fields.length) {
+      const chips = fields
+        .map(
+          ([k, v]) =>
+            `<span style="display:inline-block;margin:4px 6px 0 0;padding:2px 8px;border-radius:5px;background:#f8fafc;border:1px solid #eef1f5;${font}font-size:11.5px;color:#334155;"><span style="color:#94a3b8;">${TraderAgent.escapeHtml(k)}</span> ${TraderAgent.escapeHtml(v)}</span>`
+        )
+        .join("");
+      out += `<div style="margin-top:8px;">${chips}</div>`;
+    }
+    if (analyst) {
+      out += `<div style="margin-top:6px;${font}font-size:11.5px;color:#94a3b8;">${TraderAgent.escapeHtml(analyst)}</div>`;
+    }
+    if (equity.redFlags.length) {
+      out += `<div style="margin-top:6px;${font}font-size:11.5px;color:#b45309;">⚠ ${TraderAgent.escapeHtml(equity.redFlags.join("; "))}</div>`;
+    }
+    return out;
+  }
+
+  private static signalCard(
+    s: Signal,
+    kind: Recommendation,
+    equities: Record<string, EquityData | null | undefined>
+  ): string {
     const c = COLORS[kind];
     const ticker = TraderAgent.escapeHtml(s.ticker.toUpperCase());
     const reasoning = TraderAgent.escapeHtml(s.reasoning);
@@ -238,6 +360,43 @@ export class TraderAgent extends BaseAgent<boolean> {
                 <p style="margin:8px 0 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.5;color:#475569;">
                   ${reasoning}
                 </p>
+                ${TraderAgent.financialsHtml(equities[s.ticker])}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>`;
+  }
+
+  /** Same as signalCard but with a bold "act now" badge instead of the plain ticker treatment. */
+  private static actionCard(
+    s: Signal,
+    equities: Record<string, EquityData | null | undefined>
+  ): string {
+    const kind = s.recommendation as "BUY" | "SELL";
+    const c = COLORS[kind];
+    const ticker = TraderAgent.escapeHtml(s.ticker.toUpperCase());
+    const reasoning = TraderAgent.escapeHtml(s.reasoning);
+    const font = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+    return `
+      <tr>
+        <td style="padding:0 0 12px 0;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #d97706;border-radius:8px;">
+            <tr>
+              <td style="padding:14px 16px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td>
+                      <span style="display:inline-block;padding:3px 9px;border-radius:5px;background:${c.border};color:#ffffff;${font}font-size:11px;font-weight:800;letter-spacing:0.4px;">${kind} NOW</span>
+                      <span style="${font}font-size:16px;font-weight:700;color:#0f172a;margin-left:8px;">${ticker}</span>
+                    </td>
+                    <td align="right">${TraderAgent.confidencePill(s.confidence, kind)}</td>
+                  </tr>
+                </table>
+                <p style="margin:8px 0 0 0;${font}font-size:13.5px;line-height:1.5;color:#475569;">
+                  ${reasoning}
+                </p>
+                ${TraderAgent.financialsHtml(equities[s.ticker])}
               </td>
             </tr>
           </table>
@@ -251,7 +410,7 @@ export class TraderAgent extends BaseAgent<boolean> {
     return `<span style="display:inline-block;margin:0 8px 8px 0;padding:6px 10px;border-radius:6px;background:${c.bg};color:${c.fg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12.5px;white-space:nowrap;"><strong>${ticker}</strong>&nbsp;&nbsp;${Math.round(s.confidence * 100)}%</span>`;
   }
 
-  private static sectionHeader(label: string, count: number, kind: "BUY" | "SELL" | "HOLD"): string {
+  private static sectionHeader(label: string, count: number, kind: Recommendation): string {
     const c = COLORS[kind];
     return `
       <tr>
@@ -268,7 +427,7 @@ export class TraderAgent extends BaseAgent<boolean> {
       </tr>`;
   }
 
-  private static statBlock(label: string, count: number, kind: "BUY" | "SELL" | "HOLD"): string {
+  private static statBlock(label: string, count: number, kind: Recommendation): string {
     const c = COLORS[kind];
     return `
       <td align="center" style="padding:16px 8px;">
@@ -281,15 +440,33 @@ export class TraderAgent extends BaseAgent<boolean> {
     buys: Signal[],
     sells: Signal[],
     holds: Signal[],
+    actionNow: Signal[],
+    equities: Record<string, EquityData | null | undefined>,
     date: string
   ): string {
+    const font = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+
+    const actionSection = actionNow.length
+      ? `
+      <tr>
+        <td style="padding:20px 0 4px 0;">
+          <div style="${font}font-size:13px;font-weight:800;letter-spacing:0.6px;color:#b45309;text-transform:uppercase;">
+            ⚡ Act now — confidence over ${(ACTION_THRESHOLD * 100).toFixed(0)}%
+          </div>
+        </td>
+      </tr>
+      <tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        ${actionNow.map((s) => TraderAgent.actionCard(s, equities)).join("")}
+      </table></td></tr>`
+      : "";
+
     const buySection = buys.length
       ? TraderAgent.sectionHeader("Buy signals", buys.length, "BUY") +
-        buys.map((s) => TraderAgent.signalCard(s, "BUY")).join("")
+        buys.map((s) => TraderAgent.signalCard(s, "BUY", equities)).join("")
       : "";
     const sellSection = sells.length
       ? TraderAgent.sectionHeader("Sell signals", sells.length, "SELL") +
-        sells.map((s) => TraderAgent.signalCard(s, "SELL")).join("")
+        sells.map((s) => TraderAgent.signalCard(s, "SELL", equities)).join("")
       : "";
     const holdSection = holds.length
       ? TraderAgent.sectionHeader("Hold signals", holds.length, "HOLD") +
@@ -310,9 +487,9 @@ export class TraderAgent extends BaseAgent<boolean> {
         <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:14px;border:1px solid #e6e9ef;overflow:hidden;">
           <tr>
             <td style="padding:32px 32px 4px 32px;">
-              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:800;letter-spacing:2px;color:#4f46e5;text-transform:uppercase;">fstack</div>
-              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:22px;font-weight:800;color:#0f172a;margin-top:6px;">Investment Signals</div>
-              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13.5px;color:#64748b;margin-top:4px;">${TraderAgent.escapeHtml(TraderAgent.formatDate(date))}</div>
+              <div style="${font}font-size:12px;font-weight:800;letter-spacing:2px;color:#4f46e5;text-transform:uppercase;">fstack</div>
+              <div style="${font}font-size:22px;font-weight:800;color:#0f172a;margin-top:6px;">Investment Signals</div>
+              <div style="${font}font-size:13.5px;color:#64748b;margin-top:4px;">${TraderAgent.escapeHtml(TraderAgent.formatDate(date))}</div>
             </td>
           </tr>
           <tr>
@@ -329,6 +506,7 @@ export class TraderAgent extends BaseAgent<boolean> {
           <tr>
             <td style="padding:0 32px 8px 32px;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                ${actionSection}
                 ${buySection}
                 ${sellSection}
                 ${holdSection}
@@ -337,7 +515,7 @@ export class TraderAgent extends BaseAgent<boolean> {
           </tr>
           <tr>
             <td style="padding:24px 32px 32px 32px;border-top:1px solid #eef1f5;margin-top:8px;">
-              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:11.5px;color:#94a3b8;line-height:1.6;">
+              <div style="${font}font-size:11.5px;color:#94a3b8;line-height:1.6;">
                 Generated automatically by fstack.<br>
                 Do not reply to this email — it is not monitored.
               </div>
@@ -357,7 +535,7 @@ export class TraderAgent extends BaseAgent<boolean> {
     confidence: number;
     reasoning: string;
   }): string {
-    const kind: "BUY" | "SELL" | "HOLD" =
+    const kind: Recommendation =
       signal.recommendation === "BUY" || signal.recommendation === "SELL"
         ? signal.recommendation
         : "HOLD";

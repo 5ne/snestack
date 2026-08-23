@@ -7,9 +7,63 @@ import { EquityAgent } from "./agents/equityAgent";
 import { CfoAgent } from "./agents/cfoAgent";
 import { TraderAgent } from "./agents/traderAgent";
 import { makeBatchResult } from "./core/models";
-import type { Signal, BatchAnalysisResult, BatchAnalysisInput } from "./core/models";
+import type {
+  Signal,
+  BatchAnalysisResult,
+  BatchAnalysisInput,
+  QuoteData,
+  EquityData,
+} from "./core/models";
 
 const logger = getLogger("Orchestrator");
+
+/**
+ * Merge live Finnhub fundamentals (from the quote) over the Morningstar-PDF-derived
+ * ones on `equity` — real-time data wins wherever Finnhub returned a value, since
+ * the PDF is only as fresh as whenever it was last downloaded (can be weeks/months
+ * stale), while Finnhub is fetched fresh on every run. Falls back to equity's
+ * Morningstar figure field-by-field wherever Finnhub didn't return that one
+ * (rate limit, unsupported ticker, renamed field, etc.) — see quoteAgent.ts's
+ * fetchLiveFundamentals() for the per-field fallback chains.
+ *
+ * Morningstar's own analyst judgments — fair value, price/fair-value, economic
+ * moat, star rating, uncertainty, capital allocation — have no real-time
+ * equivalent and are left untouched. The absolute FCF dollar amount (equity.fcf)
+ * is also left as Morningstar's, deliberately: see the fcf comment on QuoteData
+ * in core/models.ts for why.
+ *
+ * Recomputes the full red-flags list against the merged numbers afterward, so
+ * flags like "High P/E ratio" or "High debt" stay consistent with whatever
+ * actually gets shown in the email and handed to the CFO agent.
+ */
+function withLiveFundamentals(
+  quote: QuoteData | null | undefined,
+  equity: EquityData | null | undefined
+): EquityData | null | undefined {
+  if (!equity || !quote) return equity;
+
+  const merged: EquityData = {
+    ...equity,
+    peRatio: quote.peRatio ?? equity.peRatio,
+    pbRatio: quote.pbRatio ?? equity.pbRatio,
+    debtToEquity: quote.debtToEquity ?? equity.debtToEquity,
+    fcfYield: quote.fcfYield ?? equity.fcfYield,
+    dividendYield: quote.dividendYield ?? equity.dividendYield,
+    earningsGrowth: quote.earningsGrowth ?? equity.earningsGrowth,
+    revenueGrowth: quote.revenueGrowth ?? equity.revenueGrowth,
+  };
+
+  merged.redFlags = EquityAgent.detectRedFlags({
+    pe_ratio: merged.peRatio,
+    debt_to_equity: merged.debtToEquity,
+    fcf: merged.fcf,
+    fcf_yield: merged.fcfYield,
+    earnings_growth: merged.earningsGrowth,
+    revenue_growth: merged.revenueGrowth,
+  });
+
+  return merged;
+}
 
 export class AnalysisOrchestrator {
   private readonly db: Db;
@@ -62,12 +116,19 @@ export class AnalysisOrchestrator {
         this.equityAgent.batchAnalyze(allTickers),
       ]);
 
-      // Build CFO input
+      // Merge live Finnhub fundamentals over Morningstar's once per ticker — reused
+      // for both the CFO's input and the email (so what the CFO reasoned about is
+      // exactly what shows up in the email's financials).
+      const mergedEquities: Record<string, EquityData | null | undefined> = {};
+      for (const ticker of allTickers) {
+        mergedEquities[ticker] = withLiveFundamentals(quotes[ticker], equities[ticker]);
+      }
+
       const cfoInput: BatchAnalysisInput[] = allTickers.map((ticker) => ({
         ticker,
         quote: quotes[ticker],
         strategy: strategies[ticker],
-        equity: equities[ticker],
+        equity: mergedEquities[ticker],
       }));
 
       logger.info("Synthesizing via Claude CFO agent");
@@ -83,6 +144,7 @@ export class AnalysisOrchestrator {
         logger.info(`Sending email with ${signals.length} signals`);
         const ok = await this.traderAgent.sendBatchEmail(
           signals,
+          mergedEquities,
           startTime.toISOString().split("T")[0]
         );
         if (!ok) logger.warn("Email send failed, signals queued for retry");
@@ -119,7 +181,7 @@ export class AnalysisOrchestrator {
       ]);
 
       const signals = await this.cfoAgent.batchAnalyze([
-        { ticker, quote, strategy, equity },
+        { ticker, quote, strategy, equity: withLiveFundamentals(quote, equity) },
       ]);
       return signals[0] ?? null;
     } catch (e) {

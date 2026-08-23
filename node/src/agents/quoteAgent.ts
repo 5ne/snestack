@@ -19,6 +19,55 @@ interface FinnhubCandles {
   s: string;    // status: "ok" | "no_data"
 }
 
+// Field names per Finnhub's public "Basic Financials" (/stock/metric?metric=all)
+// docs. NOT independently verified against a live response in the session that
+// wrote this (that sandbox had no network route to finnhub.io) — every field is
+// read defensively (multiple candidate names, resolved to null on any miss), so
+// a wrong/renamed field degrades to "fall back to Morningstar" rather than
+// crashing or silently mis-scaling a number. If a field consistently comes back
+// null for tickers where a value is expected, log the raw `metric` object once
+// and true up the field name here.
+interface FinnhubMetric {
+  peTTM?: number | null;
+  peBasicExclExtraTTM?: number | null;
+  peExclExtraTTM?: number | null;
+  peNormalizedAnnual?: number | null;
+  pbQuarterly?: number | null;
+  pbAnnual?: number | null;
+  currentDividendYieldTTM?: number | null;
+  dividendYieldIndicatedAnnual?: number | null;
+  "totalDebt/totalEquityQuarterly"?: number | null;
+  "totalDebt/totalEquityAnnual"?: number | null;
+  "longTermDebt/equityQuarterly"?: number | null;
+  "longTermDebt/equityAnnual"?: number | null;
+  freeCashFlowTTM?: number | null;
+  freeCashFlowAnnual?: number | null;
+  marketCapitalization?: number | null;
+  epsGrowthTTMYoy?: number | null;
+  epsGrowth5Y?: number | null;
+  revenueGrowthTTMYoy?: number | null;
+  revenueGrowth5Y?: number | null;
+}
+
+interface FinnhubMetricResponse {
+  metric?: FinnhubMetric;
+}
+
+/** Live fundamentals pulled from Finnhub's Basic Financials endpoint. */
+export interface LiveFundamentals {
+  peRatio: number | null;
+  pbRatio: number | null;
+  debtToEquity: number | null;
+  fcfYield: number | null;
+  dividendYield: number | null;
+  earningsGrowth: number | null;
+  revenueGrowth: number | null;
+}
+
+function numOrNull(v: number | null | undefined): number | null {
+  return typeof v === "number" && isFinite(v) ? v : null;
+}
+
 export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
   private readonly apiKey: string;
   private readonly db?: Db;
@@ -42,7 +91,10 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
           return null;
         }
 
-        const closes = await this.fetchHistoricalCloses(ticker, 250);
+        const [closes, fundamentals] = await Promise.all([
+          this.fetchHistoricalCloses(ticker, 250),
+          this.fetchLiveFundamentals(ticker),
+        ]);
         const rsi = closes ? QuoteAgent.calculateRsi(closes) : null;
         const ma50 = closes ? QuoteAgent.calculateMovingAverage(closes, 50) : null;
         const ma200 = closes ? QuoteAgent.calculateMovingAverage(closes, 200) : null;
@@ -54,6 +106,13 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
           high: quoteData.h,
           low: quoteData.l,
           volume: quoteData.v,
+          peRatio: fundamentals?.peRatio ?? null,
+          pbRatio: fundamentals?.pbRatio ?? null,
+          debtToEquity: fundamentals?.debtToEquity ?? null,
+          fcfYield: fundamentals?.fcfYield ?? null,
+          dividendYield: fundamentals?.dividendYield ?? null,
+          earningsGrowth: fundamentals?.earningsGrowth ?? null,
+          revenueGrowth: fundamentals?.revenueGrowth ?? null,
           timestamp: new Date(),
         };
 
@@ -73,7 +132,10 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
           );
         }
 
-        this.logger.info(`Quote: ${ticker} @ $${result.price.toFixed(2)}`);
+        this.logger.info(
+          `Quote: ${ticker} @ $${result.price.toFixed(2)}` +
+            (result.peRatio != null ? ` (P/E ${result.peRatio.toFixed(1)})` : "")
+        );
         return result;
       },
       { maxAttempts: 3 }
@@ -132,6 +194,93 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
               } else {
                 resolve(parsed.c); // oldest-first (Finnhub returns chronological order)
               }
+            } catch {
+              resolve(null);
+            }
+          });
+        })
+        .on("error", () => resolve(null));
+    });
+  }
+
+  /**
+   * Fetch live fundamentals (P/E, P/B, D/E, FCF yield, dividend yield, earnings
+   * and revenue growth) from Finnhub's Basic Financials endpoint. Best-effort in
+   * two senses: (1) the whole call resolves null rather than throwing on any
+   * failure (network error, bad JSON), so a Finnhub hiccup never fails the whole
+   * quote — the caller falls back to EquityData's Morningstar figures in that
+   * case; (2) each individual field is read independently, so a single renamed
+   * or missing field doesn't blank out the others.
+   */
+  private fetchLiveFundamentals(ticker: string): Promise<LiveFundamentals | null> {
+    return new Promise((resolve) => {
+      const url =
+        `https://finnhub.io/api/v1/stock/metric` +
+        `?symbol=${encodeURIComponent(ticker)}&metric=all&token=${this.apiKey}`;
+      https
+        .get(url, (res) => {
+          let data = "";
+          res.on("data", (chunk) => (data += chunk));
+          res.on("end", () => {
+            try {
+              const parsed = JSON.parse(data) as FinnhubMetricResponse;
+              const m = parsed.metric;
+              if (!m) {
+                resolve(null);
+                return;
+              }
+
+              const peRatio = numOrNull(
+                m.peTTM ?? m.peBasicExclExtraTTM ?? m.peExclExtraTTM ?? m.peNormalizedAnnual
+              );
+              const pbRatio = numOrNull(m.pbQuarterly ?? m.pbAnnual);
+              // Taken as-is (no /100 normalization) on the assumption Finnhub reports
+              // this as a plain ratio (e.g. 1.5 meaning 1.5x), matching the convention
+              // detectRedFlags() already assumes (its "High debt" threshold is > 1.5).
+              // Also unverified live — if flagged debt levels look off by ~100x once
+              // this runs for real, this field is reporting a percentage instead and
+              // needs a /100 here. Previously this was always null (morningstarParser
+              // never actually parsed it from the PDF), so this is new coverage either way.
+              const debtToEquity = numOrNull(
+                m["totalDebt/totalEquityQuarterly"] ??
+                  m["totalDebt/totalEquityAnnual"] ??
+                  m["longTermDebt/equityQuarterly"] ??
+                  m["longTermDebt/equityAnnual"]
+              );
+
+              // Finnhub reports these as percentage points (e.g. 2.3 for 2.3%),
+              // matching the convention EquityData/Morningstar already use
+              // internally as fractions (0.023) — normalize the same way.
+              const dividendYieldPct = numOrNull(
+                m.currentDividendYieldTTM ?? m.dividendYieldIndicatedAnnual
+              );
+              const dividendYield = dividendYieldPct != null ? dividendYieldPct / 100 : null;
+
+              const earningsGrowthPct = numOrNull(m.epsGrowthTTMYoy ?? m.epsGrowth5Y);
+              const earningsGrowth = earningsGrowthPct != null ? earningsGrowthPct / 100 : null;
+
+              const revenueGrowthPct = numOrNull(m.revenueGrowthTTMYoy ?? m.revenueGrowth5Y);
+              const revenueGrowth = revenueGrowthPct != null ? revenueGrowthPct / 100 : null;
+
+              // fcfYield computed as raw FCF / market cap rather than trusting a
+              // named "yield" field — both freeCashFlowTTM and marketCapitalization
+              // come from the same Finnhub payload, so whatever unit scale Finnhub
+              // reports them in cancels out in the ratio. (The absolute FCF dollar
+              // figure itself is intentionally NOT taken from here — see the
+              // fcf field comment on QuoteData in core/models.ts.)
+              const fcf = numOrNull(m.freeCashFlowTTM ?? m.freeCashFlowAnnual);
+              const marketCap = numOrNull(m.marketCapitalization);
+              const fcfYield = fcf != null && marketCap ? fcf / marketCap : null;
+
+              resolve({
+                peRatio,
+                pbRatio,
+                debtToEquity,
+                fcfYield,
+                dividendYield,
+                earningsGrowth,
+                revenueGrowth,
+              });
             } catch {
               resolve(null);
             }

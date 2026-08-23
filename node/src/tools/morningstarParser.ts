@@ -67,16 +67,33 @@ export async function parseMorningstarPdf(
     result.morningstar_rating = starMatch[1].length;
   }
 
+  // P/E, P/B, and Dividend Yield all live in the same header "valuation vs. peers"
+  // table (ticker's own column first, then 3 peer/industry columns). pdf-parse strips
+  // the table's cell whitespace, so the raw text looks like
+  // "Price/Earning28.4237.08—27.43" and "Dividend Yield0.23%0.34%0.00%0.77%" — label
+  // immediately (no space) followed by 4 concatenated values, each 2 decimal digits.
+  // Anchoring on that adjacency + exactly 2 decimals isolates the ticker's own value.
+  //
+  // A later, unrelated multi-year valuation-history table repeats each label with a
+  // *space* before single-decimal figures (e.g. "Price/Earning 24.3 23.7 29.0 ..."
+  // concatenated to "24.323.729.0..."). The old regexes required that space and ended
+  // up matching this wrong table instead — for most tickers they didn't match at all
+  // (no match on percent-suffixed dividend yield), and for a few (e.g. DELL, GOOG,
+  // NVDA) they silently returned a plausible-looking but wrong number, because
+  // parseFloat() stops at the second "." in a run like "24.323.729.0...", yielding
+  // 24.323 → 24.3. The adjacency + \d{2} anchor below rules that table out entirely,
+  // since its figures are single-decimal and space-separated.
+
   // P/E ratio
-  const peMatch = fullText.match(/Price\/Earning\s+([\d,.]+|—)\s/);
+  const peMatch = fullText.match(/Price\/Earning(\d+\.\d{2}|—)/);
   if (peMatch) result.pe_ratio = cleanNumber(peMatch[1]);
 
   // P/B ratio
-  const pbMatch = fullText.match(/Price\/Book\s+([\d,.]+|—)\s/);
+  const pbMatch = fullText.match(/Price\/Book(\d+\.\d{2}|—)/);
   if (pbMatch) result.pb_ratio = cleanNumber(pbMatch[1]);
 
   // Dividend yield
-  const divMatch = fullText.match(/Dividend Yield\s+([\d,.]+%|—)\s/);
+  const divMatch = fullText.match(/Dividend Yield(\d+\.\d{2}%|—)/);
   if (divMatch) {
     const raw = divMatch[1].replace("%", "").trim();
     const val = cleanNumber(raw);
