@@ -351,9 +351,17 @@ export class TraderAgent extends BaseAgent<boolean> {
 </html>`;
   }
 
-  static buildRetryHtml(signal: Signal): string {
-    const kind = (signal.recommendation as "BUY" | "SELL" | "HOLD") ?? "HOLD";
-    const c = COLORS[kind] ?? COLORS.HOLD;
+  static buildRetryHtml(signal: {
+    ticker: string;
+    recommendation: string;
+    confidence: number;
+    reasoning: string;
+  }): string {
+    const kind: "BUY" | "SELL" | "HOLD" =
+      signal.recommendation === "BUY" || signal.recommendation === "SELL"
+        ? signal.recommendation
+        : "HOLD";
+    const c = COLORS[kind];
     const ticker = TraderAgent.escapeHtml(signal.ticker.toUpperCase());
     const reasoning = TraderAgent.escapeHtml(signal.reasoning);
     return `<!DOCTYPE html>
