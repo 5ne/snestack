@@ -68,3 +68,6 @@ reports/error/
 # Python build artifacts
 fstack.egg-info/
 python/fstack.egg-info/
+
+# Local scratch (orphaned/temp files staged for manual deletion)
+_to_delete/
