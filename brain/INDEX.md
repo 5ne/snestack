@@ -1,6 +1,6 @@
 # fstack Brain
 
-One markdown file per company under `companies/`, in the gBrain-style "compiled truth + timeline" pattern: your own stated thesis at the top (quoted verbatim from `fstack.db`), then a dated history underneath.
+One markdown file per public company under `investing/public/companies/` (private holdings will get their own `investing/private/companies/` once any exist), in the gBrain-style "compiled truth + timeline" pattern: your own stated thesis at the top (quoted verbatim from `fstack.db`), then a dated history underneath.
 
 ## Companies
 

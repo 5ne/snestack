@@ -16,7 +16,7 @@ Run `long-term-quality.md` for every current position and watchlist name — tha
 ## Data sources these skills expect
 
 - Quote + RSI/50MA/200MA + Morningstar fundamentals for every position/watchlist ticker: run `node dist/cli.js data-dump` from `node/` (built via `npm run build`, needs `NODE_OPTIONS=--experimental-sqlite`). Purely deterministic — no CFO/Claude call — prints one JSON object per ticker.
-- This ticker's own history and your stated thesis: `brain/companies/{TICKER}.md`.
+- This ticker's own history and your stated thesis: `brain/investing/public/companies/{TICKER}.md`.
 - To report a decision back out: write signals as a JSON array of `{ticker, recommendation, confidence, reasoning, fromWatchlist}` and run `node dist/cli.js notify --file <path>` — sends the batch email via your existing Gmail setup and records the signals into `fstack.db`'s `signals` table.
 
 ## Status

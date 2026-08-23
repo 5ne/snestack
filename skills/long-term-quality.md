@@ -8,7 +8,7 @@
 
 1. Fundamentals via the Morningstar report (`EquityAgent` / `morningstarParser.ts`): fair value, price-to-fair-value, economic moat, star rating, uncertainty, capital allocation grade, P/E, P/B, debt/equity, FCF, FCF yield, dividend yield, earnings growth, revenue growth, and any detected red flags.
 2. Price/technical snapshot (`QuoteAgent`): current price, RSI-14, 50-day MA, 200-day MA.
-3. This ticker's brain file (`brain/companies/{TICKER}.md`) — the user's own stated thesis (quoted verbatim there) and the history of past calls on this name.
+3. This ticker's brain file (`brain/investing/public/companies/{TICKER}.md`) — the user's own stated thesis (quoted verbatim there) and the history of past calls on this name.
 4. `skills/references/quality-bar.md` for the current numeric defaults — read it fresh each time rather than hardcoding numbers here, since the user tunes it directly.
 
 ## Judgment process
