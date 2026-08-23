@@ -33,6 +33,11 @@ export class Config {
     return val;
   }
 
+  /** Set a configuration value in the current process environment. */
+  static set(key: string, value: string): void {
+    process.env[key] = value;
+  }
+
   getDatabasePath(): string {
     return Config.get(Config.DATABASE_PATH) ?? Config.DEFAULT_DB_PATH;
   }
@@ -76,6 +81,54 @@ export class Config {
 
   getSmsPhone(): string | undefined {
     return Config.get(Config.SMS_PHONE);
+  }
+
+  /**
+   * Write current FSTACK_* environment variables to a .env file, preserving
+   * any existing non-FSTACK lines and merging with existing FSTACK_* values.
+   * Mirrors the Python implementation's save_to_file.
+   */
+  saveToFile(envFile?: string): string {
+    const target = envFile ?? path.join(process.cwd(), ".env");
+    const dir = path.dirname(target);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    const existing: Record<string, string> = {};
+    if (fs.existsSync(target)) {
+      const contents = fs.readFileSync(target, "utf8");
+      for (const rawLine of contents.split("\n")) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#") || !line.includes("=")) continue;
+        const idx = line.indexOf("=");
+        const key = line.slice(0, idx).trim();
+        let val = line.slice(idx + 1).trim();
+        if (
+          (val.startsWith('"') && val.endsWith('"')) ||
+          (val.startsWith("'") && val.endsWith("'"))
+        ) {
+          val = val.slice(1, -1);
+        }
+        existing[key] = val;
+      }
+    }
+
+    for (const [key, value] of Object.entries(process.env)) {
+      if (key.startsWith("FSTACK_") && value !== undefined) {
+        existing[key] = value;
+      }
+    }
+
+    const lines = ["# fstack configuration", "# Auto-generated - edit with care", ""];
+    for (const key of Object.keys(existing).sort()) {
+      const value = existing[key];
+      if (value.includes(" ") || value.includes("=")) {
+        lines.push(`${key}="${value}"`);
+      } else {
+        lines.push(`${key}=${value}`);
+      }
+    }
+    fs.writeFileSync(target, lines.join("\n") + "\n");
+    return target;
   }
 
   static validateApiKey(key: string, keyType: string): boolean {

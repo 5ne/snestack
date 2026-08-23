@@ -40,7 +40,21 @@ npm run dev -- signals NVDA
 
 # Retry failed notifications
 npm run dev -- retry
+
+# Organize freshly-downloaded Morningstar PDFs from reports/staging
+npm run dev -- organize-reports
+
+# Set up a daily cron job (run against the built CLI — `npm run build` first)
+npm run build
+npm run dev -- scheduler --setup
+npm run dev -- scheduler --list
 ```
+
+`setup` is fully interactive — it prompts for each API key, validates the
+format, and writes `.env` for you, mirroring `fstack setup` in the Python
+implementation. Twilio SMS credentials are collected and stored the same way
+Python collects them, but neither implementation actually sends SMS yet —
+only email notifications are wired up.
 
 ## Tests
 
@@ -49,7 +63,7 @@ NODE_OPTIONS=--experimental-sqlite npm test
 NODE_OPTIONS=--experimental-sqlite npm run test:coverage
 ```
 
-176 tests across 13 suites — all passing.
+204 tests across 16 suites — all passing.
 
 ## Database
 
@@ -60,10 +74,11 @@ Points to `../fstack.db` (the shared root database) via `FSTACK_DATABASE_PATH` i
 ```
 node/
 ├── src/
-│   ├── core/          # db, config, models, errors, logger
+│   ├── core/          # db, config, setup, models, errors, logger
 │   ├── agents/        # quote, strategy, equity, cfo, trader
-│   ├── tools/         # morningstar PDF parser
+│   ├── tools/         # morningstar PDF parser, report organizer
 │   ├── orchestrator.ts
+│   ├── scheduler.ts   # cron install/list for daily batch runs
 │   └── cli.ts
 └── tests/             # Jest test suite (mirrors src/)
 ```
