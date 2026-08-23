@@ -19,8 +19,5 @@
     "noUnusedParameters": false
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests"],
-  "ts-node": {
-    "files": true
-  }
+  "exclude": ["node_modules", "dist", "tests"]
 }

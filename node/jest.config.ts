@@ -35,7 +35,6 @@ const config: Config = {
   coverageDirectory: "coverage",
   coverageReporters: ["text", "lcov", "html"],
   verbose: true,
-  forceExit: true,
 };
 
 export default config;
