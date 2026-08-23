@@ -25,7 +25,7 @@ Reports are automatically synced across machines via Git LFS. No manual setup ne
 **Option 2: Automated (Coming Soon)**
 Once Schwab API is approved, run:
 ```bash
-python -m fstack download-reports GOOG MU NVDA
+npm run dev -- download-reports GOOG MU NVDA   # run from node/
 ```
 
 ## Parsing Reports

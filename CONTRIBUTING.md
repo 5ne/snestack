@@ -5,11 +5,10 @@ Thank you for your interest in contributing! This guide explains how to set up y
 ## Development Setup
 
 ### Prerequisites
-- Python 3.9+
-- pip
+- Node.js 22+
+- npm
 - git
 - git-lfs (for syncing Morningstar reports across machines)
-- crontab (for scheduler testing)
 
 ### Install for Development
 
@@ -22,34 +21,31 @@ brew install git-lfs  # macOS
 # or apt-get install git-lfs  # Linux
 git lfs install
 
-# Install with dev dependencies
-pip install -e ".[dev]"
-
-# Install pre-commit hooks (optional)
-pre-commit install
+cd node
+npm install
+cp .env.example .env
+# Edit .env with your API keys
 ```
 
 ### Morningstar Reports
 
-Reports are stored in `fstack/reports/` and synced via Git LFS across all machines.
+Reports are stored in `reports/` at the repo root and synced via Git LFS across all machines.
 
-**To add a report (manual, until Selenium automation is complete):**
+**To add a report (manual, until Schwab automation is complete):**
 1. Log into Schwab → Research
 2. Search for ticker (e.g., "MU")
-3. Download Morningstar PDF to `fstack/reports/{TICKER}-morningstar.pdf`
+3. Download Morningstar PDF to `reports/{TICKER}-morningstar.pdf`
 4. Commit and push:
    ```bash
-   git add fstack/reports/MU-morningstar.pdf
+   git add reports/MU-morningstar.pdf
    git commit -m "data: add MU Morningstar report"
    git push
    ```
 
-**Automated download (in development):**
-Once Selenium automation is complete, reports will be downloaded automatically:
+**Automated download (planned):**
 ```bash
-python -m fstack download-reports MU NVDA GOOG
+npm run dev -- download-reports MU NVDA GOOG
 ```
-This will use Selenium to automate the Schwab research download workflow.
 
 **To pull reports on another machine:**
 ```bash
@@ -57,41 +53,37 @@ git pull          # Automatically fetches LFS files
 git lfs pull      # If LFS files don't sync automatically
 ```
 
-See `fstack/reports/README.md` for more details.
+See `reports/README.md` for more details.
 
 ### Run Tests
 
 ```bash
+cd node
+export NODE_OPTIONS=--experimental-sqlite
+
 # Run all tests
-pytest tests/ -v
+npm test
 
-# Run with coverage
-pytest tests/ --cov=fstack --cov-report=html
+# Watch mode
+npm run test:watch
 
-# Run only integration tests
-pytest tests/test_integration.py -v
-
-# Run only edge-case tests
-pytest tests/test_edge_cases.py -m optional -v
-
-# Run specific test
-pytest tests/test_integration.py::TestDatabase::test_add_position -v
+# With coverage
+npm run test:coverage
 ```
 
 ### Code Quality
 
 ```bash
-# Format code
-black fstack/ tests/
+cd node
 
 # Lint
-ruff check fstack/ tests/ --fix
+npm run lint
 
 # Type check
-mypy fstack/ tests/
+npm run typecheck
 
 # All together
-black fstack/ tests/ && ruff check fstack/ tests/ --fix && mypy fstack/ tests/
+npm run typecheck && npm run lint && npm test
 ```
 
 ## Architecture Overview
@@ -118,89 +110,83 @@ User: Email notification
 ## Key Files
 
 ```
-fstack/
-├── cli.py              ← Main entry point
-├── config.py           ← Environment config + key validation
-├── scheduler.py        ← Cron setup
+node/src/
+├── cli.ts               ← Main entry point
+├── orchestrator.ts       ← Pipeline orchestration
+├── scheduler.ts          ← Cron install/list for daily batch runs
 ├── core/
-│   ├── db.py          ← SQLite schema + queries
-│   ├── models.py      ← Pydantic data classes
-│   ├── setup.py       ← Interactive setup
-│   ├── analysis.py    ← Orchestration logic
-│   ├── logger.py      ← Structured logging
-│   └── errors.py      ← Custom exceptions
-└── agents/
-    ├── base.py        ← BaseAgent + retry logic
-    ├── quote_agent.py
-    ├── strategy_agent.py
-    ├── equity_agent.py
-    ├── cfo_agent.py
-    └── trader_agent.py
+│   ├── db.ts            ← SQLite schema + queries
+│   ├── config.ts        ← Environment config + key validation
+│   ├── setup.ts         ← Interactive setup
+│   ├── models.ts        ← Zod data schemas
+│   ├── logger.ts        ← Structured logging
+│   └── errors.ts        ← Custom exceptions
+├── agents/
+│   ├── base.ts          ← BaseAgent + retry logic
+│   ├── quoteAgent.ts
+│   ├── strategyAgent.ts
+│   ├── equityAgent.ts
+│   ├── cfoAgent.ts
+│   └── traderAgent.ts
+└── tools/
+    ├── morningstarParser.ts
+    └── reportOrganizer.ts
 ```
 
 ## Adding a New Agent
 
-1. Create `fstack/agents/my_agent.py`
-2. Inherit from `BaseAgent` or `ThrottledAPIAgent`
-3. Implement `async def analyze(ticker: str, **kwargs) -> Optional[Result]`
-4. Add retry decorator if needed: `@retry_async(max_attempts=3)`
-5. Add to `fstack/agents/__init__.py`
-6. Write tests in `tests/test_agents.py`
+1. Create `node/src/agents/myAgent.ts`
+2. Extend `BaseAgent` (see `agents/base.ts` for retry/throttle helpers)
+3. Implement `async analyze(ticker: string, ...): Promise<Result | null>`
+4. Add tests in `node/tests/agents/`
+5. Wire it into `orchestrator.ts`
 
 Example:
 
-```python
-from fstack.agents.base import BaseAgent
+```ts
+import { BaseAgent } from "./base";
 
-class MyAgent(BaseAgent):
-    def __init__(self):
-        super().__init__(name="MyAgent")
+export class MyAgent extends BaseAgent {
+  constructor() {
+    super("MyAgent");
+  }
 
-    async def analyze(self, ticker: str, **kwargs) -> Optional[dict]:
-        try:
-            result = await self._fetch_data(ticker)
-            return result
-        except Exception as e:
-            self.logger.error(f"Analysis failed: {e}")
-            return None
+  async analyze(ticker: string): Promise<MyResult | null> {
+    try {
+      return await this.fetchData(ticker);
+    } catch (e) {
+      this.logger.error(`Analysis failed: ${e}`);
+      return null;
+    }
+  }
 
-    async def _fetch_data(self, ticker: str) -> dict:
-        # Your logic here
-        pass
+  private async fetchData(ticker: string): Promise<MyResult> {
+    // Your logic here
+  }
+}
 ```
 
 ## Adding a New CLI Command
 
-1. Add subparser in `cli.py`:
-```python
-my_parser = subparsers.add_parser("mycommand", help="Description")
-my_parser.add_argument("--option", help="Option help")
+1. Add a `commander` subcommand in `cli.ts`:
+```ts
+program
+  .command("mycommand")
+  .description("Description")
+  .option("--option <value>", "Option help")
+  .action(async (opts) => {
+    // Your logic
+  });
 ```
 
-2. Add command handler:
-```python
-def cmd_mycommand(args) -> int:
-    try:
-        # Your logic
-        return 0
-    except Exception as e:
-        logger.error(f"Command failed: {e}")
-        return 1
-```
-
-3. Add to main dispatcher:
-```python
-elif args.command == "mycommand":
-    return cmd_mycommand(args)
-```
+2. Add tests in `node/tests/cli.test.ts` (spawns the real CLI as a smoke test).
 
 ## Testing Guidelines
 
-- Write tests for new agents (unit tests in `tests/test_agents.py`)
-- Write integration tests for new CLI commands
-- Mark flaky tests with `@pytest.mark.optional`
-- Use `test_db` fixture for database tests
-- Mock external APIs (Finnhub, Claude, Gmail)
+- Write unit tests for new agents (`node/tests/agents/`)
+- Write integration/CLI smoke tests for new commands
+- Mock external APIs (Finnhub, Claude, Gmail) rather than hitting them in tests
+- Use the shared fixtures under `node/tests/core/` for database tests
 
 ## Commit Message Format
 
@@ -215,26 +201,12 @@ refactor: refactor Y module
 chore: update dependencies
 ```
 
-Example:
-
-```
-feat: add EquityAgent red flag detection
-
-- Detect high debt/equity ratios
-- Detect negative FCF
-- Flag declining earnings/revenue
-- Tests in test_agents.py
-
-Co-Authored-By: Your Name <your.email@example.com>
-```
-
 ## Reporting Issues
 
 Before opening an issue, check:
-
 1. Is this a duplicate? Search existing issues
 2. Can you reproduce it? Include steps
-3. What's your environment? Python version, OS
+3. What's your environment? Node version, OS
 4. What do you expect? vs. What actually happened?
 
 ## Proposing Features
@@ -249,13 +221,11 @@ Before opening an issue, check:
 ## Code Review
 
 All PRs require review before merge. We look for:
-
-- ✓ Tests pass
-- ✓ Code formatted (black/ruff/mypy)
-- ✓ Follows architecture patterns
-- ✓ Docstrings on public APIs
-- ✓ No breaking changes (or major version bump)
-- ✓ Docs updated if needed
+- Tests pass
+- Code formatted and linted (`npm run lint`, `npm run typecheck`)
+- Follows architecture patterns
+- No breaking changes (or major version bump)
+- Docs updated if needed
 
 ## Questions?
 

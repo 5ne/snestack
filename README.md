@@ -8,15 +8,12 @@ An AI-powered system that synthesizes technical, fundamental, and qualitative si
 
 ```
 fstack/
-├── fstack.db          # Shared SQLite database (positions, signals, quotes)
-├── reports/           # Morningstar PDF research reports (shared)
-├── node/              # Node.js / TypeScript implementation (active)
-└── python/            # Python implementation (original reference)
+├── fstack.db          # SQLite database (positions, signals, quotes)
+├── reports/           # Morningstar PDF research reports
+└── node/              # Node.js / TypeScript implementation
 ```
 
-Both implementations share the same SQLite database and Morningstar reports. They are functionally equivalent — the Node implementation is the active development target; Python is the original reference.
-
-## Shared Database
+## Database
 
 `fstack.db` at the root is the single source of truth for:
 - Positions and watchlist
@@ -24,7 +21,7 @@ Both implementations share the same SQLite database and Morningstar reports. The
 - CFO signals and recommendations
 - Pending notification queue
 
-Both implementations point to `../fstack.db` by default when run from their respective directories.
+The CLI points to `../fstack.db` by default when run from `node/`.
 
 ## Morningstar Reports
 
@@ -37,15 +34,9 @@ reports/
 └── ...
 ```
 
-Both implementations look for reports in `../reports/` by default.
+## Implementation
 
-## Implementations
-
-### Node (active)
-TypeScript, node:sqlite, Claude SDK, Finnhub, nodemailer. See [`node/README.md`](node/README.md).
-
-### Python (reference)
-Python 3.9+, SQLite, Anthropic SDK, Finnhub. See [`python/README.md`](python/README.md).
+TypeScript, node:sqlite, Claude SDK, Finnhub, nodemailer. See [`node/README.md`](node/README.md) for setup, CLI commands, and environment variables.
 
 ## Architecture
 
@@ -69,7 +60,7 @@ Positions + Watchlist
 
 ## Roadmap
 
-- [ ] Next.js web UI (Node implementation as backend)
+- [ ] Next.js web UI
 - [ ] Supabase migration (multi-user support)
 - [ ] Broker integrations (Schwab, Alpaca)
 - [ ] Extended technical indicators (MACD, Bollinger Bands)

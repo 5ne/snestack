@@ -1,27 +1,12 @@
 # Node.js
-node/node_modules/
+node_modules/
 node/dist/
 node/coverage/
 *.tsbuildinfo
 
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.so
-*.egg
-*.egg-info/
-build/
-.eggs/
-*.egg-link
-python/.venv/
-python/venv/
-
 # Environment variables
 .env
 node/.env
-python/.env
 .env.*
 !.env.example
 !node/.env.example
@@ -50,7 +35,6 @@ node/logs/
 
 # Testing
 .coverage
-.pytest_cache/
 htmlcov/
 
 # gstack
@@ -64,10 +48,6 @@ reports/archive/
 reports/staging/
 reports/bak/
 reports/error/
-
-# Python build artifacts
-fstack.egg-info/
-python/fstack.egg-info/
 
 # Local scratch (orphaned/temp files staged for manual deletion)
 _to_delete/
