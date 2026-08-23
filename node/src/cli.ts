@@ -10,6 +10,10 @@ import { setupCronInteractive, listCronJobs } from "./scheduler";
 import { organizeStagedReports } from "./tools/reportOrganizer";
 import { Db } from "./core/db";
 import { AnalysisOrchestrator } from "./orchestrator";
+import { QuoteAgent } from "./agents/quoteAgent";
+import { EquityAgent } from "./agents/equityAgent";
+import { TraderAgent } from "./agents/traderAgent";
+import type { Signal } from "./core/models";
 
 const program = new Command();
 
@@ -37,19 +41,49 @@ position
   .command("add <ticker> <shares> <cost_basis>")
   .description("Add or update a portfolio position")
   .option("-n, --notes <notes>", "Position notes")
-  .action((ticker: string, sharesStr: string, costBasisStr: string, opts: { notes?: string }) => {
+  .option(
+    "-s, --strategy <strategy>",
+    "Strategy this position is held under: long-term, swing, or both (default: long-term, or whatever it already was on update)"
+  )
+  .action(
+    (
+      ticker: string,
+      sharesStr: string,
+      costBasisStr: string,
+      opts: { notes?: string; strategy?: string }
+    ) => {
+      const config = getConfig();
+      const db = new Db(config.getDatabasePath());
+      const shares = parseFloat(sharesStr);
+      const costBasis = parseFloat(costBasisStr);
+      if (isNaN(shares) || isNaN(costBasis)) {
+        console.error("shares and cost_basis must be numbers");
+        process.exit(1);
+      }
+      if (opts.strategy && !["long-term", "swing", "both"].includes(opts.strategy)) {
+        console.error("--strategy must be one of: long-term, swing, both");
+        process.exit(1);
+      }
+      // Ensure ticker exists in tickers table
+      db.addTicker(ticker.toUpperCase(), ticker.toUpperCase(), "PUBLIC");
+      const ok = db.addPosition(ticker.toUpperCase(), shares, costBasis, opts.notes, opts.strategy);
+      console.log(ok ? `Position added: ${ticker.toUpperCase()}` : "Failed to add position");
+      db.close();
+    }
+  );
+
+position
+  .command("strategy <ticker> <strategy>")
+  .description("Set the strategy tag on an existing position without touching shares/cost basis (long-term, swing, or both)")
+  .action((ticker: string, strategy: string) => {
     const config = getConfig();
     const db = new Db(config.getDatabasePath());
-    const shares = parseFloat(sharesStr);
-    const costBasis = parseFloat(costBasisStr);
-    if (isNaN(shares) || isNaN(costBasis)) {
-      console.error("shares and cost_basis must be numbers");
+    if (!["long-term", "swing", "both"].includes(strategy)) {
+      console.error("strategy must be one of: long-term, swing, both");
       process.exit(1);
     }
-    // Ensure ticker exists in tickers table
-    db.addTicker(ticker.toUpperCase(), ticker.toUpperCase(), "PUBLIC");
-    const ok = db.addPosition(ticker.toUpperCase(), shares, costBasis, opts.notes);
-    console.log(ok ? `Position added: ${ticker.toUpperCase()}` : "Failed to add position");
+    const ok = db.updatePositionStrategy(ticker.toUpperCase(), strategy);
+    console.log(ok ? `Strategy set: ${ticker.toUpperCase()} -> ${strategy}` : "Position not found");
     db.close();
   });
 
@@ -77,7 +111,9 @@ position
       console.log("\nPositions:");
       console.log("-".repeat(60));
       positions.forEach((p) => {
-        console.log(`  ${p.ticker.padEnd(8)} ${p.shares} shares @ $${p.cost_basis.toFixed(2)}`);
+        console.log(
+          `  ${p.ticker.padEnd(8)} ${p.shares} shares @ $${p.cost_basis.toFixed(2)}  [${p.strategy}]`
+        );
         if (p.notes) console.log(`           ${p.notes}`);
       });
     }
@@ -326,6 +362,109 @@ program
       });
     }
     db.close();
+  });
+
+// ── Data dump for a Claude-driven analysis (deterministic only, no CFO call) ─
+// This is the "fat code" half of the thin-harness/fat-skills split: it fetches
+// and computes numbers (quotes, technicals, Morningstar fundamentals) and does
+// no judgment. A Claude session reads this JSON plus skills/ and brain/ and
+// does the actual BUY/SELL/HOLD reasoning — see skills/INDEX.md.
+
+program
+  .command("data-dump")
+  .description(
+    "Dump quote + fundamentals data for all positions/watchlist tickers as JSON. " +
+      "No CFO/Claude call — purely deterministic data for an external judgment step to consume."
+  )
+  .action(async () => {
+    const config = getConfig();
+    const db = new Db(config.getDatabasePath());
+    try {
+      const positions = db.getAllPositions();
+      const watchlist = db.getWatchlist();
+      const positionsByTicker = Object.fromEntries(positions.map((p) => [p.ticker, p]));
+      const watchlistByTicker = Object.fromEntries(watchlist.map((w) => [w.ticker, w]));
+      const allTickers = [...new Set([...positions.map((p) => p.ticker), ...watchlist.map((w) => w.ticker)])];
+
+      if (allTickers.length === 0) {
+        console.log(JSON.stringify([]));
+        return;
+      }
+
+      const quoteAgent = new QuoteAgent(config.getFinnhubApiKey(), db);
+      const equityAgent = new EquityAgent();
+
+      // QuoteAgent writes quote+indicators into the db as a side effect; read
+      // them back from there rather than from its return value, which doesn't
+      // include RSI/MA (those are computed and persisted, not returned).
+      await quoteAgent.batchAnalyze(allTickers);
+      const equities = await equityAgent.batchAnalyze(allTickers);
+
+      const output = allTickers.map((ticker) => {
+        const pos = positionsByTicker[ticker];
+        const watch = watchlistByTicker[ticker];
+        return {
+          ticker,
+          isPosition: !!pos,
+          isWatchlist: !!watch,
+          positionStrategyTag: pos?.strategy ?? null,
+          shares: pos?.shares ?? null,
+          costBasis: pos?.cost_basis ?? null,
+          watchlistThesis: watch?.thesis ?? null,
+          quote: db.getLatestQuote(ticker) ?? null,
+          equity: equities[ticker] ?? null,
+        };
+      });
+
+      console.log(JSON.stringify(output, null, 2));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command("notify")
+  .description(
+    "Send a batch email for a set of signals and record them in signal history. " +
+      "Deterministic — takes already-decided recommendations, does no judgment itself."
+  )
+  .option(
+    "--file <path>",
+    "Path to a JSON file with an array of {ticker, recommendation, confidence, reasoning, fromWatchlist?}. Reads stdin if omitted."
+  )
+  .action(async (opts: { file?: string }) => {
+    const config = getConfig();
+    const db = new Db(config.getDatabasePath());
+    try {
+      const raw = opts.file ? fs.readFileSync(opts.file, "utf8") : fs.readFileSync(0, "utf8");
+      const parsed = JSON.parse(raw) as Array<{
+        ticker: string;
+        recommendation: "BUY" | "SELL" | "HOLD";
+        confidence: number;
+        reasoning: string;
+        fromWatchlist?: boolean;
+      }>;
+      const signals: Signal[] = parsed.map((s) => ({
+        ticker: s.ticker.toUpperCase(),
+        recommendation: s.recommendation,
+        confidence: s.confidence,
+        reasoning: s.reasoning,
+        date: new Date(),
+        fromWatchlist: s.fromWatchlist ?? false,
+        createdAt: new Date(),
+      }));
+      const trader = new TraderAgent(
+        db,
+        config.getGmailAddress(),
+        config.getGmailAppPassword(),
+        config.getNotificationEmail()
+      );
+      const ok = await trader.sendBatchEmail(signals);
+      console.log(ok ? `Email sent: ${signals.length} signals` : "Email failed, queued for retry");
+      if (!ok) process.exitCode = 1;
+    } finally {
+      db.close();
+    }
   });
 
 program.parseAsync(process.argv).catch((e) => {

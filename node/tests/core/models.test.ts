@@ -65,6 +65,48 @@ describe("Models validation (Zod)", () => {
         })
       ).toThrow();
     });
+
+    it("defaults strategy to long-term", () => {
+      const p = PositionSchema.parse({
+        ticker: "NVDA",
+        shares: 100,
+        costBasis: 850.0,
+        entryDate: new Date(),
+      });
+      expect(p.strategy).toBe("long-term");
+    });
+
+    it("accepts swing and both as strategy values", () => {
+      const swing = PositionSchema.parse({
+        ticker: "NVDA",
+        shares: 100,
+        costBasis: 850.0,
+        entryDate: new Date(),
+        strategy: "swing",
+      });
+      expect(swing.strategy).toBe("swing");
+
+      const both = PositionSchema.parse({
+        ticker: "NVDA",
+        shares: 100,
+        costBasis: 850.0,
+        entryDate: new Date(),
+        strategy: "both",
+      });
+      expect(both.strategy).toBe("both");
+    });
+
+    it("rejects an invalid strategy value", () => {
+      expect(() =>
+        PositionSchema.parse({
+          ticker: "NVDA",
+          shares: 100,
+          costBasis: 850.0,
+          entryDate: new Date(),
+          strategy: "yolo",
+        })
+      ).toThrow();
+    });
   });
 
   describe("WatchlistSchema", () => {

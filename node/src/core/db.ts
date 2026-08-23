@@ -11,6 +11,7 @@ export interface PositionRow {
   cost_basis: number;
   entry_date: string;
   notes: string | null;
+  strategy: string;
 }
 
 export interface WatchlistRow {
@@ -67,6 +68,7 @@ export class Db {
       this.db.exec("PRAGMA journal_mode = WAL");
       this.db.exec("PRAGMA foreign_keys = ON");
       this.initSchema();
+      this.migrateSchema();
     } catch (e) {
       throw new DatabaseError(`Failed to open database at ${dbPath}: ${e}`);
     }
@@ -90,6 +92,7 @@ export class Db {
         cost_basis REAL NOT NULL,
         entry_date TEXT NOT NULL,
         notes TEXT,
+        strategy TEXT NOT NULL DEFAULT 'long-term' CHECK(strategy IN ('long-term','swing','both')),
         FOREIGN KEY (ticker) REFERENCES tickers(symbol)
       );
 
@@ -149,6 +152,24 @@ export class Db {
     `);
   }
 
+  /**
+   * Idempotent migrations for databases created before a schema change.
+   * initSchema()'s CREATE TABLE IF NOT EXISTS only helps fresh databases —
+   * existing ones need an explicit ALTER TABLE for new columns.
+   */
+  private migrateSchema(): void {
+    const positionCols = this.db
+      .prepare("PRAGMA table_info(positions)")
+      .all() as unknown as Array<{ name: string }>;
+    const hasStrategy = positionCols.some((c) => c.name === "strategy");
+    if (!hasStrategy) {
+      this.db.exec(
+        `ALTER TABLE positions ADD COLUMN strategy TEXT NOT NULL DEFAULT 'long-term'
+         CHECK(strategy IN ('long-term','swing','both'))`
+      );
+    }
+  }
+
   // ── Tickers ────────────────────────────────────────────────────────────────
 
   addTicker(
@@ -173,18 +194,38 @@ export class Db {
 
   // ── Positions ──────────────────────────────────────────────────────────────
 
-  addPosition(ticker: string, shares: number, costBasis: number, notes?: string | null): boolean {
+  addPosition(
+    ticker: string,
+    shares: number,
+    costBasis: number,
+    notes?: string | null,
+    strategy?: string
+  ): boolean {
     try {
+      // Preserve existing notes/strategy on an update (INSERT OR REPLACE would
+      // otherwise silently wipe them if the caller doesn't re-specify them).
+      const existing = this.getPosition(ticker);
+      const finalNotes = notes !== undefined ? notes : (existing?.notes ?? null);
+      const finalStrategy = strategy !== undefined ? strategy : (existing?.strategy ?? "long-term");
       this.db
         .prepare(
-          `INSERT OR REPLACE INTO positions (ticker, shares, cost_basis, entry_date, notes)
-           VALUES (?, ?, ?, ?, ?)`
+          `INSERT OR REPLACE INTO positions (ticker, shares, cost_basis, entry_date, notes, strategy)
+           VALUES (?, ?, ?, ?, ?, ?)`
         )
-        .run(ticker, shares, costBasis, new Date().toISOString(), notes ?? null);
+        .run(ticker, shares, costBasis, new Date().toISOString(), finalNotes, finalStrategy);
       return true;
     } catch {
       return false;
     }
+  }
+
+  /** Update just the strategy tag for an existing position, without touching shares/cost basis. */
+  updatePositionStrategy(ticker: string, strategy: string): boolean {
+    if (!["long-term", "swing", "both"].includes(strategy)) return false;
+    const result = this.db
+      .prepare("UPDATE positions SET strategy = ? WHERE ticker = ?")
+      .run(strategy, ticker);
+    return (result.changes as number) > 0;
   }
 
   removePosition(ticker: string): boolean {

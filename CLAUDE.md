@@ -53,3 +53,12 @@ Use the `/browse` skill from gstack for all web browsing. Never use mcp__claude-
 - `/unfreeze` - Unfreeze deployments
 - `/gstack-upgrade` - Upgrade gstack
 - `/learn` - Learning and documentation
+
+## Investment Philosophy: Skills & Brain (in progress)
+
+This project is moving from hardcoded agent logic toward Garry Tan's "thin harness, fat skills" model. Two folders are being built out for this:
+
+- `skills/` — markdown judgment skills (start at `skills/INDEX.md`). Currently: `long-term-quality.md` (buy-and-hold, thesis-driven) and `swing-trading-large-cap.md` (tactical RSI swings on eligible large-cap names only). These two can both apply to the same ticker.
+- `brain/` — one file per company under `brain/companies/`, holding the user's own stated thesis plus a dated history. Start at `brain/INDEX.md`.
+
+**Not yet wired up**: `node/src/agents/strategyAgent.ts`, `equityAgent.ts`, and `cfoAgent.ts` still run their original hardcoded, generic logic — the skills above are drafts awaiting review. Don't assume the live `npm run dev -- batch` pipeline actually uses them yet.

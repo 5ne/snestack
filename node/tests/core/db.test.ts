@@ -72,6 +72,45 @@ describe("Db", () => {
       const pos = db.getPosition("NVDA");
       expect(pos?.shares).toBe(200);
     });
+
+    it("defaults strategy to long-term when not specified", () => {
+      db.addPosition("NVDA", 100, 850.0);
+      expect(db.getPosition("NVDA")?.strategy).toBe("long-term");
+    });
+
+    it("accepts an explicit strategy", () => {
+      db.addPosition("NVDA", 100, 850.0, null, "swing");
+      expect(db.getPosition("NVDA")?.strategy).toBe("swing");
+    });
+
+    it("preserves existing strategy on update when not re-specified", () => {
+      db.addPosition("NVDA", 100, 850.0, null, "both");
+      db.addPosition("NVDA", 200, 900.0); // no strategy passed — should not reset to long-term
+      expect(db.getPosition("NVDA")?.strategy).toBe("both");
+    });
+
+    it("preserves existing notes on update when not re-specified", () => {
+      db.addPosition("NVDA", 100, 850.0, "AI thesis");
+      db.addPosition("NVDA", 200, 900.0); // no notes passed — should not wipe them
+      expect(db.getPosition("NVDA")?.notes).toBe("AI thesis");
+    });
+
+    it("updatePositionStrategy changes just the strategy", () => {
+      db.addPosition("NVDA", 100, 850.0);
+      expect(db.updatePositionStrategy("NVDA", "swing")).toBe(true);
+      const pos = db.getPosition("NVDA");
+      expect(pos?.strategy).toBe("swing");
+      expect(pos?.shares).toBe(100); // untouched
+    });
+
+    it("updatePositionStrategy rejects an invalid strategy", () => {
+      db.addPosition("NVDA", 100, 850.0);
+      expect(db.updatePositionStrategy("NVDA", "yolo")).toBe(false);
+    });
+
+    it("updatePositionStrategy returns false for a non-existent position", () => {
+      expect(db.updatePositionStrategy("AAPL", "swing")).toBe(false);
+    });
   });
 
   // ── Watchlist ─────────────────────────────────────────────────────────────
