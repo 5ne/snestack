@@ -1,7 +1,7 @@
 {
   "name": "snestack",
   "version": "1.0.0",
-  "description": "Personal investment decision-support system",
+  "description": "Personal decision-support harness (thin harness, fat skills — financial and calendar domains, more planned)",
   "main": "dist/cli.js",
   "bin": {
     "snestack": "dist/cli.js"

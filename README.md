@@ -68,12 +68,17 @@ Positions + Watchlist
 
 ## Roadmap
 
-- [ ] Migrate the remaining deterministic-tool logic (red-flag detection, etc.) further, and retire the legacy `analyze`/`batch` pipeline once the skills path fully covers it
-- [ ] Next.js web UI
-- [ ] Supabase migration (multi-user support)
-- [ ] Broker integrations (Schwab, Alpaca)
-- [ ] Backtesting framework (offline, reading the same skills/brain markdown — see `CLAUDE.md`)
+**Harness** (applies across every domain):
+- [ ] More domains — any recurring "fetch some data, apply my own judgment" pattern is a candidate, not just investing or calendars
+- [ ] Non-linear orchestration — a router step or graph/event model instead of the current fixed per-skill call, once enough skills exist per domain to make that worth building
+- [ ] A structured signal/outcome log per domain (what was decided, what happened) as training data for future tuning
+
+**Financial domain:**
+- [ ] Retire the legacy `analyze`/`batch` pipeline once skill markdown fully covers what `CfoAgent` still does
+- [ ] Provider adapters for a second fundamentals source (a Morningstar API subscription, behind the existing `FundamentalsProvider` interface)
+- [ ] Backtesting / genetic-programming threshold tuning, offline, reading the same skill/brain markdown — never running live in the harness (see `CLAUDE.md`)
+- [ ] Next.js web UI, Supabase migration, broker integrations (Schwab, Alpaca)
 
 ## Disclaimer
 
-For educational purposes only. Past performance does not predict future results. The author is not responsible for investment losses.
+The financial domain is for educational purposes only. Past performance does not predict future results. The author is not responsible for investment losses.

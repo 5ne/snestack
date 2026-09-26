@@ -21,7 +21,7 @@ const program = new Command();
 
 program
   .name("snestack")
-  .description("Personal investment decision-support system")
+  .description("Personal decision-support harness (financial and calendar domains, more planned)")
   .version("1.0.0");
 
 // ── Setup ──────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
-# snestack - Personal Investment Philosophy System
+# snestack - Personal Decision-Support Harness
 
-A system to make investments across public and private companies based on how a user thinks about making investments (their personal investment philosophy). The system orchestrates multiple integrated agents including research analyst, equity analyst, CFO, strategy, and trader roles.
+A "thin harness, fat skills" system for encoding how the user actually thinks about a decision — not a single-purpose tool. Deterministic code fetches data; markdown skill files hold the judgment; a domain-agnostic core harness loads a named skill, resolves the context it declares it needs, and runs it through Claude. `domains/financial/` (investment recommendations across a portfolio/watchlist, based on the user's own stated investment philosophy) was the original domain; `domains/calendar/` (read-only Google Calendar) is the second, added specifically to prove the harness generalizes beyond investing. More domains are expected — anywhere the pattern "fetch some data, apply my own judgment to it" shows up in the user's life is a candidate.
 
 ## Setup
 
