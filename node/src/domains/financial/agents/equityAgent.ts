@@ -2,21 +2,24 @@ import * as path from "path";
 import { ThrottledAPIAgent } from "./base";
 import { EquityServiceError } from "../../../core/errors";
 import type { EquityData } from "../../../core/models";
-import { findReport, parseMorningstarPdf, type MorningstarData } from "../tools/morningstarParser";
+import type { MorningstarData } from "../tools/morningstarParser";
+import { MorningstarFundamentalsProvider } from "../providers/morningstarFundamentalsProvider";
+import type { FundamentalsProvider } from "../providers/types";
 
 export class EquityAgent extends ThrottledAPIAgent<EquityData> {
-  private readonly reportsDir: string;
+  private readonly provider: FundamentalsProvider;
 
-  constructor(reportsDir?: string) {
+  constructor(reportsDir?: string, provider?: FundamentalsProvider) {
     super("EquityAgent", 60, 0.9);
-    this.reportsDir = reportsDir ?? path.join(process.cwd(), "..", "reports");
+    this.provider =
+      provider ?? new MorningstarFundamentalsProvider(reportsDir ?? path.join(process.cwd(), "..", "reports"));
   }
 
   async analyze(ticker: string): Promise<EquityData | null> {
     await this.checkRateLimit();
     try {
       this.logger.debug(`Analyzing fundamentals for ${ticker}`);
-      const fundamentals = await this.fetchFundamentals(ticker);
+      const fundamentals = await this.provider.getFundamentals(ticker);
       if (!fundamentals) {
         this.logger.warn(`No fundamental data for ${ticker}`);
         return null;
@@ -51,19 +54,6 @@ export class EquityAgent extends ThrottledAPIAgent<EquityData> {
       this.logger.error(`Equity analysis failed for ${ticker}: ${e}`);
       throw new EquityServiceError(`Equity analysis failed for ${ticker}: ${e}`);
     }
-  }
-
-  private async fetchFundamentals(
-    ticker: string
-  ): Promise<MorningstarData | null> {
-    const pdfPath = findReport(ticker, this.reportsDir);
-    if (!pdfPath) {
-      this.logger.warn(
-        `No Morningstar report found for ${ticker} in ${this.reportsDir}`
-      );
-      return null;
-    }
-    return parseMorningstarPdf(pdfPath);
   }
 
   static detectRedFlags(fundamentals: MorningstarData): string[] {
