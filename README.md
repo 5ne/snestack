@@ -8,7 +8,6 @@ A "thin harness, fat skills" system: deterministic TypeScript code fetches data,
 
 ```
 snestack/
-├── reports/           # Morningstar PDF research reports (financial domain)
 └── node/              # Node.js / TypeScript implementation
     └── src/
         ├── core/       # domain-agnostic harness: skillLoader, domainRegistry,
@@ -20,7 +19,7 @@ snestack/
             └── calendar/      # skills/, tools/, googleAuth.ts, setup.ts
 ```
 
-`snestack.db` and `brain/` live outside the repo, in the shared Google Drive folder at `~/Documents/personal-brain/` — not committed here; see `.gitignore`.
+`snestack.db`, `brain/`, and `reports/` (Morningstar PDFs) all live outside the repo, in the shared Google Drive folder at `~/Documents/personal-brain/financial/` — not committed here; see `.gitignore`.
 
 ## Running a skill
 
@@ -37,14 +36,16 @@ snestack run-skill calendar daily-agenda today
 
 ## Morningstar Reports
 
-Download research PDFs from Schwab and place them in `reports/`:
+Research PDFs from Schwab live in `~/Documents/personal-brain/financial/reports/`, not in this repo:
 
 ```
-reports/
+~/Documents/personal-brain/financial/reports/
 ├── NVDA-morningstar.pdf
 ├── AAPL-morningstar.pdf
 └── ...
 ```
+
+Download a PDF into `reports/staging/` and run `snestack organize-reports` to file it — see that folder's own README for details.
 
 ## Legacy pipeline
 

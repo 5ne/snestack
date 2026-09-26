@@ -5,14 +5,19 @@ import type { EquityData } from "../../../core/models";
 import type { MorningstarData } from "../tools/morningstarParser";
 import { MorningstarFundamentalsProvider } from "../providers/morningstarFundamentalsProvider";
 import type { FundamentalsProvider } from "../providers/types";
+import { getConfig } from "../../../core/config";
+
+/** Default location of Morningstar PDFs: the shared Google Drive-synced folder, outside the repo. */
+export function defaultReportsDir(): string {
+  return path.join(getConfig().getBrainRoot(), "financial", "reports");
+}
 
 export class EquityAgent extends ThrottledAPIAgent<EquityData> {
   private readonly provider: FundamentalsProvider;
 
   constructor(reportsDir?: string, provider?: FundamentalsProvider) {
     super("EquityAgent", 60, 0.9);
-    this.provider =
-      provider ?? new MorningstarFundamentalsProvider(reportsDir ?? path.join(process.cwd(), "..", "reports"));
+    this.provider = provider ?? new MorningstarFundamentalsProvider(reportsDir ?? defaultReportsDir());
   }
 
   async analyze(ticker: string): Promise<EquityData | null> {

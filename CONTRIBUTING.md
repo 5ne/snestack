@@ -8,18 +8,13 @@ Thank you for your interest in contributing! This guide explains how to set up y
 - Node.js 22+
 - npm
 - git
-- git-lfs (for syncing Morningstar reports across machines)
+- Google Drive for Desktop (syncs `~/Documents/personal-brain/` — see below)
 
 ### Install for Development
 
 ```bash
-git clone https://github.com/yourusername/snestack.git
+git clone https://github.com/5ne/snestack.git
 cd snestack
-
-# Install git-lfs (for syncing Morningstar reports)
-brew install git-lfs  # macOS
-# or apt-get install git-lfs  # Linux
-git lfs install
 
 cd node
 npm install
@@ -27,33 +22,14 @@ cp .env.example .env
 # Edit .env with your API keys
 ```
 
-### Morningstar Reports
+### Shared data (`brain/`, `reports/`, the db)
 
-Reports are stored in `reports/` at the repo root and synced via Git LFS across all machines.
+None of this lives in the repo — it's all in the Google Drive-synced folder at `~/Documents/personal-brain/`, which is how it stays in sync across machines without git (no LFS needed). See `.gitignore` and each subfolder's own README:
+- `~/Documents/personal-brain/financial/brain/` — per-company thesis notes
+- `~/Documents/personal-brain/financial/reports/` — Morningstar PDFs (see that folder's README for the download/organize workflow)
+- `~/Documents/personal-brain/financial/snestack.db` — the sqlite db
 
-**To add a report (manual, until Schwab automation is complete):**
-1. Log into Schwab → Research
-2. Search for ticker (e.g., "MU")
-3. Download Morningstar PDF to `reports/{TICKER}-morningstar.pdf`
-4. Commit and push:
-   ```bash
-   git add reports/MU-morningstar.pdf
-   git commit -m "data: add MU Morningstar report"
-   git push
-   ```
-
-**Automated download (planned):**
-```bash
-npm run dev -- download-reports MU NVDA GOOG
-```
-
-**To pull reports on another machine:**
-```bash
-git pull          # Automatically fetches LFS files
-git lfs pull      # If LFS files don't sync automatically
-```
-
-See `reports/README.md` for more details.
+Override the root with `SNESTACK_BRAIN_ROOT` in `.env` if you move the shared folder.
 
 ### Run Tests
 

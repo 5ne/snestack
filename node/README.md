@@ -44,7 +44,8 @@ npm run dev -- signals NVDA
 # Retry failed notifications
 npm run dev -- retry
 
-# Organize freshly-downloaded Morningstar PDFs from reports/staging
+# Organize freshly-downloaded Morningstar PDFs from
+# ~/Documents/personal-brain/financial/reports/staging (override with SNESTACK_BRAIN_ROOT)
 npm run dev -- organize-reports
 
 # Set up a daily cron job (run against the built CLI — `npm run build` first)

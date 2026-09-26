@@ -44,15 +44,10 @@ htmlcov/
 # Claude Code
 .claude/settings.local.json
 
-# Reports (archived/staged — keep only active PDFs)
-reports/archive/
-reports/staging/
-reports/bak/
-reports/error/
-
 # Local scratch (orphaned/temp files staged for manual deletion)
 _to_delete/
 
 # Shared data — lives in the Google Drive-synced folder (~/Documents/personal-brain),
-# not in the repo. Referenced by config (see FSTACK_DATABASE_PATH), not committed.
+# not in the repo. Referenced by config (see SNESTACK_DATABASE_PATH), not committed.
 brain/
+reports/

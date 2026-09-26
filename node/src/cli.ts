@@ -13,7 +13,7 @@ import { runSkill } from "./core/runSkill";
 import { authorizeGoogleCalendar } from "./domains/calendar/setup";
 import { AnalysisOrchestrator } from "./domains/financial/orchestrator";
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
-import { EquityAgent } from "./domains/financial/agents/equityAgent";
+import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
 import type { Signal } from "./core/models";
 
@@ -234,7 +234,8 @@ program
         "Prefer: snestack data-dump, reason over it with the skill files, then snestack notify. See skills/INDEX.md."
     );
     // Check for staging files first (matches the Python CLI's cmd_batch)
-    const stagingDir = path.join("reports", "staging");
+    const reportsDir = defaultReportsDir();
+    const stagingDir = path.join(reportsDir, "staging");
     if (fs.existsSync(stagingDir)) {
       const stagingFiles = fs.readdirSync(stagingDir).filter((f) => f.endsWith(".pdf"));
       if (stagingFiles.length > 0) {
@@ -248,9 +249,9 @@ program
         if (organizeFirst) {
           await organizeStagedReports(
             stagingDir,
-            "reports",
-            path.join("reports", "archive"),
-            path.join("reports", "error")
+            reportsDir,
+            path.join(reportsDir, "archive"),
+            path.join(reportsDir, "error")
           );
         }
       }
@@ -341,10 +342,10 @@ program
 program
   .command("organize-reports")
   .description("Organize Morningstar PDFs from staging")
-  .option("--staging-dir <dir>", "Staging directory", path.join("reports", "staging"))
-  .option("--target-dir <dir>", "Target reports directory", "reports")
-  .option("--archive-dir <dir>", "Archive directory", path.join("reports", "archive"))
-  .option("--error-dir <dir>", "Error directory", path.join("reports", "error"))
+  .option("--staging-dir <dir>", "Staging directory", path.join(defaultReportsDir(), "staging"))
+  .option("--target-dir <dir>", "Target reports directory", defaultReportsDir())
+  .option("--archive-dir <dir>", "Archive directory", path.join(defaultReportsDir(), "archive"))
+  .option("--error-dir <dir>", "Error directory", path.join(defaultReportsDir(), "error"))
   .action(
     async (opts: {
       stagingDir: string;
