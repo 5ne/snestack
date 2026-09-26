@@ -74,25 +74,48 @@ Lives outside the repo, in the shared Google Drive folder at `~/Documents/person
 ```
 node/
 ├── src/
-│   ├── core/          # db, config, setup, models, errors, logger
-│   ├── agents/        # quote, strategy, equity, cfo, trader
-│   ├── tools/         # morningstar PDF parser, report organizer
-│   ├── orchestrator.ts
-│   ├── scheduler.ts   # cron install/list for daily batch runs
+│   ├── core/                    # domain-agnostic harness: db, config, setup, models,
+│   │                            # errors, logger, scheduler, skillLoader, domainRegistry,
+│   │                            # executor, runSkill
+│   ├── config/
+│   │   └── domains.json         # registers each domain's skillsDir + contextToolsModule
+│   ├── domains/
+│   │   ├── financial/           # skills/, brain/ (external, see Database below), agents/,
+│   │   │                        # tools/, providers/, contextTools.ts, orchestrator.ts
+│   │   └── calendar/            # skills/, tools/, googleAuth.ts, setup.ts, contextTools.ts
 │   └── cli.ts
-└── tests/             # Jest test suite (mirrors src/)
+└── tests/                       # Jest test suite (mirrors src/)
 ```
+
+## Skill harness
+
+`fstack run-skill <domain> <skill> <subject>` loads a skill markdown file's frontmatter (`name`/`domain`/`requires`/`references`), resolves its `requires` via that domain's `contextTools.ts`, and runs the assembled prompt through the model. This is the current, non-deprecated path — see `src/domains/financial/skills/INDEX.md` for the financial domain's skills, or `src/domains/calendar/skills/` for the calendar domain's.
+
+```bash
+fstack run-skill financial long-term-quality NVDA
+fstack run-skill calendar daily-agenda today
+```
+
+### Calendar domain setup (Google Calendar, read-only)
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create (or reuse) a project, enable the **Google Calendar API**, then create an **OAuth client ID** of type **Desktop app** under Credentials.
+2. Set `FSTACK_GOOGLE_CLIENT_ID` and `FSTACK_GOOGLE_CLIENT_SECRET` from that client in `.env`.
+3. Run `fstack calendar auth` — it prints a consent URL, opens a local server to catch the redirect, and saves `FSTACK_GOOGLE_REFRESH_TOKEN` to `.env` for you. Read-only scope (`calendar.readonly`) only — nothing is ever written to your calendar.
 
 ## Environment Variables
 
 | Variable | Required | Description |
 |---|---|---|
 | `FSTACK_FINNHUB_API_KEY` | Yes | Finnhub quote data |
-| `FSTACK_CLAUDE_API_KEY` | Yes | Claude API (CFO synthesis) |
+| `FSTACK_CLAUDE_API_KEY` | Yes | Claude API (skill execution, CFO synthesis) |
 | `FSTACK_GMAIL_ADDRESS` | Yes | Gmail sender address |
 | `FSTACK_GMAIL_APP_PASSWORD` | Yes | Gmail app password |
 | `FSTACK_NOTIFICATION_EMAIL` | Yes | Where to send signals |
 | `FSTACK_DATABASE_PATH` | No | DB path (default: `~/Documents/personal-brain/financial/fstack.db`) |
+| `FSTACK_BRAIN_ROOT` | No | Brain root (default: `~/Documents/personal-brain`) |
 | `FSTACK_TWILIO_ACCOUNT_SID` | No | SMS via Twilio |
 | `FSTACK_TWILIO_AUTH_TOKEN` | No | SMS via Twilio |
 | `FSTACK_SMS_PHONE` | No | SMS recipient number |
+| `FSTACK_GOOGLE_CLIENT_ID` | No | Calendar domain — Google OAuth "Desktop app" client ID |
+| `FSTACK_GOOGLE_CLIENT_SECRET` | No | Calendar domain — Google OAuth client secret |
+| `FSTACK_GOOGLE_REFRESH_TOKEN` | No | Calendar domain — written by `fstack calendar auth`, not set by hand |

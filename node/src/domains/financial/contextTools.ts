@@ -14,11 +14,11 @@ import { EquityAgent } from "./agents/equityAgent";
 export const contextTools: ContextToolMap = {
   quote: async (subject) => {
     const config = getConfig();
-    return new QuoteAgent(config.getFinnhubApiKey()).safeAnalyze(subject);
+    return new QuoteAgent(config.getFinnhubApiKey()).safeAnalyze(subject.toUpperCase());
   },
 
   fundamentals: async (subject) => {
-    return new EquityAgent().safeAnalyze(subject);
+    return new EquityAgent().safeAnalyze(subject.toUpperCase());
   },
 
   brain: async (subject) => {

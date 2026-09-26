@@ -10,6 +10,7 @@ import { setupCronInteractive, listCronJobs } from "./core/scheduler";
 import { organizeStagedReports } from "./domains/financial/tools/reportOrganizer";
 import { Db } from "./core/db";
 import { runSkill } from "./core/runSkill";
+import { authorizeGoogleCalendar } from "./domains/calendar/setup";
 import { AnalysisOrchestrator } from "./domains/financial/orchestrator";
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent } from "./domains/financial/agents/equityAgent";
@@ -31,6 +32,20 @@ program
   .option("--env-file <path>", "Path to .env file (default: .env)")
   .action(async (opts: { envFile?: string }) => {
     const ok = await setupInteractive(opts.envFile);
+    if (!ok) process.exitCode = 1;
+  });
+
+const calendar = program.command("calendar").description("Google Calendar domain setup");
+
+calendar
+  .command("auth")
+  .description(
+    "One-time OAuth consent for read-only Google Calendar access. " +
+      "Requires FSTACK_GOOGLE_CLIENT_ID/FSTACK_GOOGLE_CLIENT_SECRET already set — see node/README.md."
+  )
+  .option("--env-file <path>", "Path to .env file (default: .env)")
+  .action(async (opts: { envFile?: string }) => {
+    const ok = await authorizeGoogleCalendar(opts.envFile);
     if (!ok) process.exitCode = 1;
   });
 
@@ -451,7 +466,7 @@ program
       return;
     }
     try {
-      const result = await runSkill(domain, skill, subject.toUpperCase());
+      const result = await runSkill(domain, skill, subject);
       console.log(`\n=== ${result.domain}/${result.skill} — ${result.subject} ===\n`);
       console.log(result.output);
     } catch (e) {

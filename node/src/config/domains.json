@@ -2,5 +2,9 @@
   "financial": {
     "skillsDir": "domains/financial/skills",
     "contextToolsModule": "domains/financial/contextTools"
+  },
+  "calendar": {
+    "skillsDir": "domains/calendar/skills",
+    "contextToolsModule": "domains/calendar/contextTools"
   }
 }
