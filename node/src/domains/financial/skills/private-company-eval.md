@@ -1,3 +1,10 @@
+---
+name: private-company-eval
+domain: financial
+requires: []
+status: draft
+---
+
 # Skill: Private Company Evaluation (draft placeholder)
 
 No private-company positions or watchlist entries exist in `fstack.db` yet, even though the project's stated scope covers public and private companies. This file is a placeholder for when that changes.

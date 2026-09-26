@@ -1,3 +1,9 @@
+---
+name: quality-bar
+domain: financial
+type: reference
+---
+
 # Quality & Eligibility Defaults (draft — tune these)
 
 These are starting defaults, not numbers you specified — you asked for reasonable drafts to react to once you see them applied to your actual holdings. Edit this file directly; both `long-term-quality.md` and `swing-trading-large-cap.md` read from it, so tuning happens in one place.

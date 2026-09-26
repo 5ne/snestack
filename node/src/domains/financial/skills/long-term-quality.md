@@ -1,3 +1,10 @@
+---
+name: long-term-quality
+domain: financial
+requires: [quote, fundamentals, brain]
+references: [quality-bar]
+---
+
 # Skill: Long-Term Quality Investing
 
 **Purpose:** judge whether to open, hold, add to, or exit a long-term position based on durable business quality and an intact growth thesis — not short-term price action. This is the default lens for this system; it's how the user has actually invested so far (multi-year accumulation in AAPL on product growth, held AMZN through the pandemic, held META since the 2010s on platform growth, NVDA on the AI theme — see the individual brain files for the exact notes).

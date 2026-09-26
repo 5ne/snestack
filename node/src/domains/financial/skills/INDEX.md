@@ -1,3 +1,8 @@
+---
+domain: financial
+type: index
+---
+
 # fstack Skills Index
 
 Entry point for Claude (or whatever thin harness is running fstack) when analyzing a ticker. Read this first, then the specific skill(s) that apply.

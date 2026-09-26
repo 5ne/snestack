@@ -1,3 +1,10 @@
+---
+name: swing-trading-large-cap
+domain: financial
+requires: [quote, fundamentals, brain]
+references: [quality-bar]
+---
+
 # Skill: Swing Trading (Large-Cap, Highly Profitable Only)
 
 **Purpose:** tactically trade short-term overbought/oversold swings — buy into weakness, sell into strength — on a strictly filtered set of large-cap, highly profitable names. This strategy deliberately ignores long-term thesis quality beyond the eligibility bar below; it's playing price mean-reversion on the sturdiest names in the universe, not making an investment case.
