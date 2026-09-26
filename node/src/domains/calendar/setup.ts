@@ -16,6 +16,8 @@ const logger = getLogger("CalendarSetup");
  * flow can do on its own.
  */
 export async function authorizeGoogleCalendar(envFile?: string): Promise<boolean> {
+  const config = getConfig(envFile); // loads .env into process.env as a side effect — must happen before Config.require below
+
   let client;
   try {
     client = createOAuthClient();
@@ -72,7 +74,6 @@ export async function authorizeGoogleCalendar(envFile?: string): Promise<boolean
   }
 
   Config.set(REFRESH_TOKEN_KEY, tokens.refresh_token);
-  const config = getConfig(envFile);
   const target = config.saveToFile(envFile);
   console.log(`\n✓ Refresh token saved to ${target}`);
   console.log("\nTry it: fstack run-skill calendar daily-agenda today");
