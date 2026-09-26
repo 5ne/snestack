@@ -2,8 +2,24 @@ import { ThrottledAPIAgent, retryAsync } from "./base";
 import { QuoteServiceError } from "../../../core/errors";
 import type { QuoteData } from "../../../core/models";
 import type { Db } from "../../../core/db";
+import { getConfig } from "../../../core/config";
 import { FinnhubQuoteProvider } from "../providers/finnhubQuoteProvider";
+import { TwelveDataQuoteProvider } from "../providers/twelveDataQuoteProvider";
+import { HybridQuoteProvider } from "../providers/hybridQuoteProvider";
 import type { QuoteProvider } from "../providers/types";
+
+/**
+ * Finnhub covers quote + fundamentals fine; its free tier blocks historical
+ * candles (needed for RSI/MA). If a Twelve Data key is configured, pair it in
+ * for just that piece. Otherwise fall back to Finnhub alone (historical
+ * closes resolve null, same as before — no regression either way).
+ */
+function buildDefaultQuoteProvider(finnhubApiKey: string): QuoteProvider {
+  const finnhub = new FinnhubQuoteProvider(finnhubApiKey);
+  const twelveDataApiKey = getConfig().getTwelveDataApiKey();
+  if (!twelveDataApiKey) return finnhub;
+  return new HybridQuoteProvider(finnhub, new TwelveDataQuoteProvider(twelveDataApiKey));
+}
 
 export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
   private readonly provider: QuoteProvider;
@@ -11,7 +27,7 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
 
   constructor(apiKey: string, db?: Db, provider?: QuoteProvider) {
     super("QuoteAgent", 60, 0.7);
-    this.provider = provider ?? new FinnhubQuoteProvider(apiKey);
+    this.provider = provider ?? buildDefaultQuoteProvider(apiKey);
     this.db = db;
   }
 
@@ -50,6 +66,9 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
           dividendYield: fundamentals?.dividendYield ?? null,
           earningsGrowth: fundamentals?.earningsGrowth ?? null,
           revenueGrowth: fundamentals?.revenueGrowth ?? null,
+          rsi,
+          ma50,
+          ma200,
           timestamp: new Date(),
         };
 

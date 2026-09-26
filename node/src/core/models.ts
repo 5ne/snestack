@@ -117,6 +117,12 @@ export interface QuoteData {
   dividendYield?: number | null;
   earningsGrowth?: number | null;
   revenueGrowth?: number | null;
+  // Computed from historical closes (see providers/*QuoteProvider.getHistoricalCloses).
+  // Always populated here regardless of whether a Db was passed to QuoteAgent —
+  // db persistence (for data-dump's own read-back) is a separate side effect.
+  rsi?: number | null;
+  ma50?: number | null;
+  ma200?: number | null;
   timestamp: Date;
 }
 

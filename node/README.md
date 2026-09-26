@@ -111,6 +111,7 @@ snestack run-skill calendar daily-agenda today
 | Variable | Required | Description |
 |---|---|---|
 | `SNESTACK_FINNHUB_API_KEY` | Yes | Finnhub quote data |
+| `SNESTACK_TWELVEDATA_API_KEY` | No | Historical closes for RSI/MA (Finnhub's free tier blocks `/stock/candle`) — falls back to Finnhub-only, no RSI/MA, if unset |
 | `SNESTACK_CLAUDE_API_KEY` | Yes | Claude API (skill execution, CFO synthesis) |
 | `SNESTACK_GMAIL_ADDRESS` | Yes | Gmail sender address |
 | `SNESTACK_GMAIL_APP_PASSWORD` | Yes | Gmail app password |

@@ -7,6 +7,9 @@ import { ConfigError, ValidationError } from "./errors";
 export class Config {
   // Env-var key constants
   static readonly FINNHUB_API_KEY = "SNESTACK_FINNHUB_API_KEY";
+  // Optional — historical daily closes for RSI/MA, since Finnhub's free tier
+  // blocks /stock/candle. Falls back to Finnhub-only (no RSI/MA) if unset.
+  static readonly TWELVEDATA_API_KEY = "SNESTACK_TWELVEDATA_API_KEY";
   static readonly CLAUDE_API_KEY = "SNESTACK_CLAUDE_API_KEY";
   static readonly GMAIL_ADDRESS = "SNESTACK_GMAIL_ADDRESS";
   static readonly GMAIL_APP_PASSWORD = "SNESTACK_GMAIL_APP_PASSWORD";
@@ -62,6 +65,11 @@ export class Config {
     const key = Config.require(Config.FINNHUB_API_KEY);
     if (key.length < 10) throw new ValidationError("Invalid Finnhub API key format");
     return key;
+  }
+
+  /** Optional — undefined means "no Twelve Data key configured, fall back to Finnhub-only". */
+  getTwelveDataApiKey(): string | undefined {
+    return Config.get(Config.TWELVEDATA_API_KEY);
   }
 
   getClaudeApiKey(): string {
