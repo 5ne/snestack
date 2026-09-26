@@ -1,3 +1,5 @@
+import * as os from "os";
+import * as path from "path";
 import { Config, getConfig, resetConfig } from "../../src/core/config";
 import { ConfigError, ValidationError } from "../../src/core/errors";
 
@@ -50,7 +52,9 @@ describe("Config.require", () => {
 describe("getDatabasePath", () => {
   it("returns default when not set", () => {
     const config = new Config(NO_ENV);
-    expect(config.getDatabasePath()).toBe("../fstack.db");
+    expect(config.getDatabasePath()).toBe(
+      path.join(os.homedir(), "Documents", "personal-brain", "financial", "fstack.db")
+    );
   });
 
   it("returns custom path when set", () => {

@@ -6,13 +6,13 @@ import prompts from "prompts";
 import { getConfig } from "./core/config";
 import { setupInteractive, validateEnv } from "./core/setup";
 import { ConfigError } from "./core/errors";
-import { setupCronInteractive, listCronJobs } from "./scheduler";
-import { organizeStagedReports } from "./tools/reportOrganizer";
+import { setupCronInteractive, listCronJobs } from "./core/scheduler";
+import { organizeStagedReports } from "./domains/financial/tools/reportOrganizer";
 import { Db } from "./core/db";
-import { AnalysisOrchestrator } from "./orchestrator";
-import { QuoteAgent } from "./agents/quoteAgent";
-import { EquityAgent } from "./agents/equityAgent";
-import { TraderAgent } from "./agents/traderAgent";
+import { AnalysisOrchestrator } from "./domains/financial/orchestrator";
+import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
+import { EquityAgent } from "./domains/financial/agents/equityAgent";
+import { TraderAgent } from "./domains/financial/agents/traderAgent";
 import type { Signal } from "./core/models";
 
 const program = new Command();
@@ -367,8 +367,9 @@ program
 // ── Data dump for a Claude-driven analysis (deterministic only, no CFO call) ─
 // This is the "fat code" half of the thin-harness/fat-skills split: it fetches
 // and computes numbers (quotes, technicals, Morningstar fundamentals) and does
-// no judgment. A Claude session reads this JSON plus skills/ and brain/ and
-// does the actual BUY/SELL/HOLD reasoning — see skills/INDEX.md.
+// no judgment. A Claude session reads this JSON plus domains/financial/skills/
+// and the shared brain/ (~/Documents/personal-brain/financial/brain/) and does
+// the actual BUY/SELL/HOLD reasoning — see domains/financial/skills/INDEX.md.
 
 program
   .command("data-dump")

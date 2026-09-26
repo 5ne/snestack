@@ -12,13 +12,12 @@ node/.env
 !node/.env.example
 !test.env
 
-# Database (shared db is committed; temp dbs are not)
+# Database
 *.db
 *.db-wal
 *.db-shm
 *.sqlite
 *.sqlite3
-!fstack.db
 
 # macOS
 .DS_Store
@@ -53,3 +52,7 @@ reports/error/
 
 # Local scratch (orphaned/temp files staged for manual deletion)
 _to_delete/
+
+# Shared data — lives in the Google Drive-synced folder (~/Documents/personal-brain),
+# not in the repo. Referenced by config (see FSTACK_DATABASE_PATH), not committed.
+brain/

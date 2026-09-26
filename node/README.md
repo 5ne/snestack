@@ -67,7 +67,7 @@ NODE_OPTIONS=--experimental-sqlite npm run test:coverage
 
 ## Database
 
-Points to `../fstack.db` (the shared root database) via `FSTACK_DATABASE_PATH` in `.env`. Override by setting a different path in `.env`.
+Lives outside the repo, in the shared Google Drive folder at `~/Documents/personal-brain/financial/fstack.db`, via `FSTACK_DATABASE_PATH` in `.env`. Override by setting a different path in `.env`.
 
 ## Project Layout
 
@@ -92,7 +92,7 @@ node/
 | `FSTACK_GMAIL_ADDRESS` | Yes | Gmail sender address |
 | `FSTACK_GMAIL_APP_PASSWORD` | Yes | Gmail app password |
 | `FSTACK_NOTIFICATION_EMAIL` | Yes | Where to send signals |
-| `FSTACK_DATABASE_PATH` | No | DB path (default: `../fstack.db`) |
+| `FSTACK_DATABASE_PATH` | No | DB path (default: `~/Documents/personal-brain/financial/fstack.db`) |
 | `FSTACK_TWILIO_ACCOUNT_SID` | No | SMS via Twilio |
 | `FSTACK_TWILIO_AUTH_TOKEN` | No | SMS via Twilio |
 | `FSTACK_SMS_PHONE` | No | SMS recipient number |

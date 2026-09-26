@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import * as dotenv from "dotenv";
 import { ConfigError, ValidationError } from "./errors";
@@ -14,7 +15,14 @@ export class Config {
   static readonly TWILIO_AUTH_TOKEN = "FSTACK_TWILIO_AUTH_TOKEN";
   static readonly SMS_PHONE = "FSTACK_SMS_PHONE";
   static readonly DATABASE_PATH = "FSTACK_DATABASE_PATH";
-  static readonly DEFAULT_DB_PATH = "../fstack.db";
+  // Shared db lives in the Google Drive-synced folder, outside the repo — see README.
+  static readonly DEFAULT_DB_PATH = path.join(
+    os.homedir(),
+    "Documents",
+    "personal-brain",
+    "financial",
+    "fstack.db"
+  );
 
   constructor(envFile?: string) {
     const file = envFile ?? path.join(process.cwd(), ".env");

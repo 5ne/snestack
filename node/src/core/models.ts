@@ -9,8 +9,8 @@ export const Recommendation = z.enum(["BUY", "SELL", "HOLD"]);
 export type Recommendation = z.infer<typeof Recommendation>;
 
 // "both" means this ticker carries a long-term core position AND separate
-// tactical swing trades on top of it — see skills/long-term-quality.md and
-// skills/swing-trading-large-cap.md in the repo root for what each means.
+// tactical swing trades on top of it — see domains/financial/skills/long-term-quality.md
+// and domains/financial/skills/swing-trading-large-cap.md for what each means.
 export const PositionStrategy = z.enum(["long-term", "swing", "both"]);
 export type PositionStrategy = z.infer<typeof PositionStrategy>;
 

@@ -8,20 +8,21 @@ An AI-powered system that synthesizes technical, fundamental, and qualitative si
 
 ```
 fstack/
-├── fstack.db          # SQLite database (positions, signals, quotes)
 ├── reports/           # Morningstar PDF research reports
 └── node/              # Node.js / TypeScript implementation
 ```
 
+`fstack.db` and `brain/` live outside the repo, in the shared Google Drive folder at `~/Documents/personal-brain/financial/` — they're not committed here; see `.gitignore`.
+
 ## Database
 
-`fstack.db` at the root is the single source of truth for:
+`fstack.db` (in `~/Documents/personal-brain/financial/`) is the single source of truth for:
 - Positions and watchlist
 - Historical quotes and technical indicators
 - CFO signals and recommendations
 - Pending notification queue
 
-The CLI points to `../fstack.db` by default when run from `node/`.
+The CLI reads its location from `FSTACK_DATABASE_PATH` in `.env`.
 
 ## Morningstar Reports
 
@@ -55,7 +56,7 @@ Positions + Watchlist
                     ↓
             [TraderAgent] → email/SMS
                     ↓
-              fstack.db (signal history)
+              fstack.db (signal history, in ~/Documents/personal-brain/financial/)
 ```
 
 ## Roadmap
