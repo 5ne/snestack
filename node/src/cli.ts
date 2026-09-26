@@ -172,8 +172,12 @@ watchlist
 
 program
   .command("analyze <ticker>")
-  .description("Analyze a single ticker")
+  .description("[DEPRECATED] Analyze a single ticker via the legacy CfoAgent judgment path")
   .action(async (ticker: string) => {
+    console.warn(
+      "⚠ 'fstack analyze' uses the deprecated CfoAgent path (bypasses domains/financial/skills/). " +
+        "Prefer: fstack data-dump, reason over it with the skill files, then fstack notify. See skills/INDEX.md."
+    );
     if (!validateEnv()) {
       process.exitCode = 1;
       return;
@@ -206,9 +210,13 @@ program
 
 program
   .command("batch")
-  .description("Run batch analysis on all positions and watchlist")
+  .description("[DEPRECATED] Run batch analysis via the legacy CfoAgent judgment path")
   .option("--dry-run", "Analyze without sending email")
   .action(async (opts: { dryRun?: boolean }) => {
+    console.warn(
+      "⚠ 'fstack batch' uses the deprecated CfoAgent path (bypasses domains/financial/skills/). " +
+        "Prefer: fstack data-dump, reason over it with the skill files, then fstack notify. See skills/INDEX.md."
+    );
     // Check for staging files first (matches the Python CLI's cmd_batch)
     const stagingDir = path.join("reports", "staging");
     if (fs.existsSync(stagingDir)) {

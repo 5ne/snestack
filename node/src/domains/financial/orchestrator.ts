@@ -65,6 +65,13 @@ function withLiveFundamentals(
   return merged;
 }
 
+/**
+ * @deprecated Legacy pipeline — wires up the deprecated CfoAgent for judgment
+ * instead of going through domains/financial/skills/. The intended path is
+ * `fstack data-dump` -> a Claude session reasoning over the skill markdown +
+ * brain files -> `fstack notify` (see skills/INDEX.md's "Status" section).
+ * Kept for reference via the `batch`/`analyze` CLI commands, not deleted yet.
+ */
 export class AnalysisOrchestrator {
   private readonly db: Db;
   private readonly quoteAgent: QuoteAgent;
