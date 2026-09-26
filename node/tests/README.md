@@ -1,6 +1,6 @@
-# fstack Test Suite
+# snestack Test Suite
 
-Test coverage for the fstack investment orchestration system.
+Test coverage for the snestack investment orchestration system.
 
 ## Running Tests
 

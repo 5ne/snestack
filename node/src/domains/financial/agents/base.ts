@@ -50,7 +50,7 @@ export async function retryAsync<T>(
   throw lastError!;
 }
 
-/** Abstract base for all fstack agents. */
+/** Abstract base for all snestack agents. */
 export abstract class BaseAgent<TResult> {
   protected readonly logger: winston.Logger;
   readonly name: string;

@@ -15,7 +15,7 @@ describe("archiveReport", () => {
   let archiveDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fstack-organizer-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-organizer-"));
     archiveDir = path.join(tmpDir, "archive");
   });
 
@@ -58,7 +58,7 @@ describe("organizeReports", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fstack-organize-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-organize-"));
   });
 
   afterEach(() => {
@@ -119,7 +119,7 @@ describe("organizeReport", () => {
   let archiveDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fstack-staging-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-staging-"));
     targetDir = path.join(tmpDir, "target");
     archiveDir = path.join(tmpDir, "archive");
   });
@@ -163,7 +163,7 @@ describe("organizeStagedReports", () => {
   let errorDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fstack-staged-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-staged-"));
     stagingDir = path.join(tmpDir, "staging");
     targetDir = path.join(tmpDir, "target");
     archiveDir = path.join(tmpDir, "archive");

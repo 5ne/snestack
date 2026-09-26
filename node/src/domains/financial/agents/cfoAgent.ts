@@ -23,8 +23,8 @@ Never recommend based on a single metric - synthesize the full picture.`;
  * @deprecated Legacy judgment path — CFO_SYSTEM_PROMPT hardcodes an investment
  * synthesis thesis directly in TypeScript and calls the Anthropic API on its
  * own, bypassing domains/financial/skills/ and brain/ entirely. The intended
- * path is `fstack data-dump` -> a Claude session reasoning over the skill
- * markdown + brain files -> `fstack notify` (see skills/INDEX.md's "Status"
+ * path is `snestack data-dump` -> a Claude session reasoning over the skill
+ * markdown + brain files -> `snestack notify` (see skills/INDEX.md's "Status"
  * section). Kept for reference via the `batch`/`analyze` CLI commands, not
  * deleted yet, but new judgment changes belong in skill markdown, not here.
  */

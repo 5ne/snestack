@@ -9,8 +9,8 @@ const logger = getLogger("CalendarSetup");
 /**
  * One-time interactive OAuth consent flow for READ-ONLY Google Calendar access.
  * No calendar data is read or written here — this only establishes access for
- * later use by contextTools.ts. Requires FSTACK_GOOGLE_CLIENT_ID/
- * FSTACK_GOOGLE_CLIENT_SECRET already set from a Google Cloud "Desktop app"
+ * later use by contextTools.ts. Requires SNESTACK_GOOGLE_CLIENT_ID/
+ * SNESTACK_GOOGLE_CLIENT_SECRET already set from a Google Cloud "Desktop app"
  * OAuth client (see node/README.md for how to create one) — that step
  * requires the user's own Google Cloud Console access, not something this
  * flow can do on its own.
@@ -24,7 +24,7 @@ export async function authorizeGoogleCalendar(envFile?: string): Promise<boolean
   } catch (e) {
     console.log(`✗ ${e}`);
     console.log(
-      "Set FSTACK_GOOGLE_CLIENT_ID and FSTACK_GOOGLE_CLIENT_SECRET first — see node/README.md " +
+      "Set SNESTACK_GOOGLE_CLIENT_ID and SNESTACK_GOOGLE_CLIENT_SECRET first — see node/README.md " +
         "for how to create a Google Cloud OAuth 'Desktop app' client."
     );
     return false;
@@ -76,6 +76,6 @@ export async function authorizeGoogleCalendar(envFile?: string): Promise<boolean
   Config.set(REFRESH_TOKEN_KEY, tokens.refresh_token);
   const target = config.saveToFile(envFile);
   console.log(`\n✓ Refresh token saved to ${target}`);
-  console.log("\nTry it: fstack run-skill calendar daily-agenda today");
+  console.log("\nTry it: snestack run-skill calendar daily-agenda today");
   return true;
 }

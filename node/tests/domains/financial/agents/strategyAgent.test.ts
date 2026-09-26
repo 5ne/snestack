@@ -5,7 +5,7 @@ import { StrategyAgent } from "../../../../src/domains/financial/agents/strategy
 
 function tmpDb(): Db {
   return new Db(
-    path.join(os.tmpdir(), `fstack-strategy-${Date.now()}-${Math.random()}.db`)
+    path.join(os.tmpdir(), `snestack-strategy-${Date.now()}-${Math.random()}.db`)
   );
 }
 

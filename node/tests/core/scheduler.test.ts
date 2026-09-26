@@ -18,7 +18,7 @@ describe("setupCronInteractive", () => {
   let originalCwd: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fstack-scheduler-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-scheduler-"));
     originalCwd = process.cwd();
     process.chdir(tmpDir);
     mockedExecSync.mockReset();
@@ -45,7 +45,7 @@ describe("setupCronInteractive", () => {
     expect(ok).toBe(true);
     expect(mockedExecSync).toHaveBeenCalledWith(
       "crontab -",
-      expect.objectContaining({ input: expect.stringContaining("fstack batch analysis") })
+      expect.objectContaining({ input: expect.stringContaining("snestack batch analysis") })
     );
   });
 
@@ -65,7 +65,7 @@ describe("setupCronInteractive", () => {
     fs.writeFileSync(path.join(tmpDir, "dist", "cli.js"), "// stub");
 
     const distCli = path.join(tmpDir, "dist", "cli.js");
-    const existingCmd = `0 6 * * * cd ${tmpDir} && ${process.execPath} ${distCli} batch >> logs/fstack.cron.log 2>&1`;
+    const existingCmd = `0 6 * * * cd ${tmpDir} && ${process.execPath} ${distCli} batch >> logs/snestack.cron.log 2>&1`;
     mockedExecSync.mockImplementation((cmd: string) => {
       if (cmd === "crontab -l") return `${existingCmd}\n`;
       return "";

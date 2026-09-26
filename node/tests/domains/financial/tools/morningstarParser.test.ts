@@ -7,7 +7,7 @@ describe("findReport", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fstack-reports-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-reports-"));
   });
 
   afterEach(() => {
@@ -46,7 +46,7 @@ describe("parseMorningstarPdf", () => {
 
   it("returns empty object for invalid PDF", async () => {
     const { parseMorningstarPdf } = await import("../../../../src/domains/financial/tools/morningstarParser");
-    const tmpFile = path.join(os.tmpdir(), `fstack-test-${Date.now()}.pdf`);
+    const tmpFile = path.join(os.tmpdir(), `snestack-test-${Date.now()}.pdf`);
     fs.writeFileSync(tmpFile, "this is not a pdf");
     const result = await parseMorningstarPdf(tmpFile);
     expect(result).toEqual({});

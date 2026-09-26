@@ -14,9 +14,9 @@ class SchedulerCancelled extends Error {}
  */
 export async function setupCronInteractive(): Promise<boolean> {
   console.log("\n" + "=".repeat(60));
-  console.log("fstack Cron Scheduler Setup");
+  console.log("snestack Cron Scheduler Setup");
   console.log("=".repeat(60));
-  console.log("\nThis will add a daily cron job to run fstack batch analysis.");
+  console.log("\nThis will add a daily cron job to run snestack batch analysis.");
   console.log("You'll be able to choose the time.\n");
 
   const workDir = process.cwd();
@@ -25,7 +25,7 @@ export async function setupCronInteractive(): Promise<boolean> {
 
   if (!fs.existsSync(distCli)) {
     console.log("✗ dist/cli.js not found");
-    console.log("  Run `npm run build` first, then re-run `fstack scheduler --setup`");
+    console.log("  Run `npm run build` first, then re-run `snestack scheduler --setup`");
     return false;
   }
 
@@ -62,7 +62,7 @@ export async function setupCronInteractive(): Promise<boolean> {
       }
     );
 
-    const cronCmd = `${minute} ${hour} * * * cd ${workDir} && ${nodePath} ${distCli} batch >> logs/fstack.cron.log 2>&1`;
+    const cronCmd = `${minute} ${hour} * * * cd ${workDir} && ${nodePath} ${distCli} batch >> logs/snestack.cron.log 2>&1`;
 
     console.log(`\n${"=".repeat(60)}`);
     console.log("Cron Job Preview");
@@ -115,15 +115,15 @@ function installCronJob(cronCmd: string, workDir: string): boolean {
       return true;
     }
 
-    const newCrontab = currentCrontab + `\n# fstack batch analysis\n${cronCmd}\n`;
+    const newCrontab = currentCrontab + `\n# snestack batch analysis\n${cronCmd}\n`;
     execSync("crontab -", { input: newCrontab });
 
     console.log("\n✓ Cron job installed successfully!");
-    console.log(`\nLogs saved to: ${path.join(workDir, "logs", "fstack.cron.log")}`);
+    console.log(`\nLogs saved to: ${path.join(workDir, "logs", "snestack.cron.log")}`);
     console.log("\nTo view installed crontab:");
     console.log("  crontab -l");
-    console.log("\nTo remove fstack cron job:");
-    console.log("  crontab -e  # then delete the fstack lines");
+    console.log("\nTo remove snestack cron job:");
+    console.log("  crontab -e  # then delete the snestack lines");
     return true;
   } catch (e: unknown) {
     const err = e as NodeJS.ErrnoException;

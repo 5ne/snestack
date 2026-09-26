@@ -9,20 +9,20 @@ import { resetConfig, getConfig } from "../../src/core/config";
 // real .env (which may have valid keys already set) from process.cwd().
 const NO_ENV = "/nonexistent/.env";
 
-const FSTACK_VARS = [
-  "FSTACK_FINNHUB_API_KEY",
-  "FSTACK_CLAUDE_API_KEY",
-  "FSTACK_GMAIL_ADDRESS",
-  "FSTACK_GMAIL_APP_PASSWORD",
-  "FSTACK_NOTIFICATION_EMAIL",
-  "FSTACK_DATABASE_PATH",
-  "FSTACK_TWILIO_ACCOUNT_SID",
-  "FSTACK_TWILIO_AUTH_TOKEN",
-  "FSTACK_SMS_PHONE",
+const SNESTACK_VARS = [
+  "SNESTACK_FINNHUB_API_KEY",
+  "SNESTACK_CLAUDE_API_KEY",
+  "SNESTACK_GMAIL_ADDRESS",
+  "SNESTACK_GMAIL_APP_PASSWORD",
+  "SNESTACK_NOTIFICATION_EMAIL",
+  "SNESTACK_DATABASE_PATH",
+  "SNESTACK_TWILIO_ACCOUNT_SID",
+  "SNESTACK_TWILIO_AUTH_TOKEN",
+  "SNESTACK_SMS_PHONE",
 ];
 
 function clearEnv() {
-  FSTACK_VARS.forEach((k) => delete process.env[k]);
+  SNESTACK_VARS.forEach((k) => delete process.env[k]);
 }
 
 describe("setupInteractive", () => {
@@ -32,7 +32,7 @@ describe("setupInteractive", () => {
   beforeEach(() => {
     resetConfig();
     clearEnv();
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fstack-setup-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-setup-"));
     envFile = path.join(tmpDir, ".env");
   });
 
@@ -55,10 +55,10 @@ describe("setupInteractive", () => {
     const ok = await setupInteractive(envFile);
     expect(ok).toBe(true);
     const written = fs.readFileSync(envFile, "utf8");
-    expect(written).toContain("FSTACK_FINNHUB_API_KEY=validfinnhubkeyabc");
-    expect(written).toContain("FSTACK_CLAUDE_API_KEY=sk-ant-validclaudekey123");
-    expect(written).toContain("FSTACK_GMAIL_ADDRESS=me@gmail.com");
-    expect(written).toContain("FSTACK_NOTIFICATION_EMAIL=notify@example.com");
+    expect(written).toContain("SNESTACK_FINNHUB_API_KEY=validfinnhubkeyabc");
+    expect(written).toContain("SNESTACK_CLAUDE_API_KEY=sk-ant-validclaudekey123");
+    expect(written).toContain("SNESTACK_GMAIL_ADDRESS=me@gmail.com");
+    expect(written).toContain("SNESTACK_NOTIFICATION_EMAIL=notify@example.com");
     expect(written).not.toContain("TWILIO");
   });
 
@@ -102,9 +102,9 @@ describe("setupInteractive", () => {
     const ok = await setupInteractive(envFile);
     expect(ok).toBe(true);
     const written = fs.readFileSync(envFile, "utf8");
-    expect(written).toContain(`FSTACK_TWILIO_ACCOUNT_SID=${sid}`);
-    expect(written).toContain(`FSTACK_TWILIO_AUTH_TOKEN=${token}`);
-    expect(written).toContain("FSTACK_SMS_PHONE=+15551234567");
+    expect(written).toContain(`SNESTACK_TWILIO_ACCOUNT_SID=${sid}`);
+    expect(written).toContain(`SNESTACK_TWILIO_AUTH_TOKEN=${token}`);
+    expect(written).toContain("SNESTACK_SMS_PHONE=+15551234567");
   });
 
   it("skips Twilio entirely when declined", async () => {
@@ -120,8 +120,8 @@ describe("setupInteractive", () => {
     const ok = await setupInteractive(envFile);
     expect(ok).toBe(true);
     const written = fs.readFileSync(envFile, "utf8");
-    expect(written).not.toContain("FSTACK_TWILIO_ACCOUNT_SID");
-    expect(written).not.toContain("FSTACK_SMS_PHONE");
+    expect(written).not.toContain("SNESTACK_TWILIO_ACCOUNT_SID");
+    expect(written).not.toContain("SNESTACK_SMS_PHONE");
   });
 });
 
@@ -145,10 +145,10 @@ describe("validateEnv", () => {
   });
 
   it("returns true when all required vars are present", () => {
-    process.env.FSTACK_FINNHUB_API_KEY = "validfinnhubkeyabc";
-    process.env.FSTACK_CLAUDE_API_KEY = "sk-ant-validclaudekey123";
-    process.env.FSTACK_GMAIL_ADDRESS = "me@gmail.com";
-    process.env.FSTACK_NOTIFICATION_EMAIL = "notify@example.com";
+    process.env.SNESTACK_FINNHUB_API_KEY = "validfinnhubkeyabc";
+    process.env.SNESTACK_CLAUDE_API_KEY = "sk-ant-validclaudekey123";
+    process.env.SNESTACK_GMAIL_ADDRESS = "me@gmail.com";
+    process.env.SNESTACK_NOTIFICATION_EMAIL = "notify@example.com";
     getConfig(NO_ENV);
     expect(validateEnv()).toBe(true);
   });

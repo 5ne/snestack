@@ -6,46 +6,46 @@ import { ConfigError, ValidationError } from "../../src/core/errors";
 // Pass a non-existent env file so dotenv never loads the real .env
 const NO_ENV = "/nonexistent/.env";
 
-const FSTACK_VARS = [
-  "FSTACK_FINNHUB_API_KEY",
-  "FSTACK_CLAUDE_API_KEY",
-  "FSTACK_GMAIL_ADDRESS",
-  "FSTACK_GMAIL_APP_PASSWORD",
-  "FSTACK_NOTIFICATION_EMAIL",
-  "FSTACK_DATABASE_PATH",
-  "FSTACK_TWILIO_ACCOUNT_SID",
-  "FSTACK_TWILIO_AUTH_TOKEN",
-  "FSTACK_SMS_PHONE",
+const SNESTACK_VARS = [
+  "SNESTACK_FINNHUB_API_KEY",
+  "SNESTACK_CLAUDE_API_KEY",
+  "SNESTACK_GMAIL_ADDRESS",
+  "SNESTACK_GMAIL_APP_PASSWORD",
+  "SNESTACK_NOTIFICATION_EMAIL",
+  "SNESTACK_DATABASE_PATH",
+  "SNESTACK_TWILIO_ACCOUNT_SID",
+  "SNESTACK_TWILIO_AUTH_TOKEN",
+  "SNESTACK_SMS_PHONE",
 ];
 
 beforeEach(() => {
   resetConfig();
-  FSTACK_VARS.forEach((k) => delete process.env[k]);
+  SNESTACK_VARS.forEach((k) => delete process.env[k]);
 });
 
 describe("Config.get", () => {
   it("returns env var value", () => {
-    process.env.FSTACK_DATABASE_PATH = "test.db";
-    expect(Config.get("FSTACK_DATABASE_PATH")).toBe("test.db");
+    process.env.SNESTACK_DATABASE_PATH = "test.db";
+    expect(Config.get("SNESTACK_DATABASE_PATH")).toBe("test.db");
   });
 
   it("returns default when env var missing", () => {
-    expect(Config.get("FSTACK_MISSING", "default")).toBe("default");
+    expect(Config.get("SNESTACK_MISSING", "default")).toBe("default");
   });
 
   it("returns undefined when no default", () => {
-    expect(Config.get("FSTACK_MISSING")).toBeUndefined();
+    expect(Config.get("SNESTACK_MISSING")).toBeUndefined();
   });
 });
 
 describe("Config.require", () => {
   it("returns value when set", () => {
-    process.env.FSTACK_FINNHUB_API_KEY = "test_key_12345";
-    expect(Config.require("FSTACK_FINNHUB_API_KEY")).toBe("test_key_12345");
+    process.env.SNESTACK_FINNHUB_API_KEY = "test_key_12345";
+    expect(Config.require("SNESTACK_FINNHUB_API_KEY")).toBe("test_key_12345");
   });
 
   it("throws ConfigError when missing", () => {
-    expect(() => Config.require("FSTACK_MISSING_KEY")).toThrow(ConfigError);
+    expect(() => Config.require("SNESTACK_MISSING_KEY")).toThrow(ConfigError);
   });
 });
 
@@ -53,12 +53,12 @@ describe("getDatabasePath", () => {
   it("returns default when not set", () => {
     const config = new Config(NO_ENV);
     expect(config.getDatabasePath()).toBe(
-      path.join(os.homedir(), "Documents", "personal-brain", "financial", "fstack.db")
+      path.join(os.homedir(), "Documents", "personal-brain", "financial", "snestack.db")
     );
   });
 
   it("returns custom path when set", () => {
-    process.env.FSTACK_DATABASE_PATH = "/tmp/test.db";
+    process.env.SNESTACK_DATABASE_PATH = "/tmp/test.db";
     const config = new Config(NO_ENV);
     expect(config.getDatabasePath()).toBe("/tmp/test.db");
   });
@@ -66,13 +66,13 @@ describe("getDatabasePath", () => {
 
 describe("getFinnhubApiKey", () => {
   it("returns key when valid", () => {
-    process.env.FSTACK_FINNHUB_API_KEY = "validkeyabcde";
+    process.env.SNESTACK_FINNHUB_API_KEY = "validkeyabcde";
     const config = new Config(NO_ENV);
     expect(config.getFinnhubApiKey()).toBe("validkeyabcde");
   });
 
   it("throws ValidationError for short key", () => {
-    process.env.FSTACK_FINNHUB_API_KEY = "short";
+    process.env.SNESTACK_FINNHUB_API_KEY = "short";
     const config = new Config(NO_ENV);
     expect(() => config.getFinnhubApiKey()).toThrow(ValidationError);
   });
@@ -85,13 +85,13 @@ describe("getFinnhubApiKey", () => {
 
 describe("getClaudeApiKey", () => {
   it("returns key with sk- prefix", () => {
-    process.env.FSTACK_CLAUDE_API_KEY = "sk-ant-test1234567890";
+    process.env.SNESTACK_CLAUDE_API_KEY = "sk-ant-test1234567890";
     const config = new Config(NO_ENV);
     expect(config.getClaudeApiKey()).toBe("sk-ant-test1234567890");
   });
 
   it("throws ValidationError without sk- prefix", () => {
-    process.env.FSTACK_CLAUDE_API_KEY = "invalid-key-no-prefix";
+    process.env.SNESTACK_CLAUDE_API_KEY = "invalid-key-no-prefix";
     const config = new Config(NO_ENV);
     expect(() => config.getClaudeApiKey()).toThrow(ValidationError);
   });
@@ -106,8 +106,8 @@ describe("getTwilioCredentials", () => {
   });
 
   it("returns values when both set", () => {
-    process.env.FSTACK_TWILIO_ACCOUNT_SID = "ACxxxxxxxxxx";
-    process.env.FSTACK_TWILIO_AUTH_TOKEN = "authtoken123";
+    process.env.SNESTACK_TWILIO_ACCOUNT_SID = "ACxxxxxxxxxx";
+    process.env.SNESTACK_TWILIO_AUTH_TOKEN = "authtoken123";
     const config = new Config(NO_ENV);
     const [sid, token] = config.getTwilioCredentials();
     expect(sid).toBe("ACxxxxxxxxxx");
@@ -115,7 +115,7 @@ describe("getTwilioCredentials", () => {
   });
 
   it("throws ConfigError when only one is set", () => {
-    process.env.FSTACK_TWILIO_ACCOUNT_SID = "ACxxxxxxxxxx";
+    process.env.SNESTACK_TWILIO_ACCOUNT_SID = "ACxxxxxxxxxx";
     const config = new Config(NO_ENV);
     expect(() => config.getTwilioCredentials()).toThrow(ConfigError);
   });

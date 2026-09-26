@@ -4,7 +4,7 @@ import * as fs from "fs";
 import { Db } from "../../src/core/db";
 
 function tmpDb(): Db {
-  const p = path.join(os.tmpdir(), `fstack-test-${Date.now()}-${Math.random()}.db`);
+  const p = path.join(os.tmpdir(), `snestack-test-${Date.now()}-${Math.random()}.db`);
   return new Db(p);
 }
 

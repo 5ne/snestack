@@ -1,28 +1,39 @@
-# fstack — Personal Investment Decision-Support System
+# snestack — Personal Decision-Support System
 
-An AI-powered system that synthesizes technical, fundamental, and qualitative signals to generate investment recommendations for your portfolio and watchlist. Powered by Claude API, Finnhub, and Morningstar research.
+A "thin harness, fat skills" system: deterministic TypeScript code fetches data, markdown skill files hold the actual judgment, and a domain-agnostic core harness runs a named skill against a subject through Claude. The financial domain (investment recommendations across a portfolio/watchlist) is the original use case; a calendar domain (read-only Google Calendar) is the second, added specifically to prove the harness generalizes.
 
 > **Early Alpha. Use at your own risk. Always conduct independent due diligence.**
 
 ## Structure
 
 ```
-fstack/
-├── reports/           # Morningstar PDF research reports
+snestack/
+├── reports/           # Morningstar PDF research reports (financial domain)
 └── node/              # Node.js / TypeScript implementation
+    └── src/
+        ├── core/       # domain-agnostic harness: skillLoader, domainRegistry,
+        │               # executor, runSkill, db, config, scheduler, logger, errors
+        ├── config/
+        │   └── domains.json   # registers each domain's skillsDir + contextTools
+        └── domains/
+            ├── financial/     # skills/, agents/, tools/, providers/, orchestrator.ts
+            └── calendar/      # skills/, tools/, googleAuth.ts, setup.ts
 ```
 
-`fstack.db` and `brain/` live outside the repo, in the shared Google Drive folder at `~/Documents/personal-brain/financial/` — they're not committed here; see `.gitignore`.
+`snestack.db` and `brain/` live outside the repo, in the shared Google Drive folder at `~/Documents/personal-brain/` — not committed here; see `.gitignore`.
+
+## Running a skill
+
+```bash
+snestack run-skill financial long-term-quality NVDA
+snestack run-skill calendar daily-agenda today
+```
+
+`run-skill <domain> <skill> <subject>` loads the skill markdown's frontmatter (`requires`/`references`), resolves that domain's context tools, and runs the assembled prompt through Claude. See [`node/README.md`](node/README.md) for full setup (API keys, Google Calendar OAuth) and the CLI reference.
 
 ## Database
 
-`fstack.db` (in `~/Documents/personal-brain/financial/`) is the single source of truth for:
-- Positions and watchlist
-- Historical quotes and technical indicators
-- CFO signals and recommendations
-- Pending notification queue
-
-The CLI reads its location from `FSTACK_DATABASE_PATH` in `.env`.
+`snestack.db` (in `~/Documents/personal-brain/financial/`) is the financial domain's single source of truth: positions, watchlist, historical quotes/technicals, signal history, and the pending-notification queue. The CLI reads its location from `SNESTACK_DATABASE_PATH` in `.env`.
 
 ## Morningstar Reports
 
@@ -35,37 +46,33 @@ reports/
 └── ...
 ```
 
-## Implementation
+## Legacy pipeline
 
-TypeScript, node:sqlite, Claude SDK, Finnhub, nodemailer. See [`node/README.md`](node/README.md) for setup, CLI commands, and environment variables.
-
-## Architecture
-
-All analysis flows through the same multi-agent pipeline:
+The financial domain also has an older, deprecated `analyze`/`batch` CLI path (`CfoAgent`/`AnalysisOrchestrator`) that hardcodes its judgment directly in TypeScript instead of going through the skills system. It still runs — kept for reference — but prints a deprecation warning; `run-skill` is the current path:
 
 ```
 Positions + Watchlist
         ↓
-[QuoteAgent] [StrategyAgent] [EquityAgent]   ← parallel
+[QuoteAgent] [StrategyAgent] [EquityAgent]   ← parallel, deterministic
         ↓           ↓              ↓
               signals combined
                     ↓
-              [CFOAgent]  ← one Claude API call for all tickers (~$0.02/run)
+    [CfoAgent — deprecated]  ← hardcoded judgment, one Claude call for all tickers
                     ↓
             BUY / SELL / HOLD signals
                     ↓
             [TraderAgent] → email/SMS
                     ↓
-              fstack.db (signal history, in ~/Documents/personal-brain/financial/)
+              snestack.db (signal history)
 ```
 
 ## Roadmap
 
+- [ ] Migrate the remaining deterministic-tool logic (red-flag detection, etc.) further, and retire the legacy `analyze`/`batch` pipeline once the skills path fully covers it
 - [ ] Next.js web UI
 - [ ] Supabase migration (multi-user support)
 - [ ] Broker integrations (Schwab, Alpaca)
-- [ ] Extended technical indicators (MACD, Bollinger Bands)
-- [ ] Backtesting framework
+- [ ] Backtesting framework (offline, reading the same skills/brain markdown — see `CLAUDE.md`)
 
 ## Disclaimer
 

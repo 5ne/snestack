@@ -1,6 +1,6 @@
-/** Custom error hierarchy for fstack. */
+/** Custom error hierarchy for snestack. */
 
-export class FstackError extends Error {
+export class SnestackError extends Error {
   constructor(message: string) {
     super(message);
     this.name = this.constructor.name;
@@ -8,10 +8,10 @@ export class FstackError extends Error {
   }
 }
 
-export class ConfigError extends FstackError {}
-export class ValidationError extends FstackError {}
-export class APIError extends FstackError {}
+export class ConfigError extends SnestackError {}
+export class ValidationError extends SnestackError {}
+export class APIError extends SnestackError {}
 export class QuoteServiceError extends APIError {}
 export class EquityServiceError extends APIError {}
-export class EmailServiceError extends FstackError {}
-export class DatabaseError extends FstackError {}
+export class EmailServiceError extends SnestackError {}
+export class DatabaseError extends SnestackError {}

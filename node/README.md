@@ -1,6 +1,6 @@
-# fstack — Node.js / TypeScript Implementation
+# snestack — Node.js / TypeScript Implementation
 
-The active implementation of fstack. Uses Node.js 22 with TypeScript, node:sqlite (built-in), and the Anthropic SDK.
+The active implementation of snestack. Uses Node.js 22 with TypeScript, node:sqlite (built-in), and the Anthropic SDK.
 
 ## Prerequisites
 
@@ -29,7 +29,10 @@ npm run dev -- setup
 npm run dev -- position add NVDA 100 850.00
 npm run dev -- watchlist add TSLA "waiting for dip"
 
-# Analyze
+# Run a skill (current path — see "Skill harness" below)
+npm run dev -- run-skill financial long-term-quality NVDA
+
+# Analyze [DEPRECATED — legacy CfoAgent judgment path, kept for reference]
 npm run dev -- analyze NVDA
 npm run dev -- batch --dry-run
 npm run dev -- batch
@@ -51,7 +54,7 @@ npm run dev -- scheduler --list
 ```
 
 `setup` is fully interactive — it prompts for each API key, validates the
-format, and writes `.env` for you, mirroring `fstack setup` in the Python
+format, and writes `.env` for you, mirroring `snestack setup` in the Python
 implementation. Twilio SMS credentials are collected and stored the same way
 Python collects them, but neither implementation actually sends SMS yet —
 only email notifications are wired up.
@@ -63,11 +66,11 @@ NODE_OPTIONS=--experimental-sqlite npm test
 NODE_OPTIONS=--experimental-sqlite npm run test:coverage
 ```
 
-204 tests across 16 suites — all passing.
+230 tests across 16 suites — all passing except one pre-existing, unrelated flake in `scheduler.test.ts` (a macOS `/var` vs `/private/var` symlink mismatch in a crontab-mock comparison).
 
 ## Database
 
-Lives outside the repo, in the shared Google Drive folder at `~/Documents/personal-brain/financial/fstack.db`, via `FSTACK_DATABASE_PATH` in `.env`. Override by setting a different path in `.env`.
+Lives outside the repo, in the shared Google Drive folder at `~/Documents/personal-brain/financial/snestack.db`, via `SNESTACK_DATABASE_PATH` in `.env`. Override by setting a different path in `.env`.
 
 ## Project Layout
 
@@ -89,33 +92,33 @@ node/
 
 ## Skill harness
 
-`fstack run-skill <domain> <skill> <subject>` loads a skill markdown file's frontmatter (`name`/`domain`/`requires`/`references`), resolves its `requires` via that domain's `contextTools.ts`, and runs the assembled prompt through the model. This is the current, non-deprecated path — see `src/domains/financial/skills/INDEX.md` for the financial domain's skills, or `src/domains/calendar/skills/` for the calendar domain's.
+`snestack run-skill <domain> <skill> <subject>` loads a skill markdown file's frontmatter (`name`/`domain`/`requires`/`references`), resolves its `requires` via that domain's `contextTools.ts`, and runs the assembled prompt through the model. This is the current, non-deprecated path — see `src/domains/financial/skills/INDEX.md` for the financial domain's skills, or `src/domains/calendar/skills/` for the calendar domain's.
 
 ```bash
-fstack run-skill financial long-term-quality NVDA
-fstack run-skill calendar daily-agenda today
+snestack run-skill financial long-term-quality NVDA
+snestack run-skill calendar daily-agenda today
 ```
 
 ### Calendar domain setup (Google Calendar, read-only)
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create (or reuse) a project, enable the **Google Calendar API**, then create an **OAuth client ID** of type **Desktop app** under Credentials.
-2. Set `FSTACK_GOOGLE_CLIENT_ID` and `FSTACK_GOOGLE_CLIENT_SECRET` from that client in `.env`.
-3. Run `fstack calendar auth` — it prints a consent URL, opens a local server to catch the redirect, and saves `FSTACK_GOOGLE_REFRESH_TOKEN` to `.env` for you. Read-only scope (`calendar.readonly`) only — nothing is ever written to your calendar.
+2. Set `SNESTACK_GOOGLE_CLIENT_ID` and `SNESTACK_GOOGLE_CLIENT_SECRET` from that client in `.env`.
+3. Run `snestack calendar auth` — it prints a consent URL, opens a local server to catch the redirect, and saves `SNESTACK_GOOGLE_REFRESH_TOKEN` to `.env` for you. Read-only scope (`calendar.readonly`) only — nothing is ever written to your calendar.
 
 ## Environment Variables
 
 | Variable | Required | Description |
 |---|---|---|
-| `FSTACK_FINNHUB_API_KEY` | Yes | Finnhub quote data |
-| `FSTACK_CLAUDE_API_KEY` | Yes | Claude API (skill execution, CFO synthesis) |
-| `FSTACK_GMAIL_ADDRESS` | Yes | Gmail sender address |
-| `FSTACK_GMAIL_APP_PASSWORD` | Yes | Gmail app password |
-| `FSTACK_NOTIFICATION_EMAIL` | Yes | Where to send signals |
-| `FSTACK_DATABASE_PATH` | No | DB path (default: `~/Documents/personal-brain/financial/fstack.db`) |
-| `FSTACK_BRAIN_ROOT` | No | Brain root (default: `~/Documents/personal-brain`) |
-| `FSTACK_TWILIO_ACCOUNT_SID` | No | SMS via Twilio |
-| `FSTACK_TWILIO_AUTH_TOKEN` | No | SMS via Twilio |
-| `FSTACK_SMS_PHONE` | No | SMS recipient number |
-| `FSTACK_GOOGLE_CLIENT_ID` | No | Calendar domain — Google OAuth "Desktop app" client ID |
-| `FSTACK_GOOGLE_CLIENT_SECRET` | No | Calendar domain — Google OAuth client secret |
-| `FSTACK_GOOGLE_REFRESH_TOKEN` | No | Calendar domain — written by `fstack calendar auth`, not set by hand |
+| `SNESTACK_FINNHUB_API_KEY` | Yes | Finnhub quote data |
+| `SNESTACK_CLAUDE_API_KEY` | Yes | Claude API (skill execution, CFO synthesis) |
+| `SNESTACK_GMAIL_ADDRESS` | Yes | Gmail sender address |
+| `SNESTACK_GMAIL_APP_PASSWORD` | Yes | Gmail app password |
+| `SNESTACK_NOTIFICATION_EMAIL` | Yes | Where to send signals |
+| `SNESTACK_DATABASE_PATH` | No | DB path (default: `~/Documents/personal-brain/financial/snestack.db`) |
+| `SNESTACK_BRAIN_ROOT` | No | Brain root (default: `~/Documents/personal-brain`) |
+| `SNESTACK_TWILIO_ACCOUNT_SID` | No | SMS via Twilio |
+| `SNESTACK_TWILIO_AUTH_TOKEN` | No | SMS via Twilio |
+| `SNESTACK_SMS_PHONE` | No | SMS recipient number |
+| `SNESTACK_GOOGLE_CLIENT_ID` | No | Calendar domain — Google OAuth "Desktop app" client ID |
+| `SNESTACK_GOOGLE_CLIENT_SECRET` | No | Calendar domain — Google OAuth client secret |
+| `SNESTACK_GOOGLE_REFRESH_TOKEN` | No | Calendar domain — written by `snestack calendar auth`, not set by hand |

@@ -1,9 +1,9 @@
 import { OAuth2Client } from "google-auth-library";
 import { Config } from "../../core/config";
 
-export const CLIENT_ID_KEY = "FSTACK_GOOGLE_CLIENT_ID";
-export const CLIENT_SECRET_KEY = "FSTACK_GOOGLE_CLIENT_SECRET";
-export const REFRESH_TOKEN_KEY = "FSTACK_GOOGLE_REFRESH_TOKEN";
+export const CLIENT_ID_KEY = "SNESTACK_GOOGLE_CLIENT_ID";
+export const CLIENT_SECRET_KEY = "SNESTACK_GOOGLE_CLIENT_SECRET";
+export const REFRESH_TOKEN_KEY = "SNESTACK_GOOGLE_REFRESH_TOKEN";
 export const REDIRECT_URI = "http://localhost:53682/oauth2callback";
 export const CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 

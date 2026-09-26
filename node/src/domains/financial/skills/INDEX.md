@@ -3,9 +3,9 @@ domain: financial
 type: index
 ---
 
-# fstack Skills Index
+# snestack Skills Index
 
-Entry point for Claude (or whatever thin harness is running fstack) when analyzing a ticker. Read this first, then the specific skill(s) that apply.
+Entry point for Claude (or whatever thin harness is running snestack) when analyzing a ticker. Read this first, then the specific skill(s) that apply.
 
 ## Available skills
 
@@ -22,8 +22,8 @@ Run `long-term-quality.md` for every current position and watchlist name — tha
 
 - Quote + RSI/50MA/200MA + Morningstar fundamentals for every position/watchlist ticker: run `node dist/cli.js data-dump` from `node/` (built via `npm run build`, needs `NODE_OPTIONS=--experimental-sqlite`). Purely deterministic — no CFO/Claude call — prints one JSON object per ticker.
 - This ticker's own history and your stated thesis: `brain/investing/public/companies/{TICKER}.md`.
-- To report a decision back out: write signals as a JSON array of `{ticker, recommendation, confidence, reasoning, fromWatchlist}` and run `node dist/cli.js notify --file <path>` — sends the batch email via your existing Gmail setup and records the signals into `fstack.db`'s `signals` table.
+- To report a decision back out: write signals as a JSON array of `{ticker, recommendation, confidence, reasoning, fromWatchlist}` and run `node dist/cli.js notify --file <path>` — sends the batch email via your existing Gmail setup and records the signals into `snestack.db`'s `signals` table.
 
 ## Status
 
-Scaffolded 2026-08-23 from a conversation working out the actual investment philosophy (see `brain/` for the raw material this was built from). The old hardcoded judgment in `node/src/agents/strategyAgent.ts`, `equityAgent.ts`, and `cfoAgent.ts` is still there but no longer the intended path — `data-dump`/`notify` plus these skill files are what the scheduled Claude-driven analysis (see the "fstack daily investment analysis" scheduled task) actually uses. The old `npm run dev -- batch` command and its cron/scheduler.ts path are now legacy, kept for reference, not deleted yet.
+Scaffolded 2026-08-23 from a conversation working out the actual investment philosophy (see `brain/` for the raw material this was built from). The old hardcoded judgment in `node/src/agents/strategyAgent.ts`, `equityAgent.ts`, and `cfoAgent.ts` is still there but no longer the intended path — `data-dump`/`notify` plus these skill files are what the scheduled Claude-driven analysis (see the "snestack daily investment analysis" scheduled task) actually uses. The old `npm run dev -- batch` command and its cron/scheduler.ts path are now legacy, kept for reference, not deleted yet.

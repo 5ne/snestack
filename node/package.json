@@ -1,10 +1,10 @@
 {
-  "name": "fstack",
+  "name": "snestack",
   "version": "1.0.0",
   "description": "Personal investment decision-support system",
   "main": "dist/cli.js",
   "bin": {
-    "fstack": "dist/cli.js"
+    "snestack": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc",

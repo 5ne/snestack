@@ -6,24 +6,24 @@ import { ConfigError, ValidationError } from "./errors";
 
 export class Config {
   // Env-var key constants
-  static readonly FINNHUB_API_KEY = "FSTACK_FINNHUB_API_KEY";
-  static readonly CLAUDE_API_KEY = "FSTACK_CLAUDE_API_KEY";
-  static readonly GMAIL_ADDRESS = "FSTACK_GMAIL_ADDRESS";
-  static readonly GMAIL_APP_PASSWORD = "FSTACK_GMAIL_APP_PASSWORD";
-  static readonly NOTIFICATION_EMAIL = "FSTACK_NOTIFICATION_EMAIL";
-  static readonly TWILIO_ACCOUNT_SID = "FSTACK_TWILIO_ACCOUNT_SID";
-  static readonly TWILIO_AUTH_TOKEN = "FSTACK_TWILIO_AUTH_TOKEN";
-  static readonly SMS_PHONE = "FSTACK_SMS_PHONE";
-  static readonly DATABASE_PATH = "FSTACK_DATABASE_PATH";
+  static readonly FINNHUB_API_KEY = "SNESTACK_FINNHUB_API_KEY";
+  static readonly CLAUDE_API_KEY = "SNESTACK_CLAUDE_API_KEY";
+  static readonly GMAIL_ADDRESS = "SNESTACK_GMAIL_ADDRESS";
+  static readonly GMAIL_APP_PASSWORD = "SNESTACK_GMAIL_APP_PASSWORD";
+  static readonly NOTIFICATION_EMAIL = "SNESTACK_NOTIFICATION_EMAIL";
+  static readonly TWILIO_ACCOUNT_SID = "SNESTACK_TWILIO_ACCOUNT_SID";
+  static readonly TWILIO_AUTH_TOKEN = "SNESTACK_TWILIO_AUTH_TOKEN";
+  static readonly SMS_PHONE = "SNESTACK_SMS_PHONE";
+  static readonly DATABASE_PATH = "SNESTACK_DATABASE_PATH";
   // Shared db lives in the Google Drive-synced folder, outside the repo — see README.
   static readonly DEFAULT_DB_PATH = path.join(
     os.homedir(),
     "Documents",
     "personal-brain",
     "financial",
-    "fstack.db"
+    "snestack.db"
   );
-  static readonly BRAIN_ROOT = "FSTACK_BRAIN_ROOT";
+  static readonly BRAIN_ROOT = "SNESTACK_BRAIN_ROOT";
   // Root of the shared Google Drive-synced brain folder — each domain's brain
   // lives under <root>/<domain>/brain/ (e.g. <root>/financial/brain/).
   static readonly DEFAULT_BRAIN_ROOT = path.join(os.homedir(), "Documents", "personal-brain");
@@ -100,8 +100,8 @@ export class Config {
   }
 
   /**
-   * Write current FSTACK_* environment variables to a .env file, preserving
-   * any existing non-FSTACK lines and merging with existing FSTACK_* values.
+   * Write current SNESTACK_* environment variables to a .env file, preserving
+   * any existing non-SNESTACK lines and merging with existing SNESTACK_* values.
    * Mirrors the Python implementation's save_to_file.
    */
   saveToFile(envFile?: string): string {
@@ -129,12 +129,12 @@ export class Config {
     }
 
     for (const [key, value] of Object.entries(process.env)) {
-      if (key.startsWith("FSTACK_") && value !== undefined) {
+      if (key.startsWith("SNESTACK_") && value !== undefined) {
         existing[key] = value;
       }
     }
 
-    const lines = ["# fstack configuration", "# Auto-generated - edit with care", ""];
+    const lines = ["# snestack configuration", "# Auto-generated - edit with care", ""];
     for (const key of Object.keys(existing).sort()) {
       const value = existing[key];
       if (value.includes(" ") || value.includes("=")) {

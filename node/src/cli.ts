@@ -20,7 +20,7 @@ import type { Signal } from "./core/models";
 const program = new Command();
 
 program
-  .name("fstack")
+  .name("snestack")
   .description("Personal investment decision-support system")
   .version("1.0.0");
 
@@ -41,7 +41,7 @@ calendar
   .command("auth")
   .description(
     "One-time OAuth consent for read-only Google Calendar access. " +
-      "Requires FSTACK_GOOGLE_CLIENT_ID/FSTACK_GOOGLE_CLIENT_SECRET already set — see node/README.md."
+      "Requires SNESTACK_GOOGLE_CLIENT_ID/SNESTACK_GOOGLE_CLIENT_SECRET already set — see node/README.md."
   )
   .option("--env-file <path>", "Path to .env file (default: .env)")
   .action(async (opts: { envFile?: string }) => {
@@ -191,8 +191,8 @@ program
   .description("[DEPRECATED] Analyze a single ticker via the legacy CfoAgent judgment path")
   .action(async (ticker: string) => {
     console.warn(
-      "⚠ 'fstack analyze' uses the deprecated CfoAgent path (bypasses domains/financial/skills/). " +
-        "Prefer: fstack data-dump, reason over it with the skill files, then fstack notify. See skills/INDEX.md."
+      "⚠ 'snestack analyze' uses the deprecated CfoAgent path (bypasses domains/financial/skills/). " +
+        "Prefer: snestack data-dump, reason over it with the skill files, then snestack notify. See skills/INDEX.md."
     );
     if (!validateEnv()) {
       process.exitCode = 1;
@@ -216,7 +216,7 @@ program
     } catch (e) {
       if (e instanceof ConfigError) {
         console.error(`Configuration error: ${e.message}`);
-        console.log("Run 'fstack setup' to configure");
+        console.log("Run 'snestack setup' to configure");
       } else {
         console.error(`Analysis failed: ${e}`);
       }
@@ -230,8 +230,8 @@ program
   .option("--dry-run", "Analyze without sending email")
   .action(async (opts: { dryRun?: boolean }) => {
     console.warn(
-      "⚠ 'fstack batch' uses the deprecated CfoAgent path (bypasses domains/financial/skills/). " +
-        "Prefer: fstack data-dump, reason over it with the skill files, then fstack notify. See skills/INDEX.md."
+      "⚠ 'snestack batch' uses the deprecated CfoAgent path (bypasses domains/financial/skills/). " +
+        "Prefer: snestack data-dump, reason over it with the skill files, then snestack notify. See skills/INDEX.md."
     );
     // Check for staging files first (matches the Python CLI's cmd_batch)
     const stagingDir = path.join("reports", "staging");
@@ -283,7 +283,7 @@ program
     } catch (e) {
       if (e instanceof ConfigError) {
         console.error(`Configuration error: ${e.message}`);
-        console.log("Run 'fstack setup' to configure");
+        console.log("Run 'snestack setup' to configure");
       } else {
         console.error(`Batch analysis failed: ${e}`);
       }

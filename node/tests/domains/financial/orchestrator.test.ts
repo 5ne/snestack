@@ -5,7 +5,7 @@ import { makeBatchResult } from "../../../src/core/models";
 
 function tmpDb(): Db {
   return new Db(
-    path.join(os.tmpdir(), `fstack-orch-${Date.now()}-${Math.random()}.db`)
+    path.join(os.tmpdir(), `snestack-orch-${Date.now()}-${Math.random()}.db`)
   );
 }
 

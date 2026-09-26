@@ -60,7 +60,7 @@ export interface PendingNotificationRow {
 export class Db {
   private db: DatabaseSync;
 
-  constructor(dbPath: string = "fstack.db") {
+  constructor(dbPath: string = "snestack.db") {
     const dir = path.dirname(path.resolve(dbPath));
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     try {

@@ -1,4 +1,4 @@
-# Contributing to fstack
+# Contributing to snestack
 
 Thank you for your interest in contributing! This guide explains how to set up your development environment and contribute code.
 
@@ -13,8 +13,8 @@ Thank you for your interest in contributing! This guide explains how to set up y
 ### Install for Development
 
 ```bash
-git clone https://github.com/yourusername/fstack.git
-cd fstack
+git clone https://github.com/yourusername/snestack.git
+cd snestack
 
 # Install git-lfs (for syncing Morningstar reports)
 brew install git-lfs  # macOS
@@ -88,83 +88,70 @@ npm run typecheck && npm run lint && npm test
 
 ## Architecture Overview
 
-fstack follows a multi-agent architecture:
+snestack is a "thin harness, fat skills" system: `core/` is a domain-agnostic harness (skill loader, context assembler, executor, scheduler, db, config), and each domain under `domains/` supplies its own skills (markdown judgment), deterministic tools, and a `contextTools.ts` map the harness resolves skill `requires` against.
 
 ```
-User Input (CLI)
+CLI: snestack run-skill <domain> <skill> <subject>
     ↓
-[Config] + [Database]
+core/runSkill: loads skill frontmatter, resolves `requires` via
+that domain's contextTools, assembles the prompt
     ↓
-Agents:
-  - QuoteAgent: Finnhub API → OHLCV + indicators
-  - StrategyAgent: Rules engine → BUY/SELL/HOLD signals
-  - EquityAgent: Fundamentals API → PE, FCF, red flags
-  - CFOAgent: Claude → final synthesis
-  - TraderAgent: Email/SMS → send notifications
+core/executor: runs the prompt through Claude
     ↓
-[Database] → storage
-    ↓
-User: Email notification
+raw model output (the skill's judgment, in prose)
 ```
+
+The financial domain also has an older, deprecated multi-agent pipeline (`orchestrator.ts` → `CfoAgent`) that hardcodes judgment directly in TypeScript instead of going through skills — kept for reference via the `analyze`/`batch` CLI commands, not the pattern to extend.
 
 ## Key Files
 
 ```
 node/src/
-├── cli.ts               ← Main entry point
-├── orchestrator.ts       ← Pipeline orchestration
-├── scheduler.ts          ← Cron install/list for daily batch runs
-├── core/
-│   ├── db.ts            ← SQLite schema + queries
-│   ├── config.ts        ← Environment config + key validation
-│   ├── setup.ts         ← Interactive setup
-│   ├── models.ts        ← Zod data schemas
-│   ├── logger.ts        ← Structured logging
-│   └── errors.ts        ← Custom exceptions
-├── agents/
-│   ├── base.ts          ← BaseAgent + retry logic
-│   ├── quoteAgent.ts
-│   ├── strategyAgent.ts
-│   ├── equityAgent.ts
-│   ├── cfoAgent.ts
-│   └── traderAgent.ts
-└── tools/
-    ├── morningstarParser.ts
-    └── reportOrganizer.ts
+├── cli.ts                        ← Main entry point
+├── core/                         ← domain-agnostic harness
+│   ├── db.ts, config.ts, setup.ts, models.ts, logger.ts, errors.ts
+│   ├── scheduler.ts              ← cron install/list
+│   ├── skillLoader.ts            ← parses a skill file's frontmatter + body
+│   ├── domainRegistry.ts         ← reads config/domains.json, loads a domain's contextTools
+│   ├── executor.ts               ← runs a prompt through Claude
+│   └── runSkill.ts               ← the actual runSkill(domain, skill, subject) entry point
+├── config/
+│   └── domains.json              ← registers each domain's skillsDir + contextToolsModule
+└── domains/
+    ├── financial/
+    │   ├── skills/                ← markdown judgment (start at skills/INDEX.md)
+    │   ├── agents/                ← deterministic tools: quote, equity, strategy, trader
+    │   │                          ← (+ deprecated cfoAgent.ts)
+    │   ├── tools/                 ← Morningstar PDF parsing, report organizing
+    │   ├── providers/             ← QuoteProvider/FundamentalsProvider interfaces
+    │   ├── contextTools.ts
+    │   └── orchestrator.ts        ← deprecated pipeline
+    └── calendar/
+        ├── skills/
+        ├── tools/calendarClient.ts
+        ├── googleAuth.ts, setup.ts
+        └── contextTools.ts
 ```
 
-## Adding a New Agent
+## Adding a skill to an existing domain
 
-1. Create `node/src/agents/myAgent.ts`
-2. Extend `BaseAgent` (see `agents/base.ts` for retry/throttle helpers)
-3. Implement `async analyze(ticker: string, ...): Promise<Result | null>`
-4. Add tests in `node/tests/agents/`
-5. Wire it into `orchestrator.ts`
+1. Create `node/src/domains/<domain>/skills/mySkill.md` with `name`/`domain`/`requires`/`references` frontmatter (see any existing skill file for the shape).
+2. If it needs new context, add a fetcher to that domain's `contextTools.ts`.
+3. Run it: `snestack run-skill <domain> mySkill <subject>`.
 
-Example:
+## Adding a new domain
 
-```ts
-import { BaseAgent } from "./base";
+1. Create `node/src/domains/<name>/` with `skills/` and a `contextTools.ts` exporting `contextTools: ContextToolMap`.
+2. Register it in `node/src/config/domains.json` (`skillsDir`, `contextToolsModule`).
+3. No changes to `core/` should be necessary — if you find yourself editing `core/`, that's a sign something domain-specific leaked in there.
 
-export class MyAgent extends BaseAgent {
-  constructor() {
-    super("MyAgent");
-  }
+## Adding a deterministic tool (financial domain)
 
-  async analyze(ticker: string): Promise<MyResult | null> {
-    try {
-      return await this.fetchData(ticker);
-    } catch (e) {
-      this.logger.error(`Analysis failed: ${e}`);
-      return null;
-    }
-  }
-
-  private async fetchData(ticker: string): Promise<MyResult> {
-    // Your logic here
-  }
-}
-```
+1. Create `node/src/domains/financial/agents/myAgent.ts` (or `tools/` for a non-agent utility).
+2. Extend `BaseAgent`/`ThrottledAPIAgent` (see `agents/base.ts` for retry/throttle helpers) if it's an agent.
+3. Implement `async analyze(ticker: string, ...): Promise<Result | null>`.
+4. Add tests in `node/tests/domains/financial/agents/`.
+5. Expose it through `contextTools.ts` if a skill should be able to `require` it.
 
 ## Adding a New CLI Command
 
@@ -183,7 +170,7 @@ program
 
 ## Testing Guidelines
 
-- Write unit tests for new agents (`node/tests/agents/`)
+- Write unit tests for new agents (`node/tests/domains/<domain>/agents/`)
 - Write integration/CLI smoke tests for new commands
 - Mock external APIs (Finnhub, Claude, Gmail) rather than hitting them in tests
 - Use the shared fixtures under `node/tests/core/` for database tests

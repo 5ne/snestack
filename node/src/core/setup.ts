@@ -34,9 +34,9 @@ export async function setupInteractive(envFile?: string): Promise<boolean> {
   const targetFile = envFile ?? path.join(process.cwd(), ".env");
 
   console.log("\n" + "=".repeat(60));
-  console.log("fstack Setup");
+  console.log("snestack Setup");
   console.log("=".repeat(60));
-  console.log("\nThis will configure your API keys for fstack.");
+  console.log("\nThis will configure your API keys for snestack.");
   console.log("Press Ctrl+C to cancel.\n");
 
   try {
@@ -189,16 +189,16 @@ export async function setupInteractive(envFile?: string): Promise<boolean> {
     }
 
     // Save to env file
-    Config.set("FSTACK_FINNHUB_API_KEY", finnhubKey);
-    Config.set("FSTACK_CLAUDE_API_KEY", claudeKey);
-    Config.set("FSTACK_GMAIL_ADDRESS", gmailAddress);
-    Config.set("FSTACK_GMAIL_APP_PASSWORD", gmailAppPassword);
-    Config.set("FSTACK_NOTIFICATION_EMAIL", notificationEmail);
+    Config.set("SNESTACK_FINNHUB_API_KEY", finnhubKey);
+    Config.set("SNESTACK_CLAUDE_API_KEY", claudeKey);
+    Config.set("SNESTACK_GMAIL_ADDRESS", gmailAddress);
+    Config.set("SNESTACK_GMAIL_APP_PASSWORD", gmailAppPassword);
+    Config.set("SNESTACK_NOTIFICATION_EMAIL", notificationEmail);
 
     if (twilioAccountSid && twilioAuthToken) {
-      Config.set("FSTACK_TWILIO_ACCOUNT_SID", twilioAccountSid);
-      Config.set("FSTACK_TWILIO_AUTH_TOKEN", twilioAuthToken);
-      if (smsPhone) Config.set("FSTACK_SMS_PHONE", smsPhone);
+      Config.set("SNESTACK_TWILIO_ACCOUNT_SID", twilioAccountSid);
+      Config.set("SNESTACK_TWILIO_AUTH_TOKEN", twilioAuthToken);
+      if (smsPhone) Config.set("SNESTACK_SMS_PHONE", smsPhone);
     }
 
     const config = getConfig(targetFile);
@@ -207,13 +207,13 @@ export async function setupInteractive(envFile?: string): Promise<boolean> {
     console.log(`\n✓ Configuration saved to ${targetFile}`);
     console.log("\nNext steps:");
     console.log("  1. Add your positions:");
-    console.log("     fstack position add NVDA 100 850.0");
+    console.log("     snestack position add NVDA 100 850.0");
     console.log("  2. Add your watchlist:");
-    console.log("     fstack watchlist add TSLA 'looking for dip'");
+    console.log("     snestack watchlist add TSLA 'looking for dip'");
     console.log("  3. Run analysis:");
-    console.log("     fstack batch");
+    console.log("     snestack batch");
     console.log("  4. Or set up cron for daily analysis:");
-    console.log("     fstack scheduler --setup");
+    console.log("     snestack scheduler --setup");
     console.log();
 
     return true;
@@ -241,7 +241,7 @@ export function validateEnv(): boolean {
     if (e instanceof ConfigError) {
       logger.error(`Configuration validation failed: ${e}`);
       console.log(`✗ Configuration error: ${e.message}`);
-      console.log("  Run 'fstack setup' to configure");
+      console.log("  Run 'snestack setup' to configure");
       return false;
     }
     throw e;
