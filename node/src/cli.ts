@@ -9,6 +9,7 @@ import { ConfigError } from "./core/errors";
 import { setupCronInteractive, listCronJobs } from "./core/scheduler";
 import { organizeStagedReports } from "./domains/financial/tools/reportOrganizer";
 import { Db } from "./core/db";
+import { runSkill } from "./core/runSkill";
 import { AnalysisOrchestrator } from "./domains/financial/orchestrator";
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent } from "./domains/financial/agents/equityAgent";
@@ -428,6 +429,34 @@ program
       console.log(JSON.stringify(output, null, 2));
     } finally {
       db.close();
+    }
+  });
+
+// ── Skill harness (core/runSkill) ───────────────────────────────────────────
+// The formal replacement for the manual "read data-dump JSON + skill markdown
+// + brain by hand" flow: loads the named skill's frontmatter, resolves its
+// `requires`/`references` via the domain's context tools, and runs the
+// assembled prompt through the model. Prints the model's raw reasoning —
+// still your call whether/how to turn that into a `notify --file` payload.
+
+program
+  .command("run-skill <domain> <skill> <subject>")
+  .description(
+    "Run a named skill against a subject through the core harness " +
+      "(e.g. run-skill financial long-term-quality NVDA)"
+  )
+  .action(async (domain: string, skill: string, subject: string) => {
+    if (!validateEnv()) {
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      const result = await runSkill(domain, skill, subject.toUpperCase());
+      console.log(`\n=== ${result.domain}/${result.skill} — ${result.subject} ===\n`);
+      console.log(result.output);
+    } catch (e) {
+      console.error(`run-skill failed: ${e}`);
+      process.exitCode = 1;
     }
   });
 

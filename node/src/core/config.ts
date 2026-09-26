@@ -23,6 +23,10 @@ export class Config {
     "financial",
     "fstack.db"
   );
+  static readonly BRAIN_ROOT = "FSTACK_BRAIN_ROOT";
+  // Root of the shared Google Drive-synced brain folder — each domain's brain
+  // lives under <root>/<domain>/brain/ (e.g. <root>/financial/brain/).
+  static readonly DEFAULT_BRAIN_ROOT = path.join(os.homedir(), "Documents", "personal-brain");
 
   constructor(envFile?: string) {
     const file = envFile ?? path.join(process.cwd(), ".env");
@@ -48,6 +52,10 @@ export class Config {
 
   getDatabasePath(): string {
     return Config.get(Config.DATABASE_PATH) ?? Config.DEFAULT_DB_PATH;
+  }
+
+  getBrainRoot(): string {
+    return Config.get(Config.BRAIN_ROOT) ?? Config.DEFAULT_BRAIN_ROOT;
   }
 
   getFinnhubApiKey(): string {

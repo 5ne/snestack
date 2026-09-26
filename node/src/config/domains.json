@@ -1,0 +1,6 @@
+{
+  "financial": {
+    "skillsDir": "domains/financial/skills",
+    "contextToolsModule": "domains/financial/contextTools"
+  }
+}
