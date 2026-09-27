@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { getConfig } from "../../core/config";
+import { Db } from "../../core/db";
 import type { ContextToolMap } from "../../core/contextTools";
 import { QuoteAgent } from "./agents/quoteAgent";
 import { EquityAgent } from "./agents/equityAgent";
@@ -14,7 +15,15 @@ import { EquityAgent } from "./agents/equityAgent";
 export const contextTools: ContextToolMap = {
   quote: async (subject) => {
     const config = getConfig();
-    return new QuoteAgent(config.getFinnhubApiKey()).safeAnalyze(subject.toUpperCase());
+    const db = new Db(config.getDatabasePath());
+    try {
+      // Passing db lets QuoteAgent reuse today's RSI/MA if data-dump (or an
+      // earlier run-skill call today) already computed them, instead of
+      // burning another Twelve Data request for the same numbers.
+      return await new QuoteAgent(config.getFinnhubApiKey(), db).safeAnalyze(subject.toUpperCase());
+    } finally {
+      db.close();
+    }
   },
 
   fundamentals: async (subject) => {

@@ -1,4 +1,6 @@
 import { QuoteAgent } from "../../../../src/domains/financial/agents/quoteAgent";
+import type { QuoteProvider } from "../../../../src/domains/financial/providers/types";
+import type { Db, QuoteRow } from "../../../../src/core/db";
 
 describe("QuoteAgent static methods", () => {
   describe("calculateRsi", () => {
@@ -78,5 +80,77 @@ describe("QuoteAgent instantiation", () => {
   it("creates instance with db", () => {
     const agent = new QuoteAgent("test_api_key", undefined);
     expect(agent).toBeDefined();
+  });
+});
+
+describe("QuoteAgent.analyze — cached technicals", () => {
+  function makeProvider(): QuoteProvider {
+    return {
+      getQuote: jest.fn().mockResolvedValue({ price: 100, open: 99, high: 101, low: 98, volume: 1000 }),
+      getHistoricalCloses: jest.fn().mockResolvedValue(Array.from({ length: 250 }, (_, i) => 100 + i * 0.1)),
+      getFundamentals: jest.fn().mockResolvedValue(null),
+    };
+  }
+
+  function makeDb(cachedRow: QuoteRow | undefined): Db {
+    return {
+      getLatestQuote: jest.fn().mockReturnValue(cachedRow),
+      addQuote: jest.fn(),
+    } as unknown as Db;
+  }
+
+  it("reuses today's cached RSI/MA and skips the historical-closes fetch", async () => {
+    const today = new Date().toISOString().split("T")[0];
+    const provider = makeProvider();
+    const db = makeDb({
+      ticker: "NVDA",
+      date: today,
+      open: 1,
+      high: 1,
+      low: 1,
+      close: 1,
+      volume: 1,
+      rsi: 42,
+      ma_50: 200,
+      ma_200: 190,
+    });
+
+    const result = await new QuoteAgent("key", db, provider).analyze("NVDA");
+
+    expect(result?.rsi).toBe(42);
+    expect(result?.ma50).toBe(200);
+    expect(result?.ma200).toBe(190);
+    expect(provider.getHistoricalCloses).not.toHaveBeenCalled();
+    expect(db.addQuote).not.toHaveBeenCalled();
+  });
+
+  it("fetches fresh when the cached row is from a prior day", async () => {
+    const provider = makeProvider();
+    const db = makeDb({
+      ticker: "NVDA",
+      date: "2020-01-01",
+      open: 1,
+      high: 1,
+      low: 1,
+      close: 1,
+      volume: 1,
+      rsi: 42,
+      ma_50: 200,
+      ma_200: 190,
+    });
+
+    await new QuoteAgent("key", db, provider).analyze("NVDA");
+
+    expect(provider.getHistoricalCloses).toHaveBeenCalledWith("NVDA", 250);
+    expect(db.addQuote).toHaveBeenCalled();
+  });
+
+  it("fetches fresh when there is no cached row at all", async () => {
+    const provider = makeProvider();
+    const db = makeDb(undefined);
+
+    await new QuoteAgent("key", db, provider).analyze("NVDA");
+
+    expect(provider.getHistoricalCloses).toHaveBeenCalled();
   });
 });

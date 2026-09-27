@@ -6,7 +6,7 @@ import { getConfig } from "../../../core/config";
 import { FinnhubQuoteProvider } from "../providers/finnhubQuoteProvider";
 import { TwelveDataQuoteProvider } from "../providers/twelveDataQuoteProvider";
 import { HybridQuoteProvider } from "../providers/hybridQuoteProvider";
-import type { QuoteProvider } from "../providers/types";
+import type { QuoteProvider, LiveFundamentals } from "../providers/types";
 
 /**
  * Finnhub covers quote + fundamentals fine; its free tier blocks historical
@@ -44,13 +44,36 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
           return null;
         }
 
-        const [closes, fundamentals] = await Promise.all([
-          this.provider.getHistoricalCloses(ticker, 250),
-          this.provider.getFundamentals(ticker),
-        ]);
-        const rsi = closes ? QuoteAgent.calculateRsi(closes) : null;
-        const ma50 = closes ? QuoteAgent.calculateMovingAverage(closes, 50) : null;
-        const ma200 = closes ? QuoteAgent.calculateMovingAverage(closes, 200) : null;
+        // Reuse today's already-computed RSI/MA if a Db is available and has
+        // it — Twelve Data's free tier is rate-limited (8/min), so a caller
+        // that already ran data-dump today (or a prior run-skill call today)
+        // shouldn't pay for another historical-closes fetch just to get the
+        // same numbers back.
+        const today = new Date().toISOString().split("T")[0];
+        const cached = this.db?.getLatestQuote(ticker);
+        const useCachedTechnicals = cached?.date === today && cached.rsi != null;
+
+        let rsi: number | null;
+        let ma50: number | null;
+        let ma200: number | null;
+        let fundamentals: LiveFundamentals | null;
+
+        if (useCachedTechnicals && cached) {
+          this.logger.debug(`Reusing today's cached RSI/MA for ${ticker}`);
+          rsi = cached.rsi;
+          ma50 = cached.ma_50;
+          ma200 = cached.ma_200;
+          fundamentals = await this.provider.getFundamentals(ticker);
+        } else {
+          const [closes, freshFundamentals] = await Promise.all([
+            this.provider.getHistoricalCloses(ticker, 250),
+            this.provider.getFundamentals(ticker),
+          ]);
+          rsi = closes ? QuoteAgent.calculateRsi(closes) : null;
+          ma50 = closes ? QuoteAgent.calculateMovingAverage(closes, 50) : null;
+          ma200 = closes ? QuoteAgent.calculateMovingAverage(closes, 200) : null;
+          fundamentals = freshFundamentals;
+        }
 
         const result: QuoteData = {
           ticker,
@@ -72,8 +95,7 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
           timestamp: new Date(),
         };
 
-        if (this.db && quote.open && quote.high && quote.low && quote.price) {
-          const today = new Date().toISOString().split("T")[0];
+        if (this.db && !useCachedTechnicals && quote.open && quote.high && quote.low && quote.price) {
           this.db.addQuote(
             ticker,
             today,
