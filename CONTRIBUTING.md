@@ -8,7 +8,7 @@ Thank you for your interest in contributing! This guide explains how to set up y
 - Node.js 22+
 - npm
 - git
-- Google Drive for Desktop (syncs `~/Documents/personal-brain/` — see below)
+- Google Drive for Desktop (syncs the shared folder — see below)
 
 ### Install for Development
 
@@ -24,12 +24,10 @@ cp .env.example .env
 
 ### Shared data (`brain/`, `reports/`, the db)
 
-None of this lives in the repo — it's all in the Google Drive-synced folder at `~/Documents/personal-brain/`, which is how it stays in sync across machines without git (no LFS needed). See `.gitignore` and each subfolder's own README:
-- `~/Documents/personal-brain/financial/brain/` — per-company thesis notes
-- `~/Documents/personal-brain/financial/reports/` — Morningstar PDFs (see that folder's README for the download/organize workflow)
-- `~/Documents/personal-brain/financial/snestack.db` — the sqlite db
-
-Override the root with `SNESTACK_BRAIN_ROOT` in `.env` if you move the shared folder.
+None of this lives in the repo — it's all in a Google Drive-synced folder, one directory setting (`SNESTACK_BRAIN_ROOT` in `.env`) away from everything else. Default is `~/Documents/personal-brain`; point it at wherever your Drive actually syncs to (e.g. `~/Google Drive/My Drive/personal-brain`) and the db, brain, and reports all follow — there's no second setting to remember to update. See `.gitignore` and each subfolder's own README:
+- `<SNESTACK_BRAIN_ROOT>/financial/brain/` — per-company thesis notes
+- `<SNESTACK_BRAIN_ROOT>/financial/reports/` — Morningstar PDFs (see that folder's README for the download/organize workflow)
+- `<SNESTACK_BRAIN_ROOT>/financial/snestack.db` — the sqlite db (derived from `SNESTACK_BRAIN_ROOT`, not set independently)
 
 ### Run Tests
 

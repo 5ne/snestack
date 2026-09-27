@@ -19,7 +19,7 @@ snestack/
             └── calendar/      # skills/, tools/, googleAuth.ts, setup.ts
 ```
 
-`snestack.db`, `brain/`, and `reports/` (Morningstar PDFs) all live outside the repo, in the shared Google Drive folder at `~/Documents/personal-brain/financial/` — not committed here; see `.gitignore`.
+`snestack.db`, `brain/`, and `reports/` (Morningstar PDFs) all live outside the repo, in a shared Google Drive folder at `<SNESTACK_BRAIN_ROOT>/financial/` (default `~/Documents/personal-brain/financial/`) — not committed here; see `.gitignore`.
 
 ## Running a skill
 
@@ -32,7 +32,7 @@ snestack run-skill calendar daily-agenda today
 
 ## Database
 
-`snestack.db` (in `~/Documents/personal-brain/financial/`) is the financial domain's single source of truth: positions, watchlist, historical quotes/technicals, signal history, and the pending-notification queue. The CLI reads its location from `SNESTACK_DATABASE_PATH` in `.env`.
+`snestack.db` (in `~/Documents/personal-brain/financial/` by default) is the financial domain's single source of truth: positions, watchlist, historical quotes/technicals, signal history, and the pending-notification queue. Its path is derived from `SNESTACK_BRAIN_ROOT` in `.env` — see [`node/README.md`](node/README.md)'s Environment Variables table.
 
 ## Morningstar Reports
 

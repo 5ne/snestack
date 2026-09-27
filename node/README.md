@@ -67,11 +67,11 @@ NODE_OPTIONS=--experimental-sqlite npm test
 NODE_OPTIONS=--experimental-sqlite npm run test:coverage
 ```
 
-230 tests across 16 suites — all passing except one pre-existing, unrelated flake in `scheduler.test.ts` (a macOS `/var` vs `/private/var` symlink mismatch in a crontab-mock comparison).
+233 tests across 16 suites — all passing except one pre-existing, unrelated flake in `scheduler.test.ts` (a macOS `/var` vs `/private/var` symlink mismatch in a crontab-mock comparison).
 
 ## Database
 
-Lives outside the repo, in the shared Google Drive folder at `~/Documents/personal-brain/financial/snestack.db`, via `SNESTACK_DATABASE_PATH` in `.env`. Override by setting a different path in `.env`.
+Lives outside the repo, in the shared Google Drive folder at `<SNESTACK_BRAIN_ROOT>/financial/snestack.db` — derived from `SNESTACK_BRAIN_ROOT` in `.env` (default `~/Documents/personal-brain`), not set independently. Point `SNESTACK_BRAIN_ROOT` at wherever your Drive folder actually syncs to (e.g. `~/Google Drive/My Drive/personal-brain`) and the db, brain, and reports all follow.
 
 ## Project Layout
 
@@ -116,8 +116,7 @@ snestack run-skill calendar daily-agenda today
 | `SNESTACK_GMAIL_ADDRESS` | Yes | Gmail sender address |
 | `SNESTACK_GMAIL_APP_PASSWORD` | Yes | Gmail app password |
 | `SNESTACK_NOTIFICATION_EMAIL` | Yes | Where to send signals |
-| `SNESTACK_DATABASE_PATH` | No | DB path (default: `~/Documents/personal-brain/financial/snestack.db`) |
-| `SNESTACK_BRAIN_ROOT` | No | Brain root (default: `~/Documents/personal-brain`) |
+| `SNESTACK_BRAIN_ROOT` | No | Root of the shared folder (default: `~/Documents/personal-brain`) — db, brain, and reports paths all derive from this one setting |
 | `SNESTACK_TWILIO_ACCOUNT_SID` | No | SMS via Twilio |
 | `SNESTACK_TWILIO_AUTH_TOKEN` | No | SMS via Twilio |
 | `SNESTACK_SMS_PHONE` | No | SMS recipient number |
