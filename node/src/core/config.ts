@@ -17,18 +17,12 @@ export class Config {
   static readonly TWILIO_ACCOUNT_SID = "SNESTACK_TWILIO_ACCOUNT_SID";
   static readonly TWILIO_AUTH_TOKEN = "SNESTACK_TWILIO_AUTH_TOKEN";
   static readonly SMS_PHONE = "SNESTACK_SMS_PHONE";
-  static readonly DATABASE_PATH = "SNESTACK_DATABASE_PATH";
-  // Shared db lives in the Google Drive-synced folder, outside the repo — see README.
-  static readonly DEFAULT_DB_PATH = path.join(
-    os.homedir(),
-    "Documents",
-    "personal-brain",
-    "financial",
-    "snestack.db"
-  );
   static readonly BRAIN_ROOT = "SNESTACK_BRAIN_ROOT";
-  // Root of the shared Google Drive-synced brain folder — each domain's brain
-  // lives under <root>/<domain>/brain/ (e.g. <root>/financial/brain/).
+  // Root of the shared Google Drive-synced folder — the one directory setting
+  // for all of a domain's shared data. Each domain's brain lives under
+  // <root>/<domain>/brain/ (e.g. <root>/financial/brain/), and the financial
+  // domain's db lives at <root>/financial/snestack.db — both derived from
+  // this single root rather than configured separately.
   static readonly DEFAULT_BRAIN_ROOT = path.join(os.homedir(), "Documents", "personal-brain");
 
   constructor(envFile?: string) {
@@ -53,8 +47,9 @@ export class Config {
     process.env[key] = value;
   }
 
+  /** Derived from getBrainRoot() — the db lives in the shared folder alongside brain/ and reports/. */
   getDatabasePath(): string {
-    return Config.get(Config.DATABASE_PATH) ?? Config.DEFAULT_DB_PATH;
+    return path.join(this.getBrainRoot(), "financial", "snestack.db");
   }
 
   getBrainRoot(): string {

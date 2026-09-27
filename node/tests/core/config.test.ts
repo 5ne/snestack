@@ -12,7 +12,7 @@ const SNESTACK_VARS = [
   "SNESTACK_GMAIL_ADDRESS",
   "SNESTACK_GMAIL_APP_PASSWORD",
   "SNESTACK_NOTIFICATION_EMAIL",
-  "SNESTACK_DATABASE_PATH",
+  "SNESTACK_BRAIN_ROOT",
   "SNESTACK_TWILIO_ACCOUNT_SID",
   "SNESTACK_TWILIO_AUTH_TOKEN",
   "SNESTACK_SMS_PHONE",
@@ -25,8 +25,8 @@ beforeEach(() => {
 
 describe("Config.get", () => {
   it("returns env var value", () => {
-    process.env.SNESTACK_DATABASE_PATH = "test.db";
-    expect(Config.get("SNESTACK_DATABASE_PATH")).toBe("test.db");
+    process.env.SNESTACK_BRAIN_ROOT = "/tmp/brain";
+    expect(Config.get("SNESTACK_BRAIN_ROOT")).toBe("/tmp/brain");
   });
 
   it("returns default when env var missing", () => {
@@ -50,17 +50,17 @@ describe("Config.require", () => {
 });
 
 describe("getDatabasePath", () => {
-  it("returns default when not set", () => {
+  it("derives from the default brain root when SNESTACK_BRAIN_ROOT is not set", () => {
     const config = new Config(NO_ENV);
     expect(config.getDatabasePath()).toBe(
       path.join(os.homedir(), "Documents", "personal-brain", "financial", "snestack.db")
     );
   });
 
-  it("returns custom path when set", () => {
-    process.env.SNESTACK_DATABASE_PATH = "/tmp/test.db";
+  it("derives from SNESTACK_BRAIN_ROOT when set", () => {
+    process.env.SNESTACK_BRAIN_ROOT = "/tmp/my-brain";
     const config = new Config(NO_ENV);
-    expect(config.getDatabasePath()).toBe("/tmp/test.db");
+    expect(config.getDatabasePath()).toBe(path.join("/tmp/my-brain", "financial", "snestack.db"));
   });
 });
 
