@@ -49,17 +49,32 @@ export async function parseMorningstarPdf(
 
   const result: MorningstarData = {};
 
-  // Header: fair value, P/FVE, moat, uncertainty, capital allocation
-  const headerMatch = fullText.match(
-    /Last Price\s+Fair Value Estimate\s+Price\/FVE\s+Market Cap\s+Economic Moat.*?Capital Allocation\s+([\d.]+)\s+USD\s+([\d.]+)\s+USD\s+([\d.]+)\s+([\d.]+)\s+USD\s+(?:Tril|Bil)?\s*(Wide|Narrow|None)\s+.*?(Very High|High|Medium|Low|Extreme)\s+(Exemplary|Standard|Poor)/s
+  // Header: fair value, P/FVE, moat, uncertainty, capital allocation.
+  // pdf-parse renders this header as label, then value, each on their own
+  // line (with inconsistent extra whitespace/line breaks within a label
+  // across reports) — not all labels grouped before all values as a single
+  // block, so each field needs its own label->value match rather than one
+  // regex spanning the whole header.
+  const fairValueMatch = fullText.match(/Fair\s+Value\s+Estimate\s*[\r\n]+([\d.]+)\s*USD/);
+  if (fairValueMatch) result.fair_value = cleanNumber(fairValueMatch[1]);
+
+  const priceToFairValueMatch = fullText.match(/Price\/FVE\s*[\r\n]+([\d.]+)/);
+  if (priceToFairValueMatch) result.price_to_fair_value = cleanNumber(priceToFairValueMatch[1]);
+
+  const moatMatch = fullText.match(
+    /Economic\s+Moat\s*[\r\n]+TM\s*[\r\n]+(Wide|Narrow|None)/
   );
-  if (headerMatch) {
-    result.fair_value = cleanNumber(headerMatch[2]);
-    result.price_to_fair_value = cleanNumber(headerMatch[3]);
-    result.economic_moat = headerMatch[5];
-    result.uncertainty = headerMatch[6];
-    result.capital_allocation = headerMatch[7];
-  }
+  if (moatMatch) result.economic_moat = moatMatch[1];
+
+  const uncertaintyMatch = fullText.match(
+    /Uncertainty\s*[\r\n]+(Very High|High|Medium|Low|Extreme)/
+  );
+  if (uncertaintyMatch) result.uncertainty = uncertaintyMatch[1];
+
+  const capitalAllocationMatch = fullText.match(
+    /Capital\s+Allocation\s*[\r\n]+(Exemplary|Standard|Poor)/
+  );
+  if (capitalAllocationMatch) result.capital_allocation = capitalAllocationMatch[1];
 
   // Morningstar star rating
   const starMatch = fullText.match(/[A-Z]{1,5}\s+(Q{1,5})\b/);
