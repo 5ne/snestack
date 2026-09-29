@@ -21,22 +21,29 @@ export interface SkillRunResult {
   output: string;
 }
 
+export interface AssembledSkillPrompt {
+  systemPrompt: string;
+  userPrompt: string;
+}
+
 /** Where this domain's skill markdown actually lives on disk (always under src/, even in a compiled build). */
 function resolveSkillsDir(skillsDirRelativeToSrc: string): string {
   return path.join(process.cwd(), "src", skillsDirRelativeToSrc);
 }
 
 /**
- * Load a skill's frontmatter + body, resolve its `requires`/`references` via the
- * domain's context tools, and run the assembled prompt through the model.
- * This is the harness's one entry point — callers never touch the loader,
- * registry, or executor directly.
+ * Load a skill's frontmatter + body and resolve its `requires`/`references` via
+ * the domain's context tools into a system + user prompt — everything
+ * `runSkill` sends to the model, without actually calling it. Split out so a
+ * caller that can't (or shouldn't) run the model itself — e.g. a skill that
+ * needs data this harness has no access to, like Gmail — can still get the
+ * fully-assembled prompt to run somewhere that does.
  */
-export async function runSkill(
+export async function assembleSkillPrompt(
   domain: string,
   skillName: string,
   subject: string
-): Promise<SkillRunResult> {
+): Promise<AssembledSkillPrompt> {
   const domainConfig = getDomainConfig(domain);
   const skillsDir = resolveSkillsDir(domainConfig.skillsDir);
   const skillPath = path.join(skillsDir, `${skillName}.md`);
@@ -85,8 +92,23 @@ export async function runSkill(
     [...contextSections, ...referenceSections].join("\n\n"),
   ].join("\n");
 
+  return { systemPrompt: GENERIC_SYSTEM_PROMPT, userPrompt };
+}
+
+/**
+ * Load a skill's frontmatter + body, resolve its `requires`/`references` via the
+ * domain's context tools, and run the assembled prompt through the model.
+ * This is the harness's one entry point — callers never touch the loader,
+ * registry, or executor directly.
+ */
+export async function runSkill(
+  domain: string,
+  skillName: string,
+  subject: string
+): Promise<SkillRunResult> {
+  const { systemPrompt, userPrompt } = await assembleSkillPrompt(domain, skillName, subject);
   logger.debug(`Running skill "${domain}/${skillName}" for ${subject}`);
-  const { output } = await runPrompt(getConfig().getClaudeApiKey(), GENERIC_SYSTEM_PROMPT, userPrompt);
+  const { output } = await runPrompt(getConfig().getClaudeApiKey(), systemPrompt, userPrompt);
 
   return { domain, skill: skillName, subject, output };
 }

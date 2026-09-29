@@ -9,7 +9,8 @@ import { ConfigError } from "./core/errors";
 import { setupCronInteractive, listCronJobs } from "./core/scheduler";
 import { organizeStagedReports } from "./domains/financial/tools/reportOrganizer";
 import { Db } from "./core/db";
-import { runSkill } from "./core/runSkill";
+import { runSkill, assembleSkillPrompt } from "./core/runSkill";
+import { runPrompt } from "./core/executor";
 import { authorizeGoogleCalendar } from "./domains/calendar/setup";
 import { AnalysisOrchestrator } from "./domains/financial/orchestrator";
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
@@ -472,6 +473,152 @@ program
       console.log(result.output);
     } catch (e) {
       console.error(`run-skill failed: ${e}`);
+      process.exitCode = 1;
+    }
+  });
+
+// ── Travel domain ────────────────────────────────────────────────────────
+// This harness has no Gmail access, so `catalog-trip-year` can't actually run
+// end-to-end via `run-skill` the way financial/calendar skills do. Instead,
+// `travel prep-catalog` assembles the skill (its judgment process + the
+// year's deterministic Timeline clusters) into one prompt you paste into a
+// Claude session that does have Gmail + Google Maps access.
+
+const travel = program.command("travel").description("Travel brain domain");
+
+travel
+  .command("prep-catalog <year>")
+  .description(
+    "Assemble the catalog-trip-year skill for <year> (skill body + that year's Google Maps " +
+      "Timeline clusters) into one prompt, ready to paste into a Claude session with Gmail + " +
+      "Maps access. Writes to stdout, or --out <file>."
+  )
+  .option("--out <path>", "Write the assembled prompt to a file instead of stdout")
+  .action(async (year: string, opts: { out?: string }) => {
+    if (!validateEnv()) {
+      process.exitCode = 1;
+      return;
+    }
+    if (!/^\d{4}$/.test(year)) {
+      console.error(`Expected a 4-digit year, got "${year}"`);
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      const { userPrompt } = await assembleSkillPrompt("travel", "catalog-trip-year", year);
+      if (opts.out) {
+        fs.writeFileSync(opts.out, userPrompt, "utf8");
+        console.error(`Wrote assembled prompt to ${opts.out}`);
+      } else {
+        console.log(userPrompt);
+      }
+    } catch (e) {
+      console.error(`travel prep-catalog failed: ${e}`);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command("distill-signals")
+  .description(
+    "Turn a directory of run-skill output files into a notify-ready signals JSON array, " +
+      "via a single Claude call over all of them at once. Reads every " +
+      "*-long-term-quality.md / *-swing-trading-large-cap.md file in --dir, plus that " +
+      "dir's data-dump.json (if present) for isWatchlist flags. Prints the JSON array to " +
+      "stdout — pipe it to a file, then pass that file to `notify --file`. " +
+      "Unlike run-skill, this makes no fresh judgment of its own: it summarizes the " +
+      "judgments those skill runs already made into the schema notify expects."
+  )
+  .requiredOption("--dir <path>", "Directory containing run-skill output files (and optionally data-dump.json)")
+  .action(async (opts: { dir: string }) => {
+    if (!validateEnv()) {
+      process.exitCode = 1;
+      return;
+    }
+    const config = getConfig();
+    const dir = opts.dir;
+    if (!fs.existsSync(dir)) {
+      console.error(`Directory not found: ${dir}`);
+      process.exitCode = 1;
+      return;
+    }
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith("-long-term-quality.md") || f.endsWith("-swing-trading-large-cap.md"));
+    if (files.length === 0) {
+      console.error(`No *-long-term-quality.md or *-swing-trading-large-cap.md files found in ${dir}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const watchlistTickers = new Set<string>();
+    const dumpPath = path.join(dir, "data-dump.json");
+    if (fs.existsSync(dumpPath)) {
+      try {
+        const raw = fs.readFileSync(dumpPath, "utf8");
+        // data-dump.json may have colored logger lines above the JSON array if it
+        // was captured with `tee`/stdout rather than redirected cleanly — the
+        // array itself always starts at a line that is exactly "[".
+        const lines = raw.split("\n");
+        const arrayStartLine = lines.findIndex((l) => l === "[");
+        if (arrayStartLine === -1) throw new Error("no JSON array found (no line is exactly '[')");
+        const arr = JSON.parse(lines.slice(arrayStartLine).join("\n")) as Array<{
+          ticker: string;
+          isWatchlist: boolean;
+        }>;
+        arr.forEach((e) => {
+          if (e.isWatchlist) watchlistTickers.add(e.ticker);
+        });
+      } catch (e) {
+        console.error(`Warning: could not parse ${dumpPath} for watchlist flags: ${e}`);
+      }
+    }
+
+    const sections = files
+      .sort()
+      .map((f) => `### FILE: ${f}\n${fs.readFileSync(path.join(dir, f), "utf8")}`)
+      .join("\n\n---\n\n");
+
+    const systemPrompt =
+      "You distill a batch of already-completed investment judgment write-ups into a single " +
+      "strict JSON array for a downstream notification step. You are not re-deciding anything — " +
+      "each input file already contains a final recommendation from a domain skill; your job is " +
+      "purely mechanical extraction and format translation. Output ONLY the JSON array — no prose, " +
+      "no markdown code fences, no commentary before or after.";
+
+    const userPrompt = [
+      `WATCHLIST TICKERS (fromWatchlist should be true for these, false for all others): ${
+        [...watchlistTickers].join(", ") || "(none)"
+      }`,
+      "",
+      "For each file below, extract one JSON object:",
+      "- ticker: the ticker symbol",
+      '- recommendation: "BUY", "SELL", or "HOLD" — map the skill\'s own vocabulary onto these three ' +
+        '(e.g. "BUY-MORE"/"TACTICAL BUY" -> BUY, "TRIM"/"SELL/TRIM" -> SELL)',
+      "- confidence: your best-effort 0.0-1.0 read of how strongly the file's own reasoning supports its call",
+      "- reasoning: 1-2 sentences summarizing the file's actual reasoning, prefixed with [Long-term] or " +
+        "[Swing] depending on which file it came from",
+      "- fromWatchlist: true/false per the watchlist ticker list above",
+      "",
+      "Skip a swing-trading file entirely if it explicitly says the ticker is INELIGIBLE for the " +
+      "swing strategy (failed eligibility filter) — that is not a recommendation, don't invent one. " +
+      "A ticker can legitimately appear twice (once per skill) if both produced a call.",
+      "",
+      sections,
+    ].join("\n");
+
+    const { output } = await runPrompt(config.getClaudeApiKey(), systemPrompt, userPrompt, 8000);
+    const cleaned = output
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/```\s*$/i, "");
+    try {
+      const parsed = JSON.parse(cleaned);
+      if (!Array.isArray(parsed)) throw new Error("not an array");
+      console.log(JSON.stringify(parsed, null, 2));
+    } catch (e) {
+      console.error(`Model output was not valid JSON: ${e}`);
+      console.error(output);
       process.exitCode = 1;
     }
   });

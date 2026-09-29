@@ -15,12 +15,13 @@ export interface ExecutorResult {
 export async function runPrompt(
   apiKey: string,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  maxTokens = 1500
 ): Promise<ExecutorResult> {
   const client = new Anthropic({ apiKey });
   const response = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 1500,
+    max_tokens: maxTokens,
     system: systemPrompt,
     messages: [{ role: "user", content: userPrompt }],
   });

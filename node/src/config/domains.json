@@ -6,5 +6,9 @@
   "calendar": {
     "skillsDir": "domains/calendar/skills",
     "contextToolsModule": "domains/calendar/contextTools"
+  },
+  "travel": {
+    "skillsDir": "domains/travel/skills",
+    "contextToolsModule": "domains/travel/contextTools"
   }
 }
