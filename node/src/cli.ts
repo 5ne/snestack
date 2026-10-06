@@ -388,6 +388,13 @@ travel
       const written = writeStagedCatalogFiles(getConfig().getBrainRoot(), parseInt(year, 10), files);
       console.log(`Wrote ${written.length} file(s) to the .nightly-draft/ staging directory:`);
       written.forEach((p) => console.log(`  ${p}`));
+      if (result.stopReason === "max_tokens") {
+        console.log(
+          `\nNote: stopped at max_tokens (${result.outputTokensUsed} output tokens) — the response may ` +
+            "have been cut off mid-file, or an expected file (e.g. the index) may be missing entirely. " +
+            "Check the files above before assuming the run is complete."
+        );
+      }
       console.log("\nReview before promoting into the year's canonical files.");
     } catch (e) {
       console.error(`travel catalog failed: ${e}`);
