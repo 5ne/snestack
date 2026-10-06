@@ -1,27 +1,33 @@
 ---
 name: catalog-trip-year
 domain: travel
-requires: [timeline]
+requires: [timeline, gmail]
 model: normal
-status: needs-gmail-access
+maxTokens: 16000
+status: automatable (lower-fidelity than a manual run — see "Two ways to run this")
 ---
 
 # Skill: Catalog a Year of Trips
 
-**Purpose:** turn a year's worth of Gmail (booking confirmations, receipts, card alerts, Uber receipts, planning threads) plus the Google Maps Timeline export into one markdown file per trip, in `<SNESTACK_BRAIN_ROOT>/travel/<year>/`, matching the established convention already used for 2025 and 2026.
+**Purpose:** turn a year's worth of Gmail (booking confirmations, receipts, card alerts, Uber receipts, planning threads) plus the Google Maps Timeline export into one markdown file per trip, in `<SNESTACK_BRAIN_ROOT>/travel/<year>/`, matching the established convention already used for 2021–2026.
 
 **Parameters:** `subject` — a 4-digit year, e.g. `2024`.
 
-**Where this runs:** this harness has no Gmail access wired up (see `node/src/domains/travel/contextTools.ts` — there is deliberately no `gmail` context tool). `snestack run-skill travel catalog-trip-year <year>` will assemble this skill with real `TIMELINE` context but the model will have no email to work from. Instead, run `snestack travel prep-catalog <year>` to generate a ready-to-paste prompt (this skill body + the year's timeline clusters), and paste it into a Claude session that actually has Gmail and Google Maps access. Update this file as your process improves — the point of "fat skills" is that the judgment lives here, not in a one-off chat prompt you'll forget next year.
+## Two ways to run this
+
+1. **`snestack travel catalog <year>`** — fully automated, end to end (one-time `snestack travel auth` needed first for Gmail OAuth; see node/README.md). `contextTools.ts`'s `gmail` tool runs a fixed set of broad searches (see `tools/gmailClient.ts`) and hands this skill metadata + snippets only — never full message bodies, both to avoid the tracking-link bloat that notification email is full of, and to keep the fetch a single bounded round trip rather than an open-ended search. **This is strictly lower-fidelity than a manual run**: no follow-up searches on ambiguous threads, no full-body reads to resolve a conflicting date or an unclear traveler list, and no way to notice a longer trip hiding behind a short hotel stay (e.g. a 2-night hotel booking that turns out to sit inside a 10-day car-rental window — a manual run caught that once; this path won't). Writes its output to `<SNESTACK_BRAIN_ROOT>/travel/<year>/.nightly-draft/`, deliberately **not** the canonical files — review and promote by hand (`mv`) rather than trusting it to overwrite a year you've already refined by hand. This is what `scripts/travel-catalog-nightly.sh` runs on a cron.
+2. **Manual, in a Claude Code (or similar) session with real Gmail + Google Maps access** — run `snestack travel prep-catalog <year>` to get this skill body + the year's timeline clusters as one prompt, then do the actual Gmail search and reasoning interactively, with as many follow-up searches and full-thread reads as the trips need. This is how 2021–2024 were originally built and is still the higher-quality path for a year you want done right once. Nothing stops you from running the automated path first and using its `.nightly-draft/` output as a starting point for a manual pass.
+
+Either way, update this file as your process improves — the point of "fat skills" is that the judgment lives here, not in a one-off chat prompt you'll forget next year.
 
 ## Inputs
 
 - `timeline`: pre-clustered candidate "away from home" date ranges for the year, built deterministically from the Google Maps Timeline export (`travel/Timeline.json`). Each cluster is a run of visits, at least `TRIP_GAP_HOURS` (30h) apart from the next, with routine places already excluded (anywhere visited on 8+ distinct days across the whole export — home, work, gym, etc.; see `routinePlaceIds`). Each visit has a date, local time range, dwell duration, raw lat/lng, Google place ID, and a ready-made map link — but **no place name**. The dataset only covers `datasetCoversFrom`–`datasetCoversTo` (currently Aug 2024 onward); for dates outside that range, `timeline` will say so and you're working from email alone.
-- Gmail, for the year in question — search yourself (this harness doesn't do this part): flight/hotel/rental-car confirmations, airline and hotel receipts, Uber/Lyft receipts, AmEx/card foreign-transaction alerts (domestic charges under ~$500 usually aren't itemized — expect thinner restaurant data for domestic trips), OpenTable/Resy reservations, planning threads with travel companions.
+- `gmail`: an array of `{date, from, subject, snippet, threadId, messageId, matchedQuery}` from the fixed query set in `tools/gmailClient.ts` (flights, hotels, car rentals, dining reservations, rideshare receipts, foreign-transaction alerts, cancellations) for the year in question. Snippets only, no full bodies — a date or detail that's ambiguous from the snippet alone stays ambiguous; say so in Gaps rather than guessing. When running manually instead (see above), search Gmail yourself with the same breadth, and you're not limited to snippets — read full threads for anything ambiguous.
 
 ## Judgment process
 
-1. Search Gmail broadly first (flight confirmations, "your trip", "reservation", "itinerary", hotel/Airbnb/Vrbo names, Uber receipts, card alerts) across the full year, not just obvious "vacation" keywords — weekend trips and short work-adjacent trips get missed if you only look for the obvious ones.
+1. Treat `gmail` (or your own search, if running manually) as the starting point, not the full picture — weekend trips and short work-adjacent trips get missed if you only look for the obvious "vacation" keywords, which is why the query set is broad on purpose.
 2. Use the `timeline` clusters as a checklist: for every cluster, find the email trail that explains it (who, why, where). If a cluster has no matching email, still record it (see "Gaps") rather than silently dropping it — the Timeline saw you leave home for a reason.
 3. Conversely, an email trip (flights booked, hotel confirmed) with no matching Timeline cluster either predates the Timeline's coverage window or simply wasn't captured — note that in Gaps rather than treating the absence as contradicting the email.
 4. For each real trip, work out: dates and nights, who went (infer from booking names, party sizes, "for 2"/"for 4" language — don't guess beyond what the email actually supports), flights (carrier, flight number, route, confirmation code), where you stayed (place name, area, how many nights, booking source), a day-by-day narrative cross-referencing Timeline visit times against email/receipt timestamps, where you ate (restaurant names from reservations/receipts), activities and sights, hikes/walks specifically, shopping, and transportation used.
@@ -33,7 +39,15 @@ status: needs-gmail-access
 
 ## Output
 
-One markdown file per trip at `<SNESTACK_BRAIN_ROOT>/travel/<year>/<year>-<month>-<short-slug>.md`, e.g. `2024-07-bandon-dunes.md`, using this shape:
+**When running via `snestack travel catalog <year>`** (the automated path), a deterministic post-processor (`tools/fileWriter.ts`) splits your single response into separate files, so emit *everything* — every trip file and the index — in one response, each preceded by its own line of the exact form:
+
+```
+### FILE: <filename>
+```
+
+with no other text before the first marker and nothing between files but the next marker. Use bare filenames only (`2024-07-bandon-dunes.md`, `00-index-2024.md`), not paths — the writer places them under `<SNESTACK_BRAIN_ROOT>/travel/<year>/.nightly-draft/` itself. **When running manually** in a Claude Code session, write the files directly instead — the marker format is only for the automated path's benefit.
+
+One markdown file per trip, e.g. `2024-07-bandon-dunes.md`, using this shape:
 
 ```markdown
 # <Trip title> (<Month Year>)

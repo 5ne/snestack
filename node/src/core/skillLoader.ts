@@ -10,6 +10,8 @@ export interface SkillFrontmatter {
   status?: string;
   /** Cost tier for this skill's model call: "cheap" | "normal" | "expensive". Defaults to "normal". */
   model?: string;
+  /** Output token budget for this skill's model call. Defaults to runPrompt's own default (8000) if unset. */
+  maxTokens?: number;
   [key: string]: unknown;
 }
 

@@ -9,6 +9,8 @@ import { Db } from "./core/db";
 import { runSkill, assembleSkillPrompt } from "./core/runSkill";
 import { runPrompt } from "./core/executor";
 import { authorizeGoogleCalendar } from "./domains/calendar/setup";
+import { authorizeGmail } from "./domains/travel/setup";
+import { parseMultiFileOutput, writeStagedCatalogFiles } from "./domains/travel/tools/fileWriter";
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
@@ -321,13 +323,69 @@ program
   });
 
 // ── Travel domain ────────────────────────────────────────────────────────
-// This harness has no Gmail access, so `catalog-trip-year` can't actually run
-// end-to-end via `run-skill` the way financial/calendar skills do. Instead,
-// `travel prep-catalog` assembles the skill (its judgment process + the
-// year's deterministic Timeline clusters) into one prompt you paste into a
-// Claude session that does have Gmail + Google Maps access.
+// Two ways to run catalog-trip-year — see that skill file for the full
+// tradeoff. `travel auth` + `travel catalog` is the fully automated,
+// deterministic-fetch-then-one-model-call path (what the nightly cron runs).
+// `travel prep-catalog` is the manual path: it assembles the skill + that
+// year's Timeline clusters into one prompt for a Claude session that has
+// real Gmail + Google Maps access to search interactively.
 
 const travel = program.command("travel").description("Travel brain domain");
+
+travel
+  .command("auth")
+  .description(
+    "One-time OAuth consent for read-only Gmail access, needed before `travel catalog`. " +
+      "Requires SNESTACK_GOOGLE_CLIENT_ID/SNESTACK_GOOGLE_CLIENT_SECRET already set (the same " +
+      "Google Cloud OAuth client the calendar domain uses) and the Gmail API enabled on that " +
+      "project — see node/README.md."
+  )
+  .option("--env-file <path>", "Path to .env file (default: .env)")
+  .action(async (opts: { envFile?: string }) => {
+    const ok = await authorizeGmail(opts.envFile);
+    if (!ok) process.exitCode = 1;
+  });
+
+travel
+  .command("catalog <year>")
+  .description(
+    "Fully automated catalog-trip-year run: fetches Gmail (metadata + snippets only, via a fixed " +
+      "search) and the year's Timeline clusters deterministically, runs the skill in a single " +
+      "model call, and writes the resulting per-trip files + index to " +
+      "<SNESTACK_BRAIN_ROOT>/travel/<year>/.nightly-draft/ — a staging directory, not the " +
+      "canonical files, since this path is lower-fidelity than a manual run (see the skill file). " +
+      "Review the draft and move files into place yourself. Requires `travel auth` first. This is " +
+      "what scripts/travel-catalog-nightly.sh runs on a cron."
+  )
+  .action(async (year: string) => {
+    if (!validateEnv()) {
+      process.exitCode = 1;
+      return;
+    }
+    if (!/^\d{4}$/.test(year)) {
+      console.error(`Expected a 4-digit year, got "${year}"`);
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      console.error(`Fetching Gmail + Timeline context and running catalog-trip-year for ${year}...`);
+      const result = await runSkill("travel", "catalog-trip-year", year);
+      const files = parseMultiFileOutput(result.output);
+      if (Object.keys(files).length === 0) {
+        console.error("No '### FILE:' blocks found in the model output — nothing written. Raw output:");
+        console.error(result.output);
+        process.exitCode = 1;
+        return;
+      }
+      const written = writeStagedCatalogFiles(getConfig().getBrainRoot(), parseInt(year, 10), files);
+      console.log(`Wrote ${written.length} file(s) to the .nightly-draft/ staging directory:`);
+      written.forEach((p) => console.log(`  ${p}`));
+      console.log("\nReview before promoting into the year's canonical files.");
+    } catch (e) {
+      console.error(`travel catalog failed: ${e}`);
+      process.exitCode = 1;
+    }
+  });
 
 travel
   .command("prep-catalog <year>")

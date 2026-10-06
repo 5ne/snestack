@@ -98,6 +98,16 @@ snestack run-skill calendar daily-agenda today
 2. Set `SNESTACK_GOOGLE_CLIENT_ID` and `SNESTACK_GOOGLE_CLIENT_SECRET` from that client in `.env`.
 3. Run `snestack calendar auth` — it prints a consent URL, opens a local server to catch the redirect, and saves `SNESTACK_GOOGLE_REFRESH_TOKEN` to `.env` for you. Read-only scope (`calendar.readonly`) only — nothing is ever written to your calendar.
 
+### Travel domain setup (Gmail, read-only)
+
+Two ways to run `catalog-trip-year` — see `src/domains/travel/skills/catalog-trip-year.md` for the full tradeoff:
+
+- **Manual** (higher fidelity, no setup beyond what's already here): `snestack travel prep-catalog <year>` assembles the skill + that year's Timeline clusters into one prompt; paste it into a Claude session with real Gmail + Google Maps access and do the search interactively.
+- **Automated** (lower fidelity, runs unattended): requires its own Gmail OAuth consent, separate from the calendar domain's.
+  1. In the same Google Cloud project as above, enable the **Gmail API** (Calendar and Gmail are separate APIs even on one project/OAuth client).
+  2. Run `snestack travel auth` — same flow as `calendar auth`, but for the `gmail.readonly` scope, saved to `SNESTACK_GOOGLE_GMAIL_REFRESH_TOKEN` (a separate token, since the calendar one was never granted Gmail access).
+  3. Run `snestack travel catalog <year>` (or let `scripts/travel-catalog-nightly.sh` do it on a cron) — fetches Gmail + Timeline context deterministically, runs the skill in one model call, and writes to `<SNESTACK_BRAIN_ROOT>/travel/<year>/.nightly-draft/`. That's a staging directory, not the canonical files — review and move what's good into place yourself.
+
 ## Environment Variables
 
 | Variable | Required | Description |
@@ -116,3 +126,4 @@ snestack run-skill calendar daily-agenda today
 | `SNESTACK_GOOGLE_CLIENT_ID` | No | Calendar domain — Google OAuth "Desktop app" client ID |
 | `SNESTACK_GOOGLE_CLIENT_SECRET` | No | Calendar domain — Google OAuth client secret |
 | `SNESTACK_GOOGLE_REFRESH_TOKEN` | No | Calendar domain — written by `snestack calendar auth`, not set by hand |
+| `SNESTACK_GOOGLE_GMAIL_REFRESH_TOKEN` | No | Travel domain — written by `snestack travel auth`, not set by hand (separate token from the calendar one above; same `SNESTACK_GOOGLE_CLIENT_ID`/`_SECRET`, different scope) |

@@ -26,6 +26,8 @@ export interface AssembledSkillPrompt {
   userPrompt: string;
   /** Cost tier from the skill's frontmatter `model:` (default "normal"). */
   tier: ModelTier;
+  /** Output token budget from the skill's frontmatter `maxTokens:`, if set. */
+  maxTokens?: number;
 }
 
 /** Where this domain's skill markdown actually lives on disk (always under src/, even in a compiled build). */
@@ -98,7 +100,7 @@ export async function assembleSkillPrompt(
     [...contextSections, ...referenceSections].join("\n\n"),
   ].join("\n");
 
-  return { systemPrompt: GENERIC_SYSTEM_PROMPT, userPrompt, tier: tier as ModelTier };
+  return { systemPrompt: GENERIC_SYSTEM_PROMPT, userPrompt, tier: tier as ModelTier, maxTokens: frontmatter.maxTokens };
 }
 
 /**
@@ -112,9 +114,9 @@ export async function runSkill(
   skillName: string,
   subject: string
 ): Promise<SkillRunResult> {
-  const { systemPrompt, userPrompt, tier } = await assembleSkillPrompt(domain, skillName, subject);
+  const { systemPrompt, userPrompt, tier, maxTokens } = await assembleSkillPrompt(domain, skillName, subject);
   logger.debug(`Running skill "${domain}/${skillName}" for ${subject} (tier: ${tier})`);
-  const { output } = await runPrompt(getConfig().getClaudeApiKey(), systemPrompt, userPrompt, { tier });
+  const { output } = await runPrompt(getConfig().getClaudeApiKey(), systemPrompt, userPrompt, { tier, maxTokens });
 
   return { domain, skill: skillName, subject, output };
 }
