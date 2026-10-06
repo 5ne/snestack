@@ -84,16 +84,19 @@ export async function mapWithConcurrency<T, R>(
   return results;
 }
 
-export async function withQuotaRetry<R>(fn: () => Promise<R>, maxAttempts = 5): Promise<R> {
+const MAX_BACKOFF_MS = 30_000;
+
+export async function withQuotaRetry<R>(fn: () => Promise<R>, maxAttempts = 8): Promise<R> {
   for (let attempt = 1; ; attempt++) {
     try {
       return await fn();
     } catch (e) {
+      const code = (e as { code?: number | string })?.code;
       const isQuotaError =
-        (e as { code?: number })?.code === 429 ||
+        String(code) === "429" || // googleapis-common's GaxiosError.code is a string, not a number
         /quota exceeded/i.test((e as Error)?.message ?? "");
       if (!isQuotaError || attempt >= maxAttempts) throw e;
-      const delayMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s, 8s...
+      const delayMs = Math.min(1000 * 2 ** (attempt - 1), MAX_BACKOFF_MS); // 1s, 2s, 4s... capped at 30s
       logger.debug(`Gmail quota hit, retrying in ${delayMs}ms (attempt ${attempt}/${maxAttempts})`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
@@ -136,7 +139,11 @@ async function getSummary(
  */
 export async function searchTravelEmailsForYear(
   year: number,
-  { maxResultsPerQuery = 100, concurrency = 10 }: { maxResultsPerQuery?: number; concurrency?: number } = {}
+  {
+    maxResultsPerQuery = 100,
+    concurrency = 2,
+    pauseBetweenQueriesMs = 3000,
+  }: { maxResultsPerQuery?: number; concurrency?: number; pauseBetweenQueriesMs?: number } = {}
 ): Promise<EmailSummary[]> {
   const auth = getAuthorizedClient();
   const client = gmail({ version: "v1", auth });
@@ -147,16 +154,24 @@ export async function searchTravelEmailsForYear(
   for (const { name, query } of QUERY_TEMPLATES) {
     const fullQuery = `${query} after:${after} before:${before}`;
     logger.debug(`[${name}] ${fullQuery}`);
-    const listRes = await withQuotaRetry(() =>
-      client.users.messages.list({ userId: "me", q: fullQuery, maxResults: maxResultsPerQuery })
-    );
-    const messages = listRes.data.messages ?? [];
-    const summaries = await mapWithConcurrency(messages, concurrency, (m) =>
-      getSummary(client, m.id!, m.threadId!, name)
-    );
-    for (const s of summaries) {
-      if (s && !seen.has(s.messageId)) seen.set(s.messageId, s);
+    try {
+      const listRes = await withQuotaRetry(() =>
+        client.users.messages.list({ userId: "me", q: fullQuery, maxResults: maxResultsPerQuery })
+      );
+      const messages = listRes.data.messages ?? [];
+      const summaries = await mapWithConcurrency(messages, concurrency, (m) =>
+        getSummary(client, m.id!, m.threadId!, name)
+      );
+      for (const s of summaries) {
+        if (s && !seen.has(s.messageId)) seen.set(s.messageId, s);
+      }
+    } catch (e) {
+      // One query exhausting its retries shouldn't sink the whole fetch —
+      // this is a best-effort deterministic pass; a partial result (and a
+      // loud warning) beats catalog-trip-year.md getting no context at all.
+      logger.warn(`Gmail query "${name}" failed after retries, skipping it: ${e}`);
     }
+    await new Promise((resolve) => setTimeout(resolve, pauseBetweenQueriesMs));
   }
 
   return [...seen.values()].sort((a, b) => a.date.localeCompare(b.date));
