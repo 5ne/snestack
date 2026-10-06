@@ -1,4 +1,24 @@
-import { dateRangeForYear, QUERY_TEMPLATES, mapWithConcurrency, withQuotaRetry } from "../../../../src/domains/travel/tools/gmailClient";
+import {
+  dateRangeForYear,
+  QUERY_TEMPLATES,
+  mapWithConcurrency,
+  withQuotaRetry,
+  selectFullBodyCandidates,
+  type EmailSummary,
+} from "../../../../src/domains/travel/tools/gmailClient";
+
+function summary(overrides: Partial<EmailSummary>): EmailSummary {
+  return {
+    messageId: "m1",
+    threadId: "t1",
+    date: "2024-01-01T00:00:00.000Z",
+    from: "noreply@united.com",
+    subject: "eTicket Itinerary and Receipt for Confirmation ABC123",
+    snippet: "...",
+    matchedQuery: "flights",
+    ...overrides,
+  };
+}
 
 describe("dateRangeForYear", () => {
   it("spans exactly one calendar year", () => {
@@ -41,6 +61,46 @@ describe("mapWithConcurrency", () => {
       return i;
     });
     expect(maxActive).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("selectFullBodyCandidates", () => {
+  it("picks evidence-bearing categories and skips noise categories like rideshare/cancellations", () => {
+    const summaries = [
+      summary({ messageId: "a", threadId: "ta", matchedQuery: "flights" }),
+      summary({ messageId: "b", threadId: "tb", matchedQuery: "rideshare" }),
+      summary({ messageId: "c", threadId: "tc", matchedQuery: "cancellations" }),
+    ];
+    const candidates = selectFullBodyCandidates(summaries);
+    expect(candidates.map((c) => c.messageId)).toEqual(["a"]);
+  });
+
+  it("excludes marketing/loyalty/survey-shaped subjects even in an evidence-bearing category", () => {
+    const summaries = [
+      summary({ messageId: "a", threadId: "ta", subject: "Your monthly AAdvantage summary" }),
+      summary({ messageId: "b", threadId: "tb", subject: "Tell us how we did" }),
+      summary({ messageId: "c", threadId: "tc", subject: "eTicket Itinerary and Receipt for Confirmation XYZ" }),
+    ];
+    const candidates = selectFullBodyCandidates(summaries);
+    expect(candidates.map((c) => c.messageId)).toEqual(["c"]);
+  });
+
+  it("keeps only one representative per thread", () => {
+    const summaries = [
+      summary({ messageId: "a", threadId: "same-thread" }),
+      summary({ messageId: "b", threadId: "same-thread" }),
+    ];
+    const candidates = selectFullBodyCandidates(summaries);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].messageId).toBe("a");
+  });
+
+  it("caps the total number of candidates", () => {
+    const summaries = Array.from({ length: 100 }, (_, i) =>
+      summary({ messageId: `m${i}`, threadId: `t${i}` })
+    );
+    const candidates = selectFullBodyCandidates(summaries);
+    expect(candidates.length).toBeLessThanOrEqual(60);
   });
 });
 

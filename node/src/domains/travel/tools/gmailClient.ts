@@ -1,6 +1,7 @@
 import { gmail, gmail_v1 } from "@googleapis/gmail";
 import { getAuthorizedClient } from "../googleAuth";
 import { getLogger } from "../../../core/logger";
+import { htmlToPlainText, truncate } from "./htmlToPlainText";
 
 const logger = getLogger("GmailClient");
 
@@ -12,6 +13,15 @@ export interface EmailSummary {
   subject: string;
   snippet: string;
   matchedQuery: string;
+  /**
+   * Full plaintext body (HTML stripped, long tracking-link tokens collapsed,
+   * length-capped) — present only for messages selected as candidates (see
+   * selectFullBodyCandidates): one per thread, from the evidence-bearing
+   * categories, with marketing/loyalty/survey subjects filtered out. Most
+   * summaries won't have this; the snippet is all there is for them, same as
+   * before.
+   */
+  fullBody?: string;
 }
 
 /**
@@ -58,12 +68,15 @@ export function dateRangeForYear(year: number): { after: string; before: string 
 }
 
 /**
- * Run `items` through `fn` at most `concurrency` at a time, retrying any call
- * that fails with a 429/quota error (exponential backoff, a few attempts)
- * before giving up on that one item. Keeps this a well-behaved API client —
- * Gmail's per-minute quota is per-user, so firing a whole query's worth of
- * messages.get calls at once (hundreds, for a broad year-long search) blows
- * through it in a single burst even though the daily/total budget is fine.
+ * Run `items` through `fn` at most `concurrency` at a time. Pure concurrency
+ * limiting only — callers decide their own retry behavior (see
+ * withQuotaRetry) by wrapping `fn` themselves; keeping the two concerns
+ * separate means a caller that wants to catch a permanent per-item failure
+ * (rather than let it abort the whole batch) can do so around the retry,
+ * not instead of it. Caps concurrency because Gmail's per-minute quota is
+ * per-user: firing a whole query's worth of messages.get calls at once
+ * (hundreds, for a broad year-long search) blows through it in a single
+ * burst even though the daily/total budget is fine.
  */
 export async function mapWithConcurrency<T, R>(
   items: T[],
@@ -76,7 +89,7 @@ export async function mapWithConcurrency<T, R>(
   async function worker() {
     while (next < items.length) {
       const i = next++;
-      results[i] = await withQuotaRetry(() => fn(items[i]));
+      results[i] = await fn(items[i]);
     }
   }
 
@@ -132,10 +145,92 @@ async function getSummary(
 }
 
 /**
+ * Categories worth a deeper fetch — the ones that actually carry the
+ * structured details (flight numbers, confirmation codes, nightly rates,
+ * merchant names) that a 150-character snippet truncates. "rideshare" and
+ * "cancellations" skipped: receipts there rarely add much beyond the
+ * snippet, and cancellations are usually confirmed by the matching booking
+ * email already being a candidate.
+ */
+const FULL_BODY_CATEGORIES = new Set(["flights", "hotels", "car-rentals", "dining", "foreign-transactions"]);
+
+/**
+ * Subjects shaped like loyalty-program/marketing/survey email rather than an
+ * actual booking confirmation — these are both low-value (nothing a trip
+ * needs lives in them) and the worst offenders for tracking-link bloat, so
+ * excluding them from the full-body fetch cuts cost on exactly the emails
+ * least likely to be worth it.
+ */
+const NOISE_SUBJECT_PATTERN =
+  /(statement|esummary|e-summary|summary|deal|offer|sale|newsletter|survey|digest|tell us how we did|wi-?fi and entertainment|economy plus availability|bonus miles|miles balance|anniversary|advantage program|mileageplus|feedback)/i;
+
+const MAX_FULL_BODY_FETCHES = 60;
+const FULL_BODY_MAX_CHARS = 3000;
+
+/**
+ * Deterministically pick which already-fetched summaries are worth a full
+ * body fetch: evidence-bearing category, not marketing-shaped, one
+ * representative per thread (a confirmation thread often has several
+ * near-identical copies), capped so a dense year doesn't balloon the fetch.
+ */
+export function selectFullBodyCandidates(summaries: EmailSummary[]): EmailSummary[] {
+  const seenThreads = new Set<string>();
+  const candidates: EmailSummary[] = [];
+  for (const s of summaries) {
+    if (!FULL_BODY_CATEGORIES.has(s.matchedQuery)) continue;
+    if (NOISE_SUBJECT_PATTERN.test(s.subject)) continue;
+    if (seenThreads.has(s.threadId)) continue;
+    seenThreads.add(s.threadId);
+    candidates.push(s);
+    if (candidates.length >= MAX_FULL_BODY_FETCHES) break;
+  }
+  return candidates;
+}
+
+/** Depth-first search for the first MIME part of the given type, preferring text/plain over text/html at the call site. */
+function findPart(
+  parts: gmail_v1.Schema$MessagePart[] | undefined,
+  mimeType: string
+): gmail_v1.Schema$MessagePart | null {
+  for (const part of parts ?? []) {
+    if (part.mimeType === mimeType && part.body?.data) return part;
+    const nested = findPart(part.parts, mimeType);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function decodeBase64Url(data: string): string {
+  return Buffer.from(data, "base64").toString("utf8");
+}
+
+/** Extract body text from a full-format message payload, preferring text/plain, falling back to stripped text/html. */
+function extractBodyText(payload: gmail_v1.Schema$MessagePart | undefined): string {
+  if (!payload) return "";
+  if (payload.body?.data && payload.mimeType === "text/plain") {
+    return decodeBase64Url(payload.body.data);
+  }
+  if (payload.body?.data && payload.mimeType === "text/html") {
+    return htmlToPlainText(decodeBase64Url(payload.body.data));
+  }
+  const plainPart = findPart(payload.parts, "text/plain");
+  if (plainPart?.body?.data) return decodeBase64Url(plainPart.body.data);
+  const htmlPart = findPart(payload.parts, "text/html");
+  if (htmlPart?.body?.data) return htmlToPlainText(decodeBase64Url(htmlPart.body.data));
+  return "";
+}
+
+async function fetchFullBody(client: gmail_v1.Gmail, messageId: string): Promise<string> {
+  const res = await client.users.messages.get({ userId: "me", id: messageId, format: "full" });
+  return truncate(extractBodyText(res.data.payload).trim(), FULL_BODY_MAX_CHARS);
+}
+
+/**
  * Run the fixed query set against a single year and return a deduplicated,
  * chronologically sorted list of email summaries. Deterministic data fetch
  * only — no judgment about which of these are actually trips; that's
- * catalog-trip-year.md's job.
+ * catalog-trip-year.md's job. A bounded second stage then fetches full
+ * bodies for whichever of those summaries selectFullBodyCandidates picks.
  */
 export async function searchTravelEmailsForYear(
   year: number,
@@ -160,7 +255,7 @@ export async function searchTravelEmailsForYear(
       );
       const messages = listRes.data.messages ?? [];
       const summaries = await mapWithConcurrency(messages, concurrency, (m) =>
-        getSummary(client, m.id!, m.threadId!, name)
+        withQuotaRetry(() => getSummary(client, m.id!, m.threadId!, name))
       );
       for (const s of summaries) {
         if (s && !seen.has(s.messageId)) seen.set(s.messageId, s);
@@ -174,5 +269,26 @@ export async function searchTravelEmailsForYear(
     await new Promise((resolve) => setTimeout(resolve, pauseBetweenQueriesMs));
   }
 
-  return [...seen.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const allSummaries = [...seen.values()].sort((a, b) => a.date.localeCompare(b.date));
+
+  const candidates = selectFullBodyCandidates(allSummaries);
+  logger.debug(`Fetching full bodies for ${candidates.length} candidate message(s) of ${allSummaries.length} total`);
+  await new Promise((resolve) => setTimeout(resolve, pauseBetweenQueriesMs));
+  const bodies = await mapWithConcurrency(candidates, concurrency, async (c) => {
+    try {
+      return { messageId: c.messageId, body: await withQuotaRetry(() => fetchFullBody(client, c.messageId)) };
+    } catch (e) {
+      // Retries (inside withQuotaRetry) are already exhausted by the time we get here —
+      // this is the "give up on just this one item" catch, not a substitute for retrying.
+      logger.warn(`Full-body fetch failed for message ${c.messageId}, leaving it snippet-only: ${e}`);
+      return { messageId: c.messageId, body: "" };
+    }
+  });
+  const bodyByMessageId = new Map(bodies.map((b) => [b.messageId, b.body]));
+  for (const s of allSummaries) {
+    const body = bodyByMessageId.get(s.messageId);
+    if (body) s.fullBody = body;
+  }
+
+  return allSummaries;
 }
