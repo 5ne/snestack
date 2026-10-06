@@ -372,7 +372,15 @@ travel
       const result = await runSkill("travel", "catalog-trip-year", year);
       const files = parseMultiFileOutput(result.output);
       if (Object.keys(files).length === 0) {
-        console.error("No '### FILE:' blocks found in the model output — nothing written. Raw output:");
+        console.error("No '### FILE:' blocks found in the model output — nothing written.");
+        console.error(
+          `stop_reason: ${result.stopReason}, output_tokens: ${result.outputTokensUsed}` +
+            (result.stopReason === "max_tokens"
+              ? " — ran out of budget (often to thinking, which shares the same budget) before writing " +
+                "visible text; try raising maxTokens in catalog-trip-year.md's frontmatter"
+              : "")
+        );
+        console.error("Raw output:");
         console.error(result.output);
         process.exitCode = 1;
         return;

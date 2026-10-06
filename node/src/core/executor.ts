@@ -3,6 +3,11 @@ import { getConfig, type ModelTier } from "./config";
 
 export interface ExecutorResult {
   output: string;
+  /** Why generation stopped — "max_tokens" here with an empty/truncated output means the
+   * budget ran out before (or partway through) visible text, often to thinking content
+   * that shares the same budget. Useful for diagnosing an empty output without re-running. */
+  stopReason: string | null;
+  outputTokensUsed: number | null;
 }
 
 export interface RunPromptOptions {
@@ -35,5 +40,9 @@ export async function runPrompt(
   // Sonnet 5.5 / Opus 5.5 always think, so content can start with a thinking block and
   // max_tokens also covers the thinking — take every text block, not just content[0].
   const output = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-  return { output };
+  return {
+    output,
+    stopReason: response.stop_reason ?? null,
+    outputTokensUsed: response.usage?.output_tokens ?? null,
+  };
 }

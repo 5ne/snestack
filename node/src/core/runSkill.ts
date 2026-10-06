@@ -19,6 +19,8 @@ export interface SkillRunResult {
   skill: string;
   subject: string;
   output: string;
+  stopReason: string | null;
+  outputTokensUsed: number | null;
 }
 
 export interface AssembledSkillPrompt {
@@ -116,7 +118,12 @@ export async function runSkill(
 ): Promise<SkillRunResult> {
   const { systemPrompt, userPrompt, tier, maxTokens } = await assembleSkillPrompt(domain, skillName, subject);
   logger.debug(`Running skill "${domain}/${skillName}" for ${subject} (tier: ${tier})`);
-  const { output } = await runPrompt(getConfig().getClaudeApiKey(), systemPrompt, userPrompt, { tier, maxTokens });
+  const { output, stopReason, outputTokensUsed } = await runPrompt(
+    getConfig().getClaudeApiKey(),
+    systemPrompt,
+    userPrompt,
+    { tier, maxTokens }
+  );
 
-  return { domain, skill: skillName, subject, output };
+  return { domain, skill: skillName, subject, output, stopReason, outputTokensUsed };
 }
