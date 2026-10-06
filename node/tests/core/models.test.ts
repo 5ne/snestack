@@ -4,7 +4,6 @@ import {
   WatchlistSchema,
   QuoteSchema,
   SignalSchema,
-  makeBatchResult,
 } from "../../src/core/models";
 
 describe("Models validation (Zod)", () => {
@@ -156,26 +155,6 @@ describe("Models validation (Zod)", () => {
           reasoning: "test",
         })
       ).toThrow();
-    });
-  });
-
-  describe("makeBatchResult", () => {
-    it("calculates duration correctly", () => {
-      const start = new Date(0);
-      const end = new Date(5000);
-      const result = makeBatchResult([], {}, start, end);
-      expect(result.durationSeconds).toBe(5);
-    });
-
-    it("counts successes and errors", () => {
-      const start = new Date();
-      const signals = [
-        { ticker: "NVDA", recommendation: "BUY" as const, confidence: 0.8, reasoning: "test", date: new Date(), fromWatchlist: false, createdAt: new Date() },
-        { ticker: "TSLA", recommendation: "HOLD" as const, confidence: 0.5, reasoning: "test", date: new Date(), fromWatchlist: false, createdAt: new Date() },
-      ];
-      const result = makeBatchResult(signals, { AAPL: "Quote failed" }, start, new Date());
-      expect(result.successCount).toBe(2);
-      expect(result.errorCount).toBe(1);
     });
   });
 });

@@ -2,6 +2,7 @@
 name: swing-trading-large-cap
 domain: financial
 requires: [quote, fundamentals, brain]
+model: normal
 references: [quality-bar]
 ---
 

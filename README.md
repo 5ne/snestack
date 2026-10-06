@@ -11,11 +11,11 @@ snestack/
 └── node/              # Node.js / TypeScript implementation
     └── src/
         ├── core/       # domain-agnostic harness: skillLoader, domainRegistry,
-        │               # executor, runSkill, db, config, scheduler, logger, errors
+        │               # executor, runSkill, db, config, logger, errors
         ├── config/
         │   └── domains.json   # registers each domain's skillsDir + contextTools
         └── domains/
-            ├── financial/     # skills/, agents/, tools/, providers/, orchestrator.ts
+            ├── financial/     # skills/, agents/, tools/, providers/
             └── calendar/      # skills/, tools/, googleAuth.ts, setup.ts
 ```
 
@@ -47,26 +47,6 @@ Research PDFs from Schwab live in `~/Documents/personal-brain/financial/reports/
 
 Download a PDF into `reports/staging/` and run `snestack organize-reports` to file it — see that folder's own README for details.
 
-## Legacy pipeline
-
-The financial domain also has an older, deprecated `analyze`/`batch` CLI path (`CfoAgent`/`AnalysisOrchestrator`) that hardcodes its judgment directly in TypeScript instead of going through the skills system. It still runs — kept for reference — but prints a deprecation warning; `run-skill` is the current path:
-
-```
-Positions + Watchlist
-        ↓
-[QuoteAgent] [StrategyAgent] [EquityAgent]   ← parallel, deterministic
-        ↓           ↓              ↓
-              signals combined
-                    ↓
-    [CfoAgent — deprecated]  ← hardcoded judgment, one Claude call for all tickers
-                    ↓
-            BUY / SELL / HOLD signals
-                    ↓
-            [TraderAgent] → email/SMS
-                    ↓
-              snestack.db (signal history)
-```
-
 ## Roadmap
 
 **Harness** (applies across every domain):
@@ -75,7 +55,6 @@ Positions + Watchlist
 - [ ] A structured signal/outcome log per domain (what was decided, what happened) as training data for future tuning
 
 **Financial domain:**
-- [ ] Retire the legacy `analyze`/`batch` pipeline once skill markdown fully covers what `CfoAgent` still does
 - [ ] Provider adapters for a second fundamentals source (a Morningstar API subscription, behind the existing `FundamentalsProvider` interface)
 - [ ] Backtesting / genetic-programming threshold tuning, offline, reading the same skill/brain markdown — never running live in the harness (see `CLAUDE.md`)
 - [ ] Next.js web UI, Supabase migration, broker integrations (Schwab, Alpaca)

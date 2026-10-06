@@ -93,69 +93,13 @@ export class TraderAgent extends BaseAgent<boolean> {
           );
         }
       } else {
-        this.logger.warn("Email send failed, queueing for retry");
-        for (const signal of signals) {
-          this.db.addTicker(signal.ticker, signal.ticker, "PUBLIC");
-          const signalId = this.db.addSignal(
-            signal.ticker,
-            signal.date.toISOString(),
-            signal.recommendation,
-            signal.confidence,
-            signal.reasoning,
-            signal.fromWatchlist
-          );
-          this.db.addPendingNotification(
-            signal.ticker,
-            signalId,
-            this.notificationEmail,
-            null,
-            "email"
-          );
-        }
+        this.logger.warn("Email send failed — signals not recorded");
       }
       return success;
     } catch (e) {
       this.logger.error(`Batch email send failed: ${e}`);
       throw new EmailServiceError(`Batch email failed: ${e}`);
     }
-  }
-
-  async retryPendingNotifications(): Promise<number> {
-    const pending = this.db.getPendingNotifications();
-    if (pending.length === 0) {
-      this.logger.info("No pending notifications");
-      return 0;
-    }
-    let retried = 0;
-    for (const notification of pending) {
-      try {
-        const signal = notification.signal_id
-          ? this.db.getSignalById(notification.signal_id)
-          : undefined;
-        if (!signal) {
-          this.db.removePendingNotification(notification.id);
-          continue;
-        }
-        const text = `${signal.recommendation}: ${signal.reasoning}`;
-        const html = TraderAgent.buildRetryHtml(signal);
-        const success = await this.sendEmail(
-          `snestack retry - ${signal.ticker}`,
-          text,
-          html
-        );
-        if (success) {
-          this.db.removePendingNotification(notification.id);
-          retried++;
-        } else {
-          this.db.updatePendingNotificationRetry(notification.id);
-        }
-      } catch (e) {
-        this.logger.error(`Retry failed for notification ${notification.id}: ${e}`);
-        this.db.updatePendingNotificationRetry(notification.id);
-      }
-    }
-    this.logger.info(`Retried ${retried} pending notifications`);
-    return retried;
   }
 
   static buildSubject(
@@ -589,57 +533,6 @@ export class TraderAgent extends BaseAgent<boolean> {
                 Generated automatically by snestack.<br>
                 Do not reply to this email — it is not monitored.
               </div>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
-  }
-
-  static buildRetryHtml(signal: {
-    ticker: string;
-    recommendation: string;
-    confidence: number;
-    reasoning: string;
-  }): string {
-    const kind: Recommendation =
-      signal.recommendation === "BUY" || signal.recommendation === "SELL"
-        ? signal.recommendation
-        : "HOLD";
-    const c = COLORS[kind];
-    const ticker = TraderAgent.escapeHtml(signal.ticker.toUpperCase());
-    const reasoning = TraderAgent.escapeHtml(signal.reasoning);
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>snestack retry</title>
-</head>
-<body style="margin:0;padding:0;background:#f1f5f9;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;">
-    <tr>
-      <td align="center" style="padding:32px 16px;">
-        <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;background:#ffffff;border-radius:14px;border:1px solid #e6e9ef;">
-          <tr>
-            <td style="padding:24px 28px 8px 28px;">
-              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:800;letter-spacing:2px;color:#4f46e5;text-transform:uppercase;">snestack · retry</div>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:8px 28px 24px 28px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e6e9ef;border-left:4px solid ${c.border};border-radius:8px;">
-                <tr>
-                  <td style="padding:14px 16px;">
-                    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;font-weight:700;color:#0f172a;">${ticker}</div>
-                    <div style="margin-top:4px;">${TraderAgent.confidencePill(signal.confidence, kind)}</div>
-                    <p style="margin:8px 0 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.5;color:#475569;">${reasoning}</p>
-                  </td>
-                </tr>
-              </table>
             </td>
           </tr>
         </table>

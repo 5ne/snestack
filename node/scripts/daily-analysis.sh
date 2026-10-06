@@ -8,6 +8,14 @@
 # unattended from cron.
 set -euo pipefail
 
+# cron runs with a minimal PATH, so node (installed via nvm) isn't visible unless we load it.
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  # shellcheck disable=SC1091
+  . "$NVM_DIR/nvm.sh" >/dev/null
+fi
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 NODE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$NODE_DIR"
 

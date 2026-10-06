@@ -2,17 +2,13 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Command } from "commander";
-import prompts from "prompts";
 import { getConfig } from "./core/config";
 import { setupInteractive, validateEnv } from "./core/setup";
-import { ConfigError } from "./core/errors";
-import { setupCronInteractive, listCronJobs } from "./core/scheduler";
 import { organizeStagedReports } from "./domains/financial/tools/reportOrganizer";
 import { Db } from "./core/db";
 import { runSkill, assembleSkillPrompt } from "./core/runSkill";
 import { runPrompt } from "./core/executor";
 import { authorizeGoogleCalendar } from "./domains/calendar/setup";
-import { AnalysisOrchestrator } from "./domains/financial/orchestrator";
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
@@ -185,159 +181,6 @@ watchlist
     db.close();
   });
 
-// ── Analysis ───────────────────────────────────────────────────────────────
-
-program
-  .command("analyze <ticker>")
-  .description("[DEPRECATED] Analyze a single ticker via the legacy CfoAgent judgment path")
-  .action(async (ticker: string) => {
-    console.warn(
-      "⚠ 'snestack analyze' uses the deprecated CfoAgent path (bypasses domains/financial/skills/). " +
-        "Prefer: snestack data-dump, reason over it with the skill files, then snestack notify. See skills/INDEX.md."
-    );
-    if (!validateEnv()) {
-      process.exitCode = 1;
-      return;
-    }
-    try {
-      const config = getConfig();
-      const db = new Db(config.getDatabasePath());
-      const orchestrator = new AnalysisOrchestrator(db);
-      console.log(`Analyzing ${ticker.toUpperCase()}...`);
-      const signal = await orchestrator.analyzeSingleTicker(ticker.toUpperCase());
-      if (signal) {
-        console.log(`\n${signal.ticker}: ${signal.recommendation}`);
-        console.log(`Confidence: ${(signal.confidence * 100).toFixed(0)}%`);
-        console.log(`Reasoning: ${signal.reasoning}`);
-      } else {
-        console.log("Analysis failed");
-        process.exitCode = 1;
-      }
-      db.close();
-    } catch (e) {
-      if (e instanceof ConfigError) {
-        console.error(`Configuration error: ${e.message}`);
-        console.log("Run 'snestack setup' to configure");
-      } else {
-        console.error(`Analysis failed: ${e}`);
-      }
-      process.exitCode = 1;
-    }
-  });
-
-program
-  .command("batch")
-  .description("[DEPRECATED] Run batch analysis via the legacy CfoAgent judgment path")
-  .option("--dry-run", "Analyze without sending email")
-  .action(async (opts: { dryRun?: boolean }) => {
-    console.warn(
-      "⚠ 'snestack batch' uses the deprecated CfoAgent path (bypasses domains/financial/skills/). " +
-        "Prefer: snestack data-dump, reason over it with the skill files, then snestack notify. See skills/INDEX.md."
-    );
-    // Check for staging files first (matches the Python CLI's cmd_batch)
-    const reportsDir = defaultReportsDir();
-    const stagingDir = path.join(reportsDir, "staging");
-    if (fs.existsSync(stagingDir)) {
-      const stagingFiles = fs.readdirSync(stagingDir).filter((f) => f.endsWith(".pdf"));
-      if (stagingFiles.length > 0) {
-        console.log(`\nFound ${stagingFiles.length} report(s) in staging folder.`);
-        const { organizeFirst } = await prompts({
-          type: "confirm",
-          name: "organizeFirst",
-          message: "Organize reports first?",
-          initial: true,
-        });
-        if (organizeFirst) {
-          await organizeStagedReports(
-            stagingDir,
-            reportsDir,
-            path.join(reportsDir, "archive"),
-            path.join(reportsDir, "error")
-          );
-        }
-      }
-    }
-
-    if (!validateEnv()) {
-      process.exitCode = 1;
-      return;
-    }
-
-    try {
-      const config = getConfig();
-      const db = new Db(config.getDatabasePath());
-      const orchestrator = new AnalysisOrchestrator(db);
-      console.log("Running batch analysis...");
-      const result = await orchestrator.runBatchAnalysis(opts.dryRun ?? false);
-      console.log(`\nComplete: ${result.successCount} signals, ${result.errorCount} errors`);
-      console.log(`Duration: ${result.durationSeconds.toFixed(1)}s`);
-      result.signals.forEach((s) => {
-        console.log(
-          `  ${s.ticker.padEnd(8)} ${s.recommendation.padEnd(6)} ${(s.confidence * 100).toFixed(0)}%  ${s.reasoning}`
-        );
-      });
-      if (Object.keys(result.errors).length) {
-        console.log("\nErrors:");
-        Object.entries(result.errors).forEach(([t, e]) => console.log(`  ${t}: ${e}`));
-        process.exitCode = 1;
-      }
-      db.close();
-    } catch (e) {
-      if (e instanceof ConfigError) {
-        console.error(`Configuration error: ${e.message}`);
-        console.log("Run 'snestack setup' to configure");
-      } else {
-        console.error(`Batch analysis failed: ${e}`);
-      }
-      process.exitCode = 1;
-    }
-  });
-
-program
-  .command("retry")
-  .description("Retry pending failed email notifications")
-  .action(async () => {
-    if (!validateEnv()) {
-      process.exitCode = 1;
-      return;
-    }
-    try {
-      const config = getConfig();
-      const db = new Db(config.getDatabasePath());
-      const orchestrator = new AnalysisOrchestrator(db);
-      const count = await orchestrator.retryPendingEmails();
-      console.log(`Retried ${count} notifications`);
-      db.close();
-    } catch (e) {
-      if (e instanceof ConfigError) {
-        console.error(`Configuration error: ${e.message}`);
-      } else {
-        console.error(`Retry failed: ${e}`);
-      }
-      process.exitCode = 1;
-    }
-  });
-
-// ── Scheduler ──────────────────────────────────────────────────────────────
-
-program
-  .command("scheduler")
-  .description("Manage cron scheduling")
-  .option("--setup", "Interactive cron setup")
-  .option("--list", "List installed crontab")
-  .action(async (opts: { setup?: boolean; list?: boolean }) => {
-    if (opts.setup) {
-      const ok = await setupCronInteractive();
-      if (!ok) process.exitCode = 1;
-    } else if (opts.list) {
-      const ok = listCronJobs();
-      if (!ok) process.exitCode = 1;
-    } else {
-      console.log("scheduler: --setup or --list required");
-      process.exitCode = 1;
-    }
-  });
-
 // ── Report organization ─────────────────────────────────────────────────────
 
 program
@@ -390,7 +233,7 @@ program
     db.close();
   });
 
-// ── Data dump for a Claude-driven analysis (deterministic only, no CFO call) ─
+// ── Data dump for a Claude-driven analysis (deterministic only, no model call) ─
 // This is the "fat code" half of the thin-harness/fat-skills split: it fetches
 // and computes numbers (quotes, technicals, Morningstar fundamentals) and does
 // no judgment. A Claude session reads this JSON plus domains/financial/skills/
@@ -401,7 +244,7 @@ program
   .command("data-dump")
   .description(
     "Dump quote + fundamentals data for all positions/watchlist tickers as JSON. " +
-      "No CFO/Claude call — purely deterministic data for an external judgment step to consume."
+      "No Claude call — purely deterministic data for an external judgment step to consume."
   )
   .action(async () => {
     const config = getConfig();
@@ -607,7 +450,10 @@ program
       sections,
     ].join("\n");
 
-    const { output } = await runPrompt(config.getClaudeApiKey(), systemPrompt, userPrompt, 8000);
+    const { output } = await runPrompt(config.getClaudeApiKey(), systemPrompt, userPrompt, {
+      tier: "cheap",
+      maxTokens: 8000,
+    });
     const cleaned = output
       .trim()
       .replace(/^```(?:json)?\s*/i, "")
@@ -661,7 +507,7 @@ program
         config.getNotificationEmail()
       );
       const ok = await trader.sendBatchEmail(signals);
-      console.log(ok ? `Email sent: ${signals.length} signals` : "Email failed, queued for retry");
+      console.log(ok ? `Email sent: ${signals.length} signals` : "Email failed (signals not recorded)");
       if (!ok) process.exitCode = 1;
     } finally {
       db.close();

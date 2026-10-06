@@ -2,6 +2,7 @@
 name: daily-agenda
 domain: calendar
 requires: [events]
+model: cheap
 ---
 
 # Skill: Daily Agenda Summary

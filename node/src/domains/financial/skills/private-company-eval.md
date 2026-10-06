@@ -2,6 +2,7 @@
 name: private-company-eval
 domain: financial
 requires: []
+model: normal
 status: draft
 ---
 

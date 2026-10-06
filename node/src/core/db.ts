@@ -45,18 +45,6 @@ export interface SignalRow {
   created_at: string;
 }
 
-export interface PendingNotificationRow {
-  id: number;
-  ticker: string;
-  email: string | null;
-  phone: string | null;
-  notification_type: string;
-  signal_id: number | null;
-  created_at: string;
-  retry_count: number;
-  last_retry_at: string | null;
-}
-
 export class Db {
   private db: DatabaseSync;
 
@@ -131,24 +119,9 @@ export class Db {
         FOREIGN KEY (ticker) REFERENCES tickers(symbol)
       );
 
-      CREATE TABLE IF NOT EXISTS pending_notifications (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ticker TEXT NOT NULL,
-        email TEXT,
-        phone TEXT,
-        notification_type TEXT NOT NULL CHECK(notification_type IN ('email','sms')),
-        signal_id INTEGER,
-        created_at TEXT NOT NULL,
-        retry_count INTEGER NOT NULL DEFAULT 0,
-        last_retry_at TEXT,
-        FOREIGN KEY (ticker) REFERENCES tickers(symbol),
-        FOREIGN KEY (signal_id) REFERENCES signals(id)
-      );
-
       CREATE INDEX IF NOT EXISTS idx_quotes_date ON quotes(date);
       CREATE INDEX IF NOT EXISTS idx_signals_date ON signals(date);
       CREATE INDEX IF NOT EXISTS idx_signals_ticker ON signals(ticker);
-      CREATE INDEX IF NOT EXISTS idx_pending_created ON pending_notifications(created_at);
     `);
   }
 
@@ -356,51 +329,6 @@ export class Db {
     return this.db
       .prepare("SELECT * FROM signals WHERE id = ?")
       .get(id) as unknown as SignalRow | undefined;
-  }
-
-  // ── Pending notifications ──────────────────────────────────────────────────
-
-  addPendingNotification(
-    ticker: string,
-    signalId: number,
-    email?: string | null,
-    phone?: string | null,
-    notificationType = "email"
-  ): boolean {
-    try {
-      this.db
-        .prepare(
-          `INSERT INTO pending_notifications
-           (ticker, email, phone, notification_type, signal_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`
-        )
-        .run(ticker, email ?? null, phone ?? null, notificationType, signalId, new Date().toISOString());
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  getPendingNotifications(): PendingNotificationRow[] {
-    return this.db
-      .prepare("SELECT * FROM pending_notifications ORDER BY created_at ASC")
-      .all() as unknown as PendingNotificationRow[];
-  }
-
-  removePendingNotification(id: number): boolean {
-    return (this.db.prepare("DELETE FROM pending_notifications WHERE id = ?").run(id).changes as number) > 0;
-  }
-
-  updatePendingNotificationRetry(id: number): boolean {
-    return (
-      this.db
-        .prepare(
-          `UPDATE pending_notifications
-           SET retry_count = retry_count + 1, last_retry_at = ?
-           WHERE id = ?`
-        )
-        .run(new Date().toISOString(), id).changes as number
-    ) > 0;
   }
 
   /** Close the database connection. */

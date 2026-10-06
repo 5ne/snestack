@@ -14,8 +14,6 @@ export type Recommendation = z.infer<typeof Recommendation>;
 export const PositionStrategy = z.enum(["long-term", "swing", "both"]);
 export type PositionStrategy = z.infer<typeof PositionStrategy>;
 
-export const NotificationType = z.enum(["email", "sms"]);
-export type NotificationType = z.infer<typeof NotificationType>;
 
 // ── Domain models ────────────────────────────────────────────────────────────
 
@@ -73,19 +71,6 @@ export const SignalSchema = z.object({
 });
 export type Signal = z.infer<typeof SignalSchema>;
 
-export const PendingNotificationSchema = z.object({
-  id: z.number().int().optional(),
-  ticker: z.string().min(1),
-  signalId: z.number().int().nullable().optional(),
-  email: z.string().nullable().optional(),
-  phone: z.string().nullable().optional(),
-  notificationType: NotificationType,
-  createdAt: z.date().default(() => new Date()),
-  retryCount: z.number().int().nonnegative().default(0),
-  lastRetryAt: z.date().nullable().optional(),
-});
-export type PendingNotification = z.infer<typeof PendingNotificationSchema>;
-
 // ── Agent data models ─────────────────────────────────────────────────────────
 
 export interface QuoteData {
@@ -96,12 +81,12 @@ export interface QuoteData {
   low?: number;
   volume?: number;
   // Live fundamentals from Finnhub's Basic Financials endpoint (/stock/metric),
-  // fetched alongside the price quote. These take priority over the matching
-  // EquityData fields (which come from a Morningstar PDF snapshot that can be
-  // weeks/months stale) wherever Finnhub returns a value — see
-  // orchestrator.ts's withLiveFundamentals(). Morningstar's own analyst
-  // judgments (fair value, moat, star rating, uncertainty, capital allocation)
-  // have no real-time equivalent and are never overridden.
+  // fetched alongside the price quote. run-skill supplies these (QUOTE) and the
+  // Morningstar PDF snapshot (FUNDAMENTALS, which can be weeks/months stale) as
+  // separate context sections — nothing merges them, so a skill sees both and
+  // can flag disagreements. Morningstar's own analyst judgments (fair value,
+  // moat, star rating, uncertainty, capital allocation) have no real-time
+  // equivalent.
   //
   // fcf (absolute free cash flow in dollars) is deliberately NOT sourced from
   // Finnhub here — Finnhub's raw freeCashFlowTTM figure's unit scale wasn't
@@ -145,55 +130,4 @@ export interface EquityData {
   uncertainty?: string | null;
   capitalAllocation?: string | null;
   timestamp: Date;
-}
-
-export interface StrategySignal {
-  ticker: string;
-  recommendation: Recommendation;
-  confidence: number;
-  rsiSignal?: string | null;
-  maSignal?: string | null;
-  volumeSignal?: string | null;
-  reasoning: string;
-  timestamp: Date;
-}
-
-// ── Batch analysis ────────────────────────────────────────────────────────────
-
-export interface BatchAnalysisInput {
-  ticker: string;
-  quote?: QuoteData | null;
-  strategy?: StrategySignal | null;
-  equity?: EquityData | null;
-}
-
-export interface BatchAnalysisResult {
-  signals: Signal[];
-  errors: Record<string, string>;
-  startTime: Date;
-  endTime: Date;
-  durationSeconds: number;
-  get successCount(): number;
-  get errorCount(): number;
-}
-
-export function makeBatchResult(
-  signals: Signal[],
-  errors: Record<string, string>,
-  startTime: Date,
-  endTime: Date
-): BatchAnalysisResult {
-  return {
-    signals,
-    errors,
-    startTime,
-    endTime,
-    durationSeconds: (endTime.getTime() - startTime.getTime()) / 1000,
-    get successCount() {
-      return this.signals.length;
-    },
-    get errorCount() {
-      return Object.keys(this.errors).length;
-    },
-  };
 }

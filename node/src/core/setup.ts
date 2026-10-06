@@ -211,9 +211,9 @@ export async function setupInteractive(envFile?: string): Promise<boolean> {
     console.log("  2. Add your watchlist:");
     console.log("     snestack watchlist add TSLA 'looking for dip'");
     console.log("  3. Run analysis:");
-    console.log("     snestack batch");
-    console.log("  4. Or set up cron for daily analysis:");
-    console.log("     snestack scheduler --setup");
+    console.log("     snestack run-skill financial long-term-quality NVDA");
+    console.log("  4. Or run the full nightly pipeline:");
+    console.log("     scripts/daily-analysis.sh");
     console.log();
 
     return true;

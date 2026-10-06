@@ -62,7 +62,7 @@ npm run typecheck && npm run lint && npm test
 
 ## Architecture Overview
 
-snestack is a "thin harness, fat skills" system: `core/` is a domain-agnostic harness (skill loader, context assembler, executor, scheduler, db, config), and each domain under `domains/` supplies its own skills (markdown judgment), deterministic tools, and a `contextTools.ts` map the harness resolves skill `requires` against.
+snestack is a "thin harness, fat skills" system: `core/` is a domain-agnostic harness (skill loader, context assembler, executor, db, config), and each domain under `domains/` supplies its own skills (markdown judgment), deterministic tools, and a `contextTools.ts` map the harness resolves skill `requires` against.
 
 ```
 CLI: snestack run-skill <domain> <skill> <subject>
@@ -75,8 +75,6 @@ core/executor: runs the prompt through Claude
 raw model output (the skill's judgment, in prose)
 ```
 
-The financial domain also has an older, deprecated multi-agent pipeline (`orchestrator.ts` → `CfoAgent`) that hardcodes judgment directly in TypeScript instead of going through skills — kept for reference via the `analyze`/`batch` CLI commands, not the pattern to extend.
-
 ## Key Files
 
 ```
@@ -84,7 +82,6 @@ node/src/
 ├── cli.ts                        ← Main entry point
 ├── core/                         ← domain-agnostic harness
 │   ├── db.ts, config.ts, setup.ts, models.ts, logger.ts, errors.ts
-│   ├── scheduler.ts              ← cron install/list
 │   ├── skillLoader.ts            ← parses a skill file's frontmatter + body
 │   ├── domainRegistry.ts         ← reads config/domains.json, loads a domain's contextTools
 │   ├── executor.ts               ← runs a prompt through Claude
@@ -94,12 +91,10 @@ node/src/
 └── domains/
     ├── financial/
     │   ├── skills/                ← markdown judgment (start at skills/INDEX.md)
-    │   ├── agents/                ← deterministic tools: quote, equity, strategy, trader
-    │   │                          ← (+ deprecated cfoAgent.ts)
+    │   ├── agents/                ← deterministic tools: quote, equity, trader
     │   ├── tools/                 ← Morningstar PDF parsing, report organizing
     │   ├── providers/             ← QuoteProvider/FundamentalsProvider interfaces
-    │   ├── contextTools.ts
-    │   └── orchestrator.ts        ← deprecated pipeline
+    │   └── contextTools.ts
     └── calendar/
         ├── skills/
         ├── tools/calendarClient.ts

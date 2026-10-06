@@ -225,24 +225,26 @@ describe("TraderAgent database interaction", () => {
     db.close();
   });
 
-  it("stores signals in DB after send failure", async () => {
+  it("does not record signals when the send fails", async () => {
     db.addTicker("NVDA", "NVIDIA", "PUBLIC");
-    const signals = [makeSignal("NVDA")];
-
-    // Mock sendEmail to return false (failure)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     jest.spyOn(agent as any, "sendEmail").mockResolvedValueOnce(false);
 
-    await agent.sendBatchEmail(signals, {}, {}, "2024-01-15");
+    const ok = await agent.sendBatchEmail([makeSignal("NVDA")], {}, {}, "2024-01-15");
 
-    // Signals should be stored and queued for retry
-    const pending = db.getPendingNotifications();
-    expect(pending.length).toBeGreaterThan(0);
+    expect(ok).toBe(false);
+    expect(db.getAllSignals()).toHaveLength(0);
   });
 
-  it("retryPendingNotifications returns 0 when nothing pending", async () => {
-    const count = await agent.retryPendingNotifications();
-    expect(count).toBe(0);
+  it("records signals after a successful send", async () => {
+    db.addTicker("NVDA", "NVIDIA", "PUBLIC");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    jest.spyOn(agent as any, "sendEmail").mockResolvedValueOnce(true);
+
+    const ok = await agent.sendBatchEmail([makeSignal("NVDA")], {}, {}, "2024-01-15");
+
+    expect(ok).toBe(true);
+    expect(db.getAllSignals()).toHaveLength(1);
   });
 
   it("sendBatchEmail returns true for empty signals", async () => {

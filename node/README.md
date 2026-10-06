@@ -32,26 +32,18 @@ npm run dev -- watchlist add TSLA "waiting for dip"
 # Run a skill (current path — see "Skill harness" below)
 npm run dev -- run-skill financial long-term-quality NVDA
 
-# Analyze [DEPRECATED — legacy CfoAgent judgment path, kept for reference]
-npm run dev -- analyze NVDA
-npm run dev -- batch --dry-run
-npm run dev -- batch
-
 # View signal history
 npm run dev -- signals
 npm run dev -- signals NVDA
-
-# Retry failed notifications
-npm run dev -- retry
 
 # Organize freshly-downloaded Morningstar PDFs from
 # ~/Documents/personal-brain/financial/reports/staging (override with SNESTACK_BRAIN_ROOT)
 npm run dev -- organize-reports
 
-# Set up a daily cron job (run against the built CLI — `npm run build` first)
-npm run build
-npm run dev -- scheduler --setup
-npm run dev -- scheduler --list
+# Full nightly pipeline (data-dump -> run-skill x2 per ticker -> distill-signals -> notify).
+# Point cron at this against the built CLI (`npm run build` first), e.g.:
+#   0 17 * * 1-5 cd <repo>/node && ./scripts/daily-analysis.sh >> logs/daily-analysis.cron.log 2>&1
+./scripts/daily-analysis.sh
 ```
 
 `setup` is fully interactive — it prompts for each API key, validates the
@@ -67,7 +59,7 @@ NODE_OPTIONS=--experimental-sqlite npm test
 NODE_OPTIONS=--experimental-sqlite npm run test:coverage
 ```
 
-233 tests across 16 suites — all passing except one pre-existing, unrelated flake in `scheduler.test.ts` (a macOS `/var` vs `/private/var` symlink mismatch in a crontab-mock comparison).
+174 tests across 13 suites, all passing.
 
 ## Database
 
@@ -79,13 +71,13 @@ Lives outside the repo, in the shared Google Drive folder at `<SNESTACK_BRAIN_RO
 node/
 ├── src/
 │   ├── core/                    # domain-agnostic harness: db, config, setup, models,
-│   │                            # errors, logger, scheduler, skillLoader, domainRegistry,
+│   │                            # errors, logger, skillLoader, domainRegistry,
 │   │                            # executor, runSkill
 │   ├── config/
 │   │   └── domains.json         # registers each domain's skillsDir + contextToolsModule
 │   ├── domains/
 │   │   ├── financial/           # skills/, brain/ (external, see Database below), agents/,
-│   │   │                        # tools/, providers/, contextTools.ts, orchestrator.ts
+│   │   │                        # tools/, providers/, contextTools.ts
 │   │   └── calendar/            # skills/, tools/, googleAuth.ts, setup.ts, contextTools.ts
 │   └── cli.ts
 └── tests/                       # Jest test suite (mirrors src/)
@@ -112,7 +104,8 @@ snestack run-skill calendar daily-agenda today
 |---|---|---|
 | `SNESTACK_FINNHUB_API_KEY` | Yes | Finnhub quote data |
 | `SNESTACK_TWELVEDATA_API_KEY` | No | Historical closes for RSI/MA (Finnhub's free tier blocks `/stock/candle`) — falls back to Finnhub-only, no RSI/MA, if unset |
-| `SNESTACK_CLAUDE_API_KEY` | Yes | Claude API (skill execution, CFO synthesis) |
+| `SNESTACK_CLAUDE_API_KEY` | Yes | Claude API (skill execution, signal distillation) |
+| `SNESTACK_MODEL_CHEAP` / `_NORMAL` / `_EXPENSIVE` | No | Model behind each cost tier (defaults: `claude-haiku-4-5-20251001` / `claude-sonnet-5-5` / `claude-opus-5-5`). Skills select a tier with `model:` in frontmatter; default `normal`. |
 | `SNESTACK_GMAIL_ADDRESS` | Yes | Gmail sender address |
 | `SNESTACK_GMAIL_APP_PASSWORD` | Yes | Gmail app password |
 | `SNESTACK_NOTIFICATION_EMAIL` | Yes | Where to send signals |

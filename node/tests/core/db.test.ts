@@ -207,45 +207,6 @@ describe("Db", () => {
     });
   });
 
-  // ── Pending notifications ─────────────────────────────────────────────────
-
-  describe("pendingNotifications", () => {
-    beforeEach(() => {
-      db.addTicker("NVDA", "NVIDIA", "PUBLIC");
-    });
-
-    it("adds pending notification", () => {
-      const sigId = db.addSignal("NVDA", new Date().toISOString(), "BUY", 0.8, "test", false);
-      expect(
-        db.addPendingNotification("NVDA", sigId, "test@test.com", null, "email")
-      ).toBe(true);
-    });
-
-    it("gets pending notifications", () => {
-      const sigId = db.addSignal("NVDA", new Date().toISOString(), "BUY", 0.8, "test", false);
-      db.addPendingNotification("NVDA", sigId, "test@test.com");
-      expect(db.getPendingNotifications()).toHaveLength(1);
-    });
-
-    it("removes pending notification", () => {
-      const sigId = db.addSignal("NVDA", new Date().toISOString(), "BUY", 0.8, "test", false);
-      db.addPendingNotification("NVDA", sigId, "test@test.com");
-      const notifications = db.getPendingNotifications();
-      expect(db.removePendingNotification(notifications[0].id)).toBe(true);
-      expect(db.getPendingNotifications()).toHaveLength(0);
-    });
-
-    it("updates retry count", () => {
-      const sigId = db.addSignal("NVDA", new Date().toISOString(), "BUY", 0.8, "test", false);
-      db.addPendingNotification("NVDA", sigId, "test@test.com");
-      const notifications = db.getPendingNotifications();
-      const id = notifications[0].id;
-      db.updatePendingNotificationRetry(id);
-      const updated = db.getPendingNotifications();
-      expect(updated[0].retry_count).toBe(1);
-    });
-  });
-
   // ── Edge cases ────────────────────────────────────────────────────────────
 
   describe("edge cases", () => {
@@ -255,10 +216,6 @@ describe("Db", () => {
 
     it("getWatchlist returns empty array when none", () => {
       expect(db.getWatchlist()).toEqual([]);
-    });
-
-    it("getPendingNotifications returns empty array when none", () => {
-      expect(db.getPendingNotifications()).toEqual([]);
     });
 
     it("raw() returns the underlying db", () => {

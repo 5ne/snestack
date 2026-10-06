@@ -4,6 +4,10 @@ import * as path from "path";
 import * as dotenv from "dotenv";
 import { ConfigError, ValidationError } from "./errors";
 
+/** Cost tiers used by skills (frontmatter `model:`) and code; each maps to a concrete model via Config.getModel(). */
+export type ModelTier = "cheap" | "normal" | "expensive";
+export const MODEL_TIERS: readonly ModelTier[] = ["cheap", "normal", "expensive"];
+
 export class Config {
   // Env-var key constants
   static readonly FINNHUB_API_KEY = "SNESTACK_FINNHUB_API_KEY";
@@ -11,6 +15,16 @@ export class Config {
   // blocks /stock/candle. Falls back to Finnhub-only (no RSI/MA) if unset.
   static readonly TWELVEDATA_API_KEY = "SNESTACK_TWELVEDATA_API_KEY";
   static readonly CLAUDE_API_KEY = "SNESTACK_CLAUDE_API_KEY";
+  static readonly MODEL_ENV: Record<ModelTier, string> = {
+    cheap: "SNESTACK_MODEL_CHEAP",
+    normal: "SNESTACK_MODEL_NORMAL",
+    expensive: "SNESTACK_MODEL_EXPENSIVE",
+  };
+  static readonly DEFAULT_MODELS: Record<ModelTier, string> = {
+    cheap: "claude-haiku-4-5-20251001",
+    normal: "claude-sonnet-5-5",
+    expensive: "claude-opus-5-5",
+  };
   static readonly GMAIL_ADDRESS = "SNESTACK_GMAIL_ADDRESS";
   static readonly GMAIL_APP_PASSWORD = "SNESTACK_GMAIL_APP_PASSWORD";
   static readonly NOTIFICATION_EMAIL = "SNESTACK_NOTIFICATION_EMAIL";
@@ -73,6 +87,11 @@ export class Config {
       throw new ValidationError("Invalid Claude API key (must start with sk-)");
     }
     return key;
+  }
+
+  /** Resolve a tier keyword ("cheap" | "normal" | "expensive") to a concrete model ID; each tier is overridable via env. */
+  getModel(tier: ModelTier = "normal"): string {
+    return Config.get(Config.MODEL_ENV[tier]) ?? Config.DEFAULT_MODELS[tier];
   }
 
   getGmailAddress(): string {

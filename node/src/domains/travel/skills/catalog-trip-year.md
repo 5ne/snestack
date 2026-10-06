@@ -2,6 +2,7 @@
 name: catalog-trip-year
 domain: travel
 requires: [timeline]
+model: normal
 status: needs-gmail-access
 ---
 

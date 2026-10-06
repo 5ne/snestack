@@ -2,6 +2,7 @@
 name: long-term-quality
 domain: financial
 requires: [quote, fundamentals, brain]
+model: normal
 references: [quality-bar]
 ---
 

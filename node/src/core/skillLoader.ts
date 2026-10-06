@@ -8,6 +8,8 @@ export interface SkillFrontmatter {
   references?: string[];
   type?: string;
   status?: string;
+  /** Cost tier for this skill's model call: "cheap" | "normal" | "expensive". Defaults to "normal". */
+  model?: string;
   [key: string]: unknown;
 }
 

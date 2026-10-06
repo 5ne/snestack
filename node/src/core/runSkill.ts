@@ -3,7 +3,7 @@ import * as path from "path";
 import { loadSkillFile } from "./skillLoader";
 import { getDomainConfig, loadContextTools } from "./domainRegistry";
 import { runPrompt } from "./executor";
-import { getConfig } from "./config";
+import { getConfig, MODEL_TIERS, type ModelTier } from "./config";
 import { getLogger } from "./logger";
 
 const logger = getLogger("runSkill");
@@ -24,6 +24,8 @@ export interface SkillRunResult {
 export interface AssembledSkillPrompt {
   systemPrompt: string;
   userPrompt: string;
+  /** Cost tier from the skill's frontmatter `model:` (default "normal"). */
+  tier: ModelTier;
 }
 
 /** Where this domain's skill markdown actually lives on disk (always under src/, even in a compiled build). */
@@ -54,6 +56,10 @@ export async function assembleSkillPrompt(
   const { frontmatter, body } = loadSkillFile(skillPath);
   const requires = frontmatter.requires ?? [];
   const references = frontmatter.references ?? [];
+  const tier = frontmatter.model ?? "normal";
+  if (!(MODEL_TIERS as readonly string[]).includes(tier)) {
+    throw new Error(`Skill ${domain}/${skillName} has invalid model "${tier}" — expected one of: ${MODEL_TIERS.join(", ")}`);
+  }
 
   const contextTools = await loadContextTools(domain);
   const contextEntries = await Promise.all(
@@ -92,7 +98,7 @@ export async function assembleSkillPrompt(
     [...contextSections, ...referenceSections].join("\n\n"),
   ].join("\n");
 
-  return { systemPrompt: GENERIC_SYSTEM_PROMPT, userPrompt };
+  return { systemPrompt: GENERIC_SYSTEM_PROMPT, userPrompt, tier: tier as ModelTier };
 }
 
 /**
@@ -106,9 +112,9 @@ export async function runSkill(
   skillName: string,
   subject: string
 ): Promise<SkillRunResult> {
-  const { systemPrompt, userPrompt } = await assembleSkillPrompt(domain, skillName, subject);
-  logger.debug(`Running skill "${domain}/${skillName}" for ${subject}`);
-  const { output } = await runPrompt(getConfig().getClaudeApiKey(), systemPrompt, userPrompt);
+  const { systemPrompt, userPrompt, tier } = await assembleSkillPrompt(domain, skillName, subject);
+  logger.debug(`Running skill "${domain}/${skillName}" for ${subject} (tier: ${tier})`);
+  const { output } = await runPrompt(getConfig().getClaudeApiKey(), systemPrompt, userPrompt, { tier });
 
   return { domain, skill: skillName, subject, output };
 }
