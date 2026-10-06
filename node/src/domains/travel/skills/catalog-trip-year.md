@@ -3,7 +3,7 @@ name: catalog-trip-year
 domain: travel
 requires: [timeline, gmail]
 model: normal
-maxTokens: 32000
+maxTokens: 48000
 status: automatable (lower-fidelity than a manual run — see "Two ways to run this")
 ---
 
