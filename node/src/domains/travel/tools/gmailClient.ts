@@ -57,6 +57,49 @@ export function dateRangeForYear(year: number): { after: string; before: string 
   return { after: `${year}/01/01`, before: `${year + 1}/01/01` };
 }
 
+/**
+ * Run `items` through `fn` at most `concurrency` at a time, retrying any call
+ * that fails with a 429/quota error (exponential backoff, a few attempts)
+ * before giving up on that one item. Keeps this a well-behaved API client —
+ * Gmail's per-minute quota is per-user, so firing a whole query's worth of
+ * messages.get calls at once (hundreds, for a broad year-long search) blows
+ * through it in a single burst even though the daily/total budget is fine.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await withQuotaRetry(() => fn(items[i]));
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
+
+export async function withQuotaRetry<R>(fn: () => Promise<R>, maxAttempts = 5): Promise<R> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const isQuotaError =
+        (e as { code?: number })?.code === 429 ||
+        /quota exceeded/i.test((e as Error)?.message ?? "");
+      if (!isQuotaError || attempt >= maxAttempts) throw e;
+      const delayMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s, 8s...
+      logger.debug(`Gmail quota hit, retrying in ${delayMs}ms (attempt ${attempt}/${maxAttempts})`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 /** Pull enough of a message to identify what it is, without the full body (which is mostly tracking-link bloat in marketing/notification email). */
 async function getSummary(
   client: gmail_v1.Gmail,
@@ -93,7 +136,7 @@ async function getSummary(
  */
 export async function searchTravelEmailsForYear(
   year: number,
-  { maxResultsPerQuery = 100 }: { maxResultsPerQuery?: number } = {}
+  { maxResultsPerQuery = 100, concurrency = 10 }: { maxResultsPerQuery?: number; concurrency?: number } = {}
 ): Promise<EmailSummary[]> {
   const auth = getAuthorizedClient();
   const client = gmail({ version: "v1", auth });
@@ -104,14 +147,12 @@ export async function searchTravelEmailsForYear(
   for (const { name, query } of QUERY_TEMPLATES) {
     const fullQuery = `${query} after:${after} before:${before}`;
     logger.debug(`[${name}] ${fullQuery}`);
-    const listRes = await client.users.messages.list({
-      userId: "me",
-      q: fullQuery,
-      maxResults: maxResultsPerQuery,
-    });
+    const listRes = await withQuotaRetry(() =>
+      client.users.messages.list({ userId: "me", q: fullQuery, maxResults: maxResultsPerQuery })
+    );
     const messages = listRes.data.messages ?? [];
-    const summaries = await Promise.all(
-      messages.map((m) => getSummary(client, m.id!, m.threadId!, name))
+    const summaries = await mapWithConcurrency(messages, concurrency, (m) =>
+      getSummary(client, m.id!, m.threadId!, name)
     );
     for (const s of summaries) {
       if (s && !seen.has(s.messageId)) seen.set(s.messageId, s);
