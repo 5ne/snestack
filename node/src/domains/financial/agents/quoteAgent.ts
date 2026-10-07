@@ -86,6 +86,8 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
           pbRatio: fundamentals?.pbRatio ?? null,
           debtToEquity: fundamentals?.debtToEquity ?? null,
           fcfYield: fundamentals?.fcfYield ?? null,
+          fcfMargin: fundamentals?.fcfMargin ?? null,
+          fcfPositive: fundamentals?.fcfPositive ?? null,
           dividendYield: fundamentals?.dividendYield ?? null,
           earningsGrowth: fundamentals?.earningsGrowth ?? null,
           revenueGrowth: fundamentals?.revenueGrowth ?? null,

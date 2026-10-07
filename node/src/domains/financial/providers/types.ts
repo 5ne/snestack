@@ -17,6 +17,10 @@ export interface LiveFundamentals {
   dividendYield: number | null;
   earningsGrowth: number | null;
   revenueGrowth: number | null;
+  /** Latest annual FCF / revenue, as a fraction. */
+  fcfMargin: number | null;
+  /** Sign of FCF yield: true = positive FCF, false = negative, null = unknown. */
+  fcfPositive: boolean | null;
 }
 
 /**

@@ -37,6 +37,7 @@ export class EquityAgent extends ThrottledAPIAgent<EquityData> {
         pbRatio: fundamentals.pb_ratio ?? null,
         debtToEquity: fundamentals.debt_to_equity ?? null,
         fcf: fundamentals.fcf ?? null,
+        fcfFiscalYear: fundamentals.fcf_fiscal_year ?? null,
         fcfYield: fundamentals.fcf_yield ?? null,
         dividendYield: fundamentals.dividend_yield ?? null,
         earningsGrowth: fundamentals.earnings_growth ?? null,

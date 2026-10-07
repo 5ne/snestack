@@ -40,6 +40,10 @@ interface FinnhubMetric {
   "longTermDebt/equityAnnual"?: number | null;
   freeCashFlowTTM?: number | null;
   freeCashFlowAnnual?: number | null;
+  // The free tier does NOT return an absolute freeCashFlowTTM (verified live), but
+  // does return price-to-FCF-per-share, which is enough to derive a yield and sign.
+  pfcfShareTTM?: number | null;
+  pfcfShareAnnual?: number | null;
   marketCapitalization?: number | null;
   epsGrowthTTMYoy?: number | null;
   epsGrowth5Y?: number | null;
@@ -49,10 +53,36 @@ interface FinnhubMetric {
 
 interface FinnhubMetricResponse {
   metric?: FinnhubMetric;
+  series?: { annual?: { fcfMargin?: Array<{ period: string; v: number }> } };
 }
 
 function numOrNull(v: number | null | undefined): number | null {
   return typeof v === "number" && isFinite(v) ? v : null;
+}
+
+/**
+ * FCF-derived fields from a /stock/metric payload. Yield, in order of preference:
+ * raw FCF / market cap when Finnhub supplies freeCashFlowTTM (units cancel in the
+ * ratio), else 1 / price-to-FCF-per-share — the free tier's only FCF-bearing
+ * fields. A negative P/FCF means negative FCF, so the derived yield keeps its
+ * sign. The absolute FCF dollar figure is intentionally NOT derived here — see
+ * the fcf field comment on QuoteData.
+ */
+export function deriveFcf(
+  m: FinnhubMetric,
+  series?: FinnhubMetricResponse["series"]
+): { fcfYield: number | null; fcfPositive: boolean | null; fcfMargin: number | null } {
+  const fcf = numOrNull(m.freeCashFlowTTM ?? m.freeCashFlowAnnual);
+  const marketCap = numOrNull(m.marketCapitalization);
+  const pfcf = numOrNull(m.pfcfShareTTM ?? m.pfcfShareAnnual);
+  const fcfYield =
+    fcf != null && marketCap ? fcf / marketCap : pfcf != null && pfcf !== 0 ? 1 / pfcf : null;
+  return {
+    fcfYield,
+    fcfPositive: fcfYield == null ? null : fcfYield > 0,
+    // Latest annual FCF / revenue as a fraction; series are newest-first.
+    fcfMargin: numOrNull(series?.annual?.fcfMargin?.[0]?.v),
+  };
 }
 
 /** Finnhub-backed QuoteProvider: REST calls for quote, candles, and basic financials. */
@@ -154,6 +184,7 @@ export class FinnhubQuoteProvider implements QuoteProvider {
                 resolve(null);
                 return;
               }
+              const { fcfYield, fcfPositive, fcfMargin } = deriveFcf(m, parsed.series);
 
               const peRatio = numOrNull(
                 m.peTTM ?? m.peBasicExclExtraTTM ?? m.peExclExtraTTM ?? m.peNormalizedAnnual
@@ -187,21 +218,13 @@ export class FinnhubQuoteProvider implements QuoteProvider {
               const revenueGrowthPct = numOrNull(m.revenueGrowthTTMYoy ?? m.revenueGrowth5Y);
               const revenueGrowth = revenueGrowthPct != null ? revenueGrowthPct / 100 : null;
 
-              // fcfYield computed as raw FCF / market cap rather than trusting a
-              // named "yield" field — both freeCashFlowTTM and marketCapitalization
-              // come from the same Finnhub payload, so whatever unit scale Finnhub
-              // reports them in cancels out in the ratio. (The absolute FCF dollar
-              // figure itself is intentionally NOT taken from here — see the
-              // fcf field comment on QuoteData in core/models.ts.)
-              const fcf = numOrNull(m.freeCashFlowTTM ?? m.freeCashFlowAnnual);
-              const marketCap = numOrNull(m.marketCapitalization);
-              const fcfYield = fcf != null && marketCap ? fcf / marketCap : null;
-
               resolve({
                 peRatio,
                 pbRatio,
                 debtToEquity,
                 fcfYield,
+                fcfMargin,
+                fcfPositive,
                 dividendYield,
                 earningsGrowth,
                 revenueGrowth,

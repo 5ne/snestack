@@ -99,6 +99,8 @@ export interface QuoteData {
   pbRatio?: number | null;
   debtToEquity?: number | null;
   fcfYield?: number | null;
+  fcfMargin?: number | null;
+  fcfPositive?: boolean | null;
   dividendYield?: number | null;
   earningsGrowth?: number | null;
   revenueGrowth?: number | null;
@@ -117,6 +119,8 @@ export interface EquityData {
   pbRatio?: number | null;
   debtToEquity?: number | null;
   fcf?: number | null;
+  /** Fiscal year `fcf` belongs to (Morningstar's latest actual year). */
+  fcfFiscalYear?: number | null;
   fcfYield?: number | null;
   dividendYield?: number | null;
   earningsGrowth?: number | null;

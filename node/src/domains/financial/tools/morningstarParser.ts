@@ -24,8 +24,75 @@ export interface MorningstarData {
   revenue_growth?: number | null;
   earnings_growth?: number | null;
   fcf?: number | null;
+  /** Fiscal year the `fcf` figure belongs to (the latest actual year in Morningstar's table). */
+  fcf_fiscal_year?: number | null;
   fcf_yield?: number | null;
   debt_to_equity?: number | null;
+}
+
+/** One positioned piece of text from a PDF page (pdf.js text item). */
+export interface PdfTextItem {
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  s: string;
+}
+
+/**
+ * Morningstar's financial table renders each year's figures as separate
+ * positioned cells, but plain-text extraction glues them into one unsplittable
+ * run of digits ("42,66257,08051,844..."). Working from cell positions keeps
+ * the columns apart.
+ *
+ * Takes the "Free Cash Flow To The Firm (USD Mil|Bil)" row — Morningstar's FCFF,
+ * which approximates but is not identical to reported FCF — and returns the
+ * third column, the latest actual year (the table shows 3 actual years followed
+ * by 5 forecasts). The year comes from the header row whose column lines up with
+ * that value's right edge. The unit varies by company (mega-caps like NVDA are
+ * reported in whole billions, so those figures are rounded to the nearest $1B).
+ * Returns null if the row isn't found.
+ */
+export function extractFcfFromItems(
+  items: PdfTextItem[]
+): { fcf: number; fiscalYear: number | null } | null {
+  const lines = new Map<string, PdfTextItem[]>();
+  for (const it of items) {
+    const key = `${it.page}|${Math.round(it.y)}`;
+    if (!lines.has(key)) lines.set(key, []);
+    lines.get(key)!.push(it);
+  }
+
+  const numberRe = /^-?[\d,]+(\.\d+)?$/;
+  for (const [key, row] of lines) {
+    row.sort((a, b) => a.x - b.x);
+    const unitMatch = row
+      .map((i) => i.s)
+      .join("")
+      .match(/Free\s*Cash\s*Flow\s*To.*\(USD\s*(Mil|Bil|Tril)\)/i);
+    if (!unitMatch) continue;
+    const unitMultiplier = { mil: 1e6, bil: 1e9, tril: 1e12 }[unitMatch[1].toLowerCase() as "mil" | "bil" | "tril"];
+
+    const values = row.filter((i) => numberRe.test(i.s.trim()));
+    if (values.length < 3) continue;
+    const latestActual = values[2];
+    const fcfInUnits = cleanNumber(latestActual.s);
+    if (fcfInUnits == null) continue;
+
+    const page = parseInt(key.split("|")[0], 10);
+    const rightEdge = latestActual.x + latestActual.w;
+    const yearItem = items.find(
+      (i) =>
+        i.page === page &&
+        /^\s*(19|20)\d\d\s*$/.test(i.s) &&
+        Math.abs(i.x + i.w - rightEdge) < 5
+    );
+    return {
+      fcf: fcfInUnits * unitMultiplier,
+      fiscalYear: yearItem ? parseInt(yearItem.s.trim(), 10) : null,
+    };
+  }
+  return null;
 }
 
 /**
@@ -36,11 +103,37 @@ export async function parseMorningstarPdf(
   pdfPath: string
 ): Promise<MorningstarData> {
   let fullText: string;
+  const items: PdfTextItem[] = [];
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const pdfParse = require("pdf-parse");
     const buffer = fs.readFileSync(pdfPath);
-    const data = await pdfParse(buffer);
+    // Custom page renderer: builds exactly the text pdf-parse's default renderer
+    // would (every regex below depends on it), while also recording each text
+    // item's position for extractFcfFromItems.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pagerender = (pageData: any) =>
+      pageData
+        .getTextContent({ normalizeWhitespace: false, disableCombineTextItems: false })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .then((tc: any) => {
+          let lastY: number | undefined;
+          let text = "";
+          for (const it of tc.items) {
+            items.push({
+              page: pageData.pageNumber,
+              x: it.transform[4],
+              y: it.transform[5],
+              w: it.width,
+              s: it.str,
+            });
+            if (lastY === it.transform[5] || !lastY) text += it.str;
+            else text += "\n" + it.str;
+            lastY = it.transform[5];
+          }
+          return text;
+        });
+    const data = await pdfParse(buffer, { pagerender });
     fullText = data.text as string;
   } catch (e) {
     logger.warn(`Could not open ${path.basename(pdfPath)}: ${e}`);
@@ -133,13 +226,12 @@ export async function parseMorningstarPdf(
     result.earnings_growth = val != null ? val / 100 : null;
   }
 
-  // FCF (USD Mil)
-  const fcfMatch = fullText.match(
-    /Free Cash Flow To The Firm \(USD Mil\)\s+([\d,.]+)/
-  );
-  if (fcfMatch) {
-    const val = cleanNumber(fcfMatch[1]);
-    result.fcf = val != null ? val * 1e6 : null;
+  // FCF (Morningstar's FCFF, latest actual year) — from cell positions, since the
+  // plain text fuses the row's eight values together.
+  const fcfRow = extractFcfFromItems(items);
+  if (fcfRow) {
+    result.fcf = fcfRow.fcf;
+    result.fcf_fiscal_year = fcfRow.fiscalYear;
   }
 
   // FCF yield
