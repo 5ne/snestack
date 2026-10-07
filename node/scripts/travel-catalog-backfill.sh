@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# DEPRECATED (2026-10-07) — not scheduled. Each night is one large Anthropic API call
+# (plus a 48,000-token output budget), which costs more than it's worth to run on
+# the API. The cron entry was removed; this script and `snestack travel catalog` still
+# work if run by hand. To catalog a year without API cost, use `snestack travel
+# prep-catalog <year>` and paste the prompt into a Claude session that has Gmail access
+# (covered by the Claude subscription). To resume the nightly job: re-add the cron line
+#   0 2 * * * cd <repo>/node && ./scripts/travel-catalog-backfill.sh >> logs/travel-backfill.cron.log 2>&1
+# and restore the "travel-backfill" expectation in the run-check command (src/cli.ts).
+#
 # Nightly travel backfill: catalogs ONE year per run, working backwards from 2019 to
 # 2010 (see src/domains/travel/tools/backfill.ts), then does nothing once every year
 # is done. A night that fails writes no index, so that year is retried the next night.

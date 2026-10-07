@@ -709,20 +709,15 @@ program
   .option("--json", "Print findings as JSON")
   .action((opts: { days: string; json?: boolean }) => {
     const brainRoot = getConfig().getBrainRoot();
-    const travelDir = path.join(brainRoot, "travel");
+    // The nightly travel backfill is deprecated and unscheduled (see scripts/travel-catalog-backfill.sh),
+    // so no travel run is expected. Add a { name: "travel-backfill", runsRoot: <brain>/travel/_runs, ... }
+    // expectation back here if it's ever rescheduled.
     const expectations: RunExpectation[] = [
       {
         name: "financial",
         runsRoot: path.join(brainRoot, "financial", "signals"),
         expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: weekdays 8:30
         graceHour: 10,
-        since: RUN_LOG_SINCE,
-      },
-      {
-        name: "travel-backfill",
-        runsRoot: path.join(travelDir, "_runs"),
-        expectedOn: () => nextBackfillYear(travelDir) !== null, // cron: nightly until every year is done
-        graceHour: 6,
         since: RUN_LOG_SINCE,
       },
     ];

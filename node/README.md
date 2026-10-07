@@ -106,7 +106,7 @@ Two ways to run `catalog-trip-year` — see `src/domains/travel/skills/catalog-t
 - **Automated** (lower fidelity, runs unattended): requires its own Gmail OAuth consent, separate from the calendar domain's.
   1. In the same Google Cloud project as above, enable the **Gmail API** (Calendar and Gmail are separate APIs even on one project/OAuth client).
   2. Run `snestack travel auth` — same flow as `calendar auth`, but for the `gmail.readonly` scope, saved to `SNESTACK_GOOGLE_GMAIL_REFRESH_TOKEN` (a separate token, since the calendar one was never granted Gmail access).
-  3. Run `snestack travel catalog <year>` (or let `scripts/travel-catalog-nightly.sh` do it on a cron) — fetches Gmail + Timeline context deterministically, runs the skill in one model call, and writes to `<SNESTACK_BRAIN_ROOT>/travel/<year>/.nightly-draft/`. That's a staging directory, not the canonical files — review and move what's good into place yourself.
+  3. Run `snestack travel catalog <year>` (the nightly cron wrappers `scripts/travel-catalog-nightly.sh` and `scripts/travel-catalog-backfill.sh` are deprecated and unscheduled — API cost) — fetches Gmail + Timeline context deterministically, runs the skill in one model call, and writes to `<SNESTACK_BRAIN_ROOT>/travel/<year>/.nightly-draft/`. That's a staging directory, not the canonical files — review and move what's good into place yourself.
 
 ## Environment Variables
 
