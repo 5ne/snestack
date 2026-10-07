@@ -10,7 +10,10 @@ import { runSkill, assembleSkillPrompt } from "./core/runSkill";
 import { runPrompt } from "./core/executor";
 import { authorizeGoogleCalendar } from "./domains/calendar/setup";
 import { authorizeGmail } from "./domains/travel/setup";
-import { parseMultiFileOutput, writeStagedCatalogFiles } from "./domains/travel/tools/fileWriter";
+import { parseMultiFileOutput, writeStagedCatalogFiles, writeCatalogFilesToDir } from "./domains/travel/tools/fileWriter";
+import { nextBackfillYear, BACKFILL_START_YEAR, BACKFILL_END_YEAR } from "./domains/travel/tools/backfill";
+import { logRunEvent, finalizeRun, currentRunDir } from "./core/runLog";
+import { evaluateRuns, dayString, type RunExpectation } from "./core/runCheck";
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
@@ -314,8 +317,20 @@ program
     }
     try {
       const result = await runSkill(domain, skill, subject);
+      if (!result.output.trim()) {
+        console.error(
+          `run-skill failed: model returned no text (stop_reason: ${result.stopReason}, output_tokens: ${result.outputTokensUsed})`
+        );
+        process.exitCode = 1;
+        return;
+      }
       console.log(`\n=== ${result.domain}/${result.skill} — ${result.subject} ===\n`);
       console.log(result.output);
+      if (result.stopReason === "max_tokens") {
+        // Exit code 3 = output kept but cut off, so automation can tell it from a clean run or a failure.
+        console.error(`run-skill warning: output truncated at max_tokens (${result.outputTokensUsed} output tokens)`);
+        process.exitCode = 3;
+      }
     } catch (e) {
       console.error(`run-skill failed: ${e}`);
       process.exitCode = 1;
@@ -357,7 +372,11 @@ travel
       "Review the draft and move files into place yourself. Requires `travel auth` first. This is " +
       "what scripts/travel-catalog-nightly.sh runs on a cron."
   )
-  .action(async (year: string) => {
+  .option(
+    "--out-dir <dir>",
+    "Write the files here instead of the year's .nightly-draft/ staging directory (used by dry runs so they leave no trace in the real catalog)"
+  )
+  .action(async (year: string, opts: { outDir?: string }) => {
     if (!validateEnv()) {
       process.exitCode = 1;
       return;
@@ -385,8 +404,12 @@ travel
         process.exitCode = 1;
         return;
       }
-      const written = writeStagedCatalogFiles(getConfig().getBrainRoot(), parseInt(year, 10), files);
-      console.log(`Wrote ${written.length} file(s) to the .nightly-draft/ staging directory:`);
+      const written = opts.outDir
+        ? writeCatalogFilesToDir(opts.outDir, files)
+        : writeStagedCatalogFiles(getConfig().getBrainRoot(), parseInt(year, 10), files);
+      console.log(
+        `Wrote ${written.length} file(s) to ${opts.outDir ?? "the .nightly-draft/ staging directory"}:`
+      );
       written.forEach((p) => console.log(`  ${p}`));
       if (result.stopReason === "max_tokens") {
         console.log(
@@ -394,6 +417,7 @@ travel
             "have been cut off mid-file, or an expected file (e.g. the index) may be missing entirely. " +
             "Check the files above before assuming the run is complete."
         );
+        process.exitCode = 3;
       }
       console.log("\nReview before promoting into the year's canonical files.");
     } catch (e) {
@@ -526,6 +550,7 @@ program
     const { output } = await runPrompt(config.getClaudeApiKey(), systemPrompt, userPrompt, {
       tier: "cheap",
       maxTokens: 8000,
+      label: "financial/distill-signals",
     });
     const cleaned = output
       .trim()
@@ -552,7 +577,18 @@ program
     "--file <path>",
     "Path to a JSON file with an array of {ticker, recommendation, confidence, reasoning, fromWatchlist?}. Reads stdin if omitted."
   )
-  .action(async (opts: { file?: string }) => {
+  .option("--dry-run", "Print what would be sent and exit — no email, nothing recorded in the signals table")
+  .action(async (opts: { file?: string; dryRun?: boolean }) => {
+    if (opts.dryRun) {
+      const raw = opts.file ? fs.readFileSync(opts.file, "utf8") : fs.readFileSync(0, "utf8");
+      const preview = JSON.parse(raw) as Array<{ ticker: string; recommendation: string; confidence: number }>;
+      const tally = (r: string) => preview.filter((s) => s.recommendation === r).length;
+      console.log(
+        `[dry-run] Would email ${preview.length} signals (${tally("BUY")} BUY, ${tally("SELL")} SELL, ${tally("HOLD")} HOLD); nothing sent or recorded.`
+      );
+      preview.forEach((s) => console.log(`  ${s.ticker.padEnd(6)} ${s.recommendation.padEnd(5)} ${s.confidence}`));
+      return;
+    }
     const config = getConfig();
     const db = new Db(config.getDatabasePath());
     try {
@@ -585,6 +621,131 @@ program
     } finally {
       db.close();
     }
+  });
+
+
+// ── Run logging & health checks ─────────────────────────────────────────────
+// Automation scripts record structured run events (see core/runLog.ts) so a
+// failed, truncated or missing run can be diagnosed — by a person or a watcher
+// agent — without re-running anything.
+
+const runLog = program.command("run-log").description("Record structured events for an automation run");
+
+runLog
+  .command("event <type>")
+  .description("Append an event to the active run's run.jsonl (dir from SNESTACK_RUN_DIR unless --dir is given)")
+  .option("--dir <dir>", "Run directory (default: $SNESTACK_RUN_DIR)")
+  .option("--script <name>", "run_start: the automation's name")
+  .option("--dry-run", "run_start: mark this run as a dry run")
+  .option("--step <name>", "step: what ran, e.g. data-dump or run-skill:long-term-quality")
+  .option("--subject <s>", "step: what it ran on, e.g. a ticker or year")
+  .option("--status <s>", "step: ok | failed | truncated | skipped")
+  .option("--exit-code <n>", "step: the command's exit code")
+  .option("--duration-ms <n>", "step: how long it took")
+  .option("--error-file <path>", "step: file whose last 500 bytes become the error text")
+  .action(
+    (
+      type: string,
+      opts: {
+        dir?: string;
+        script?: string;
+        dryRun?: boolean;
+        step?: string;
+        subject?: string;
+        status?: string;
+        exitCode?: string;
+        durationMs?: string;
+        errorFile?: string;
+      }
+    ) => {
+      const fields: Record<string, unknown> = {};
+      if (opts.script) fields.script = opts.script;
+      if (type === "run_start") fields.dry_run = Boolean(opts.dryRun);
+      if (opts.step) fields.step = opts.step;
+      if (opts.subject) fields.subject = opts.subject;
+      if (opts.status) fields.status = opts.status;
+      if (opts.exitCode !== undefined) fields.exit_code = parseInt(opts.exitCode, 10);
+      if (opts.durationMs !== undefined) fields.duration_ms = parseInt(opts.durationMs, 10);
+      if (opts.errorFile && opts.status !== "ok" && opts.status !== "skipped" && fs.existsSync(opts.errorFile)) {
+        const text = fs.readFileSync(opts.errorFile, "utf8");
+        fields.error = text.slice(-500).trim() || null;
+      }
+      logRunEvent(type, fields, opts.dir ?? currentRunDir());
+    }
+  );
+
+runLog
+  .command("finalize")
+  .description("Fold the run's events into run.json and print a one-line summary; exits 1 if the run failed")
+  .option("--dir <dir>", "Run directory (default: $SNESTACK_RUN_DIR)")
+  .option("--exit-code <n>", "The automation script's own exit code")
+  .action((opts: { dir?: string; exitCode?: string }) => {
+    const dir = opts.dir ?? currentRunDir();
+    if (!dir) {
+      console.error("run-log finalize: no run directory (set SNESTACK_RUN_DIR or pass --dir)");
+      process.exitCode = 1;
+      return;
+    }
+    const summary = finalizeRun(dir, opts.exitCode !== undefined ? parseInt(opts.exitCode, 10) : null);
+    const m = summary.model_calls;
+    console.error(
+      `Run ${summary.status}: ${summary.steps.ok}/${summary.steps.total} steps ok, ${summary.steps.failed} failed, ` +
+        `${summary.steps.truncated} truncated; ${m.count} model calls (${m.input_tokens} in / ${m.output_tokens} out tokens, ` +
+        `~${m.est_cost_usd == null ? "unknown cost" : "$" + m.est_cost_usd.toFixed(2)}). Summary: ${path.join(dir, "run.json")}`
+    );
+    if (summary.status === "failed") process.exitCode = 1;
+  });
+
+// Runs before this date aren't expected to have run.json (run logging didn't exist yet).
+const RUN_LOG_SINCE = "2026-10-07";
+
+program
+  .command("run-check")
+  .description(
+    "Check recent automation runs for problems: missing or crashed runs, failed or truncated steps, model errors, " +
+      "cost spikes. Prints findings; exits 1 if any are errors. Meant for a person or a watcher agent to read."
+  )
+  .option("--days <n>", "How many days back to check, including today", "3")
+  .option("--json", "Print findings as JSON")
+  .action((opts: { days: string; json?: boolean }) => {
+    const brainRoot = getConfig().getBrainRoot();
+    const travelDir = path.join(brainRoot, "travel");
+    const expectations: RunExpectation[] = [
+      {
+        name: "financial",
+        runsRoot: path.join(brainRoot, "financial", "signals"),
+        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: weekdays 8:30
+        graceHour: 10,
+        since: RUN_LOG_SINCE,
+      },
+      {
+        name: "travel-backfill",
+        runsRoot: path.join(travelDir, "_runs"),
+        expectedOn: () => nextBackfillYear(travelDir) !== null, // cron: nightly until every year is done
+        graceHour: 6,
+        since: RUN_LOG_SINCE,
+      },
+    ];
+    const findings = evaluateRuns({ now: new Date(), days: Math.max(1, parseInt(opts.days, 10) || 3), expectations });
+    if (opts.json) {
+      console.log(JSON.stringify({ checked_at: new Date().toISOString(), ok: findings.length === 0, findings }, null, 2));
+    } else if (findings.length === 0) {
+      console.log(`All clear: no problems in the last ${opts.days} day(s) (${dayString(new Date())}).`);
+    } else {
+      findings.forEach((f) => console.log(`${f.severity.toUpperCase().padEnd(5)} ${f.domain} ${f.date} [${f.code}] ${f.message}`));
+    }
+    if (findings.some((f) => f.severity === "error")) process.exitCode = 1;
+  });
+
+travel
+  .command("next-year")
+  .description(
+    `Print the next year the nightly backfill should catalog (${BACKFILL_START_YEAR} down to ${BACKFILL_END_YEAR}), ` +
+      "or nothing once every year is done"
+  )
+  .action(() => {
+    const year = nextBackfillYear(path.join(getConfig().getBrainRoot(), "travel"));
+    if (year !== null) console.log(year);
   });
 
 program.parseAsync(process.argv).catch((e) => {

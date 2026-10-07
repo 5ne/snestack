@@ -49,13 +49,17 @@ export function writeStagedCatalogFiles(
   files: Record<string, string>,
   stagingDirName = ".nightly-draft"
 ): string[] {
-  const dir = path.join(brainRoot, "travel", String(year), stagingDirName);
+  return writeCatalogFilesToDir(path.join(brainRoot, "travel", String(year), stagingDirName), files);
+}
+
+/** Write named files into `dir` (created if needed), clearing its previous contents first. Returns the paths written. */
+export function writeCatalogFilesToDir(dir: string, files: Record<string, string>): string[] {
   fs.mkdirSync(dir, { recursive: true });
 
   // Clear previous draft contents first so a run that produces fewer files
   // than last time doesn't leave stale ones behind.
   for (const existing of fs.readdirSync(dir)) {
-    fs.rmSync(path.join(dir, existing));
+    fs.rmSync(path.join(dir, existing), { recursive: true, force: true });
   }
 
   const written: string[] = [];

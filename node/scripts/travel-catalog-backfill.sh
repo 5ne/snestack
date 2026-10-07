@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
-# Nightly travel backfill: catalogs ONE year per run, working backwards from
-# START_YEAR to END_YEAR, then does nothing once every year is done.
+# Nightly travel backfill: catalogs ONE year per run, working backwards from 2019 to
+# 2010 (see src/domains/travel/tools/backfill.ts), then does nothing once every year
+# is done. A night that fails writes no index, so that year is retried the next night.
+# Output lands in travel/<year>/.nightly-draft/ for review — see `snestack travel catalog`.
 #
-# A year counts as "done" if it already has an index, either canonical
-# (travel/<year>/00-index-<year>.md) or staged by the automated path
-# (travel/<year>/.nightly-draft/00-index-<year>.md). State lives entirely in the
-# filesystem, so a failed night (no draft written) is simply retried the next night.
-# Output lands in .nightly-draft/ for review — see `snestack travel catalog`.
+# Each run is recorded in travel/_runs/<date>/ (run.jsonl + run.json; model call
+# tokens, latency, stop reason; step outcome) and its logs in catalog.log there.
 #
-# Usage: travel-catalog-backfill.sh [--dry-run]   (--dry-run prints the chosen year and exits)
+# Usage: travel-catalog-backfill.sh [--plan | --dry-run]
+#   --plan     print the year it would catalog and exit (no model call)
+#   --dry-run  do the full run for that year, but write the files into the run's own
+#              folder instead of the year's draft, so it changes nothing in the catalog
+#              and doesn't advance the backfill
 set -euo pipefail
 
-START_YEAR=2019   # 2020+ were cataloged by hand
-END_YEAR=2010
+MODE="run"
+case "${1:-}" in
+  "") ;;
+  --plan) MODE="plan" ;;
+  --dry-run) MODE="dry-run" ;;
+  *) echo "Unknown argument: $1" >&2; exit 2 ;;
+esac
 
 # cron runs with a minimal PATH, so node (installed via nvm) isn't visible unless we load it.
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -24,33 +32,40 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 NODE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$NODE_DIR"
+# shellcheck disable=SC1091
+. scripts/lib/run-log.sh
 
 if [ ! -f dist/cli.js ]; then
   echo "dist/cli.js not found — run 'npm run build' first" >&2
   exit 1
 fi
 
-BRAIN_ROOT="$(node -e 'console.log(require("./dist/core/config").getConfig().getBrainRoot())')"
-TRAVEL_DIR="$BRAIN_ROOT/travel"
-
-YEAR=""
-for ((y = START_YEAR; y >= END_YEAR; y--)); do
-  if [ ! -f "$TRAVEL_DIR/$y/00-index-$y.md" ] && [ ! -f "$TRAVEL_DIR/$y/.nightly-draft/00-index-$y.md" ]; then
-    YEAR="$y"
-    break
-  fi
-done
+YEAR="$(node dist/cli.js travel next-year)"
 
 if [ -z "$YEAR" ]; then
-  echo "$(date '+%F %T') Travel backfill complete: every year $END_YEAR-$START_YEAR has an index. Nothing to do (safe to remove this cron entry)."
+  echo "$(date '+%F %T') Travel backfill complete: every year is cataloged. Nothing to do (safe to remove this cron entry)."
   exit 0
 fi
 
-if [ "${1:-}" = "--dry-run" ]; then
+if [ "$MODE" = "plan" ]; then
   echo "Next year to catalog: $YEAR"
   exit 0
 fi
 
-echo "$(date '+%F %T') Travel backfill: cataloging $YEAR..."
-node dist/cli.js travel catalog "$YEAR"
-echo "$(date '+%F %T') Done with $YEAR."
+BRAIN_ROOT="$(node -e 'console.log(require("./dist/core/config").getConfig().getBrainRoot())')"
+RUN_DIR="$BRAIN_ROOT/travel/_runs/$(date +%Y-%m-%d)"
+CATALOG_ARGS=("$YEAR")
+if [ "$MODE" = "dry-run" ]; then
+  RUN_DIR="${RUN_DIR}-dryrun"
+  rm -rf "$RUN_DIR"
+  CATALOG_ARGS+=(--out-dir "$RUN_DIR/draft")
+fi
+
+rl_init travel-backfill "$RUN_DIR" $([ "$MODE" = "dry-run" ] && echo --dry-run)
+trap rl_finish EXIT
+
+echo "$(date '+%F %T') Travel backfill: cataloging $YEAR (mode: $MODE, run dir: $RUN_DIR)..."
+RL_ERR_FILE="$RUN_DIR/catalog.log" rl_step travel-catalog "$YEAR" \
+  node dist/cli.js travel catalog "${CATALOG_ARGS[@]}" > "$RUN_DIR/catalog.out" 2> "$RUN_DIR/catalog.log" || rc=$?
+cat "$RUN_DIR/catalog.out"
+echo "$(date '+%F %T') Finished $YEAR (exit ${rc:-0})."

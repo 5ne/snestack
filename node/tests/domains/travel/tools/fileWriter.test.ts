@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { parseMultiFileOutput, writeStagedCatalogFiles } from "../../../../src/domains/travel/tools/fileWriter";
+import { parseMultiFileOutput, writeStagedCatalogFiles, writeCatalogFilesToDir } from "../../../../src/domains/travel/tools/fileWriter";
 
 describe("parseMultiFileOutput", () => {
   it("splits a single response into named files", () => {
@@ -65,5 +65,22 @@ describe("writeStagedCatalogFiles", () => {
       .readdirSync(path.join(brainRoot, "travel", "2024"))
       .filter((f) => f !== ".nightly-draft");
     expect(canonicalFiles).toEqual([]);
+  });
+});
+
+describe("writeCatalogFilesToDir", () => {
+  it("writes the files into the given directory and clears stale contents first", () => {
+    const fs = require("fs") as typeof import("fs");
+    const os = require("os") as typeof import("os");
+    const path = require("path") as typeof import("path");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-outdir-"));
+    fs.writeFileSync(path.join(dir, "stale.md"), "old");
+    const written = writeCatalogFilesToDir(path.join(dir, "draft"), { "a.md": "A\n" });
+    fs.writeFileSync(path.join(dir, "draft", "stale2.md"), "old");
+    writeCatalogFilesToDir(path.join(dir, "draft"), { "b.md": "B\n" });
+    expect(written).toEqual([path.join(dir, "draft", "a.md")]);
+    expect(fs.readdirSync(path.join(dir, "draft"))).toEqual(["b.md"]);
+    expect(fs.existsSync(path.join(dir, "stale.md"))).toBe(true);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

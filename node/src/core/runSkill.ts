@@ -122,7 +122,7 @@ export async function runSkill(
     getConfig().getClaudeApiKey(),
     systemPrompt,
     userPrompt,
-    { tier, maxTokens }
+    { tier, maxTokens, label: `${domain}/${skillName} ${subject}` }
   );
 
   return { domain, skill: skillName, subject, output, stopReason, outputTokensUsed };
