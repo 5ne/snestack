@@ -271,3 +271,65 @@ describe("TraderAgent database interaction", () => {
     expect(html).toContain("No live quote data");
   });
 });
+
+describe("TraderAgent.buildRunSummaryEmail", () => {
+  const baseReport = (over: Record<string, unknown> = {}) =>
+    ({
+      script: "financial-daily",
+      dryRun: false,
+      status: "ok",
+      startedAt: "2026-10-08T15:30:00Z",
+      durationMs: 252000,
+      steps: { total: 9, ok: 3, failed: 0, truncated: 0, skipped: 6, retried: 0 },
+      subjects: 3,
+      skipped: [{ skill: "swing-trading-large-cap", subject: "INTU", reason: "no trigger: RSI 40 inside 30-70 <b>" }],
+      ran: 1,
+      calls: [{ label: "financial/long-term-quality MSFT", model: "claude-sonnet-5-5", inputTokens: 3700, outputTokens: 1650, latencyMs: 13500, costUsd: 0.024, truncated: false, error: null }],
+      totals: { calls: 1, inputTokens: 3700, outputTokens: 1650, costUsd: 0.024 },
+      failures: [],
+      truncations: [],
+      scriptExitCode: 0,
+      ...over,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any;
+
+  it("says there are no changes, then summarizes the run", () => {
+    const e = TraderAgent.buildRunSummaryEmail(baseReport(), "2026-10-08");
+    expect(e.subject).toBe("snestack 2026-10-08 — no changes");
+    expect(e.text).toContain("No changes today");
+    expect(e.text).toContain("JOB RUN SUMMARY");
+    expect(e.html).toContain("No changes today");
+    expect(e.html).toContain("Job run summary");
+    expect(e.html).toContain("4m 12s");
+  });
+
+  it("escapes HTML in log-derived text", () => {
+    const e = TraderAgent.buildRunSummaryEmail(baseReport(), "2026-10-08");
+    expect(e.html).not.toContain("inside 30-70 <b>");
+    expect(e.html).toContain("inside 30-70 &lt;b&gt;");
+  });
+
+  it("flags problems in the subject and body when the run failed", () => {
+    const e = TraderAgent.buildRunSummaryEmail(
+      baseReport({
+        status: "failed",
+        failures: [{ step: "run-skill:long-term-quality", subject: "RIVN", exit_code: 1, error: "credit balance is too low" }],
+      }),
+      "2026-10-08"
+    );
+    expect(e.subject).toContain("run had problems");
+    expect(e.text).toContain("had problems");
+    expect(e.text).toContain("credit balance is too low");
+    expect(e.html).toContain("Problems (1)");
+  });
+
+  it("explains a run that died before any step failed", () => {
+    const e = TraderAgent.buildRunSummaryEmail(baseReport({ status: "failed", scriptExitCode: 1 }), "2026-10-08");
+    expect(e.text).toContain("stopped early (exit code 1)");
+    expect(e.html).toContain("stopped early (exit code 1)");
+  });
+
+  it("notes warnings on a degraded but successful run", () => {
+    expect(TraderAgent.buildRunSummaryEmail(baseReport({ status: "degraded" }), "2026-10-08").subject).toContain("(with warnings)");
+  });
+});

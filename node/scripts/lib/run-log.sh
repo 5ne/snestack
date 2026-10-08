@@ -15,7 +15,8 @@
 # rl_step runs the command, records ok / failed / truncated (exit 3) / skipped (exit 4,
 # a gate decided the call wasn't needed) with its duration, and returns the command's
 # exit code WITHOUT aborting the script, so one bad ticker doesn't stop the rest.
-# rl_finish writes run.json, publishes the folder, and exits nonzero if any step failed.
+# rl_finish writes run.json, calls rl_failure_hook (if the script defines one) when the run failed,
+# publishes the folder, and exits nonzero if any step failed.
 
 rl_init() {
   RL_SCRIPT="$1"
@@ -65,6 +66,8 @@ rl_finish() {
   local rc=$?
   trap - EXIT
   node dist/cli.js run-log finalize --exit-code "$rc" || rc=$?
+  # Let the script react to a failed run (e.g. send a "run had problems" email) now that run.json exists.
+  if [ "$rc" -ne 0 ] && declare -F rl_failure_hook >/dev/null; then rl_failure_hook || true; fi
   # Publish the staged run (replacing any earlier same-day run in the destination).
   if mkdir -p "$RL_PUBLISH_DIR" 2>/dev/null &&
     { rsync -a --delete "$RUN_DIR"/ "$RL_PUBLISH_DIR"/ 2>/dev/null || cp -Rp "$RUN_DIR"/. "$RL_PUBLISH_DIR"/; }; then

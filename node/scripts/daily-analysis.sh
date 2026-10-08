@@ -57,6 +57,13 @@ BRAIN_ROOT="$(node -e 'console.log(require("./dist/core/config").getConfig().get
 PUBLISH_DIR="$BRAIN_ROOT/financial/signals/$(date +%Y-%m-%d)"
 [ "$DRY_RUN" -eq 1 ] && PUBLISH_DIR="${PUBLISH_DIR}-dryrun"
 
+# If the run fails before any email went out, tell the user instead of failing silently.
+rl_failure_hook() {
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  [ -e "$RUN_DIR/.email-sent" ] && return 0
+  node dist/cli.js notify-summary --dir "$RUN_DIR" > "$RUN_DIR/failure-email.out" 2> "$RUN_DIR/failure-email.log" || true
+}
+
 rl_init financial-daily "$PUBLISH_DIR" $([ "$DRY_RUN" -eq 1 ] && echo --dry-run)   # sets $RUN_DIR (local staging)
 trap rl_finish EXIT
 echo "Run directory: $PUBLISH_DIR (staged in $RUN_DIR; dry run: $DRY_RUN)"
@@ -120,15 +127,21 @@ RL_ERR_FILE="$RUN_DIR/build-signals.log" rl_step build-signals all \
 # Step 4: send the batch email and record signals in snestack.db (dry run: preview only).
 # On a quiet day (every call gated off, or nothing to report) there is nothing to send.
 SIGNAL_COUNT="$(node -e 'try{console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).length)}catch{console.log(0)}' "$RUN_DIR/signals.json")"
+NOTIFY_FLAGS=""
+[ "$DRY_RUN" -eq 1 ] && NOTIFY_FLAGS="--dry-run"
 if [ "$SIGNAL_COUNT" -gt 0 ]; then
-  NOTIFY_FLAGS=""
-  [ "$DRY_RUN" -eq 1 ] && NOTIFY_FLAGS="--dry-run"
-  RL_ERR_FILE="$RUN_DIR/notify.log" rl_step notify all \
-    node dist/cli.js notify --file "$RUN_DIR/signals.json" $NOTIFY_FLAGS > "$RUN_DIR/notify.out" 2> "$RUN_DIR/notify.log" || true
-  cat "$RUN_DIR/notify.out"
+  if RL_ERR_FILE="$RUN_DIR/notify.log" rl_step notify all \
+    node dist/cli.js notify --file "$RUN_DIR/signals.json" $NOTIFY_FLAGS > "$RUN_DIR/notify.out" 2> "$RUN_DIR/notify.log"; then
+    touch "$RUN_DIR/.email-sent"
+  fi
 else
-  echo "No signals to report today; no email sent."
-  rl_skip notify
+  # Nothing to recommend today: still email, saying so with a summary of the run built from its logs.
+  echo "No new recommendations today; emailing a run summary."
+  if RL_ERR_FILE="$RUN_DIR/notify.log" rl_step notify-summary all \
+    node dist/cli.js notify-summary --dir "$RUN_DIR" $NOTIFY_FLAGS > "$RUN_DIR/notify.out" 2> "$RUN_DIR/notify.log"; then
+    touch "$RUN_DIR/.email-sent"
+  fi
 fi
+cat "$RUN_DIR/notify.out" 2>/dev/null || true
 
 echo "Done. Full run saved under: $PUBLISH_DIR"

@@ -119,6 +119,12 @@ describe("runLog", () => {
     expect(summary.status).toBe("failed");
   });
 
+  it("reads the script exit code the log itself recorded at run_end", () => {
+    const summary = summarizeRun([ev("run_start", { script: "x" }), ev("step", { step: "s", status: "ok", exit_code: 0 }), ev("run_end", { script_exit_code: 1 })]);
+    expect(summary.status).toBe("failed");
+    expect(summary.script_exit_code).toBe(1);
+  });
+
   it("summarizes only the latest run when several share the file", () => {
     const summary = summarizeRun([
       ev("run_start", { script: "x" }, "old"),

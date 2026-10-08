@@ -3,6 +3,7 @@ import { BaseAgent } from "./base";
 import { EmailServiceError } from "../../../core/errors";
 import type { Signal, EquityData } from "../../../core/models";
 import type { Db } from "../../../core/db";
+import { formatRunReportText, formatDuration, formatCost, type RunReport } from "../../../core/runReport";
 
 const COLORS: Record<"BUY" | "SELL" | "HOLD", { fg: string; bg: string; border: string }> = {
   BUY: { fg: "#0f7a3d", bg: "#e9f9ef", border: "#16a34a" },
@@ -541,6 +542,89 @@ export class TraderAgent extends BaseAgent<boolean> {
   </table>
 </body>
 </html>`;
+  }
+
+  /**
+   * Subject, plain text and HTML for the email sent when a run has no new
+   * recommendations ("no changes") or didn't complete cleanly ("problems"),
+   * followed by a summary of the job run built from its logs.
+   */
+  static buildRunSummaryEmail(report: RunReport, date: string): { subject: string; text: string; html: string } {
+    const problems = report.status === "failed";
+    const headline = problems
+      ? "The analysis run had problems, so no new recommendations were produced."
+      : "No changes today. Nothing crossed a trigger, so there are no new recommendations.";
+    const subject = problems
+      ? `snestack ${date} — run had problems (see details)`
+      : `snestack ${date} — no changes${report.status === "degraded" ? " (with warnings)" : ""}`;
+    const text = `${headline}\n\n${formatRunReportText(report)}\n`;
+
+    const esc = TraderAgent.escapeHtml;
+    const rows = (items: string[]) => items.map((i) => `<li style="margin:2px 0;">${i}</li>`).join("");
+    const font = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+    const accent = problems ? "#dc2626" : "#16a34a";
+    const html = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>snestack run summary</title></head>
+<body style="margin:0;padding:0;background:#f1f5f9;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;"><tr><td align="center" style="padding:32px 16px;">
+    <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border-radius:14px;border:1px solid #e6e9ef;">
+      <tr><td style="padding:24px 28px 4px 28px;${font}font-size:12px;font-weight:800;letter-spacing:2px;color:#4f46e5;text-transform:uppercase;">snestack · ${esc(date)}</td></tr>
+      <tr><td style="padding:8px 28px 16px 28px;"><div style="border-left:4px solid ${accent};padding:10px 14px;background:#f8fafc;border-radius:6px;${font}font-size:15px;font-weight:600;color:#0f172a;">${esc(headline)}</div></td></tr>
+      <tr><td style="padding:0 28px 20px 28px;${font}font-size:13.5px;line-height:1.55;color:#334155;">
+        <div style="font-weight:700;color:#0f172a;margin-bottom:6px;">Job run summary</div>
+        <div>Status: <b>${esc(report.status.toUpperCase())}</b> · ${esc(formatDuration(report.durationMs))}${report.dryRun ? " · dry run" : ""}</div>
+        <div>Checked ${report.subjects} ticker${report.subjects === 1 ? "" : "s"}: ${report.ran} analysis call${report.ran === 1 ? "" : "s"} ran, ${report.skipped.length} skipped because nothing had changed.</div>
+        <div>Model usage: ${report.totals.calls} call${report.totals.calls === 1 ? "" : "s"}, ${report.totals.inputTokens.toLocaleString("en-US")} tokens in / ${report.totals.outputTokens.toLocaleString("en-US")} out, est. cost ${esc(formatCost(report.totals.costUsd))}</div>
+        ${
+          report.status === "failed" && report.failures.length === 0
+            ? `<div style="font-weight:700;color:#b91c1c;margin-top:12px;">The script stopped early (exit code ${esc(String(report.scriptExitCode ?? "unknown"))}) before any step reported a failure; see the run logs.</div>`
+            : ""
+        }
+        ${
+          report.failures.length
+            ? `<div style="font-weight:700;color:#b91c1c;margin-top:12px;">Problems (${report.failures.length})</div><ul style="margin:4px 0 0 18px;padding:0;">${rows(
+                report.failures.map(
+                  (f) =>
+                    `${esc(f.step)}${f.subject && f.subject !== "all" ? " " + esc(f.subject) : ""}: ${esc(f.error ?? `exit ${f.exit_code}`)}`
+                )
+              )}</ul>`
+            : ""
+        }
+        ${
+          report.truncations.length
+            ? `<div style="font-weight:700;color:#b45309;margin-top:12px;">Cut off at the token limit (${report.truncations.length})</div><ul style="margin:4px 0 0 18px;padding:0;">${rows(
+                report.truncations.map((t) => `${esc(t.step)}${t.subject ? " " + esc(t.subject) : ""}`)
+              )}</ul>`
+            : ""
+        }
+        ${
+          report.calls.length
+            ? `<div style="font-weight:700;color:#0f172a;margin-top:12px;">Analysis that ran</div><ul style="margin:4px 0 0 18px;padding:0;">${rows(
+                report.calls.map(
+                  (c) =>
+                    `${esc(c.label)}: ${c.inputTokens.toLocaleString("en-US")} in / ${c.outputTokens.toLocaleString("en-US")} out, ${(c.latencyMs / 1000).toFixed(1)}s, ${esc(formatCost(c.costUsd))}${c.error ? ` — ERROR: ${esc(c.error.slice(0, 160))}` : ""}`
+                )
+              )}</ul>`
+            : ""
+        }
+        ${
+          report.skipped.length
+            ? `<div style="font-weight:700;color:#0f172a;margin-top:12px;">Skipped (no model call needed)</div><ul style="margin:4px 0 0 18px;padding:0;color:#64748b;">${rows(
+                report.skipped.map((s) => `${esc(s.subject)} ${esc(s.skill)}: ${esc(s.reason)}`)
+              )}</ul>`
+            : ""
+        }
+      </td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`;
+    return { subject, text, html };
+  }
+
+  /** Send the "no changes" / "run had problems" email for a run. */
+  async sendRunSummaryEmail(report: RunReport, date?: string): Promise<boolean> {
+    const { subject, text, html } = TraderAgent.buildRunSummaryEmail(report, date ?? new Date().toISOString().split("T")[0]);
+    return this.sendEmail(subject, text, html);
   }
 
   private async sendEmail(subject: string, text: string, html?: string): Promise<boolean> {

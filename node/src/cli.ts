@@ -15,6 +15,8 @@ import { nextBackfillYear, BACKFILL_START_YEAR, BACKFILL_END_YEAR } from "./doma
 import { logRunEvent, finalizeRun, currentRunDir, extractErrorSummary } from "./core/runLog";
 import { buildSignalsFromDir } from "./domains/financial/tools/signalBuilder";
 import { writeVerified } from "./core/safeWrite";
+import { readRunEvents } from "./core/runLog";
+import { buildRunReport, formatRunReportText } from "./core/runReport";
 import { evaluateRuns, dayString, type RunExpectation } from "./core/runCheck";
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
@@ -599,6 +601,39 @@ program
       console.error(`Model output was not valid JSON: ${e}`);
       console.error(output);
       process.exitCode = 1;
+    }
+  });
+
+program
+  .command("notify-summary")
+  .description(
+    "Email a run summary built from the run's logs, for runs with no new recommendations (\"no changes today\") " +
+      "or that didn't complete cleanly (\"run had problems\"). Deterministic, no model call."
+  )
+  .requiredOption("--dir <path>", "Run directory containing run.jsonl")
+  .option("--dry-run", "Print the summary instead of emailing it")
+  .action(async (opts: { dir: string; dryRun?: boolean }) => {
+    const events = readRunEvents(opts.dir);
+    if (events.length === 0) {
+      console.error(`notify-summary: no run events found in ${opts.dir}`);
+      process.exitCode = 1;
+      return;
+    }
+    const report = buildRunReport(events);
+    if (opts.dryRun) {
+      console.log(`[dry-run] Would email a ${report.status === "failed" ? "run-problems" : "no-changes"} summary:\n`);
+      console.log(formatRunReportText(report));
+      return;
+    }
+    const config = getConfig();
+    const db = new Db(config.getDatabasePath());
+    try {
+      const trader = new TraderAgent(db, config.getGmailAddress(), config.getGmailAppPassword(), config.getNotificationEmail());
+      const ok = await trader.sendRunSummaryEmail(report);
+      console.log(ok ? "Run summary email sent" : "Run summary email failed");
+      if (!ok) process.exitCode = 1;
+    } finally {
+      db.close();
     }
   });
 

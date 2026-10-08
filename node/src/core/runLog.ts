@@ -176,9 +176,12 @@ export function summarizeRun(events: RunEvent[], scriptExitCode: number | null =
   }
   if (model_calls.est_cost_usd != null) model_calls.est_cost_usd = Math.round(model_calls.est_cost_usd * 10000) / 10000;
 
+  // Prefer the explicit code; otherwise use the one the script itself logged at run_end.
+  const exitCode = scriptExitCode ?? (typeof end?.script_exit_code === "number" ? end.script_exit_code : null);
+
   let status: RunStatus = "ok";
   if (steps.truncated > 0 || model_calls.truncated > 0) status = "degraded";
-  if (steps.failed > 0 || (scriptExitCode != null && scriptExitCode !== 0)) status = "failed";
+  if (steps.failed > 0 || (exitCode != null && exitCode !== 0)) status = "failed";
 
   const started = start ? Date.parse(start.ts) : NaN;
   const ended = end ? Date.parse(end.ts) : NaN;
@@ -190,7 +193,7 @@ export function summarizeRun(events: RunEvent[], scriptExitCode: number | null =
     ended_at: end?.ts ?? null,
     duration_ms: isFinite(started) && isFinite(ended) ? ended - started : null,
     status,
-    script_exit_code: scriptExitCode,
+    script_exit_code: exitCode,
     steps,
     failed_steps,
     truncated_steps,
