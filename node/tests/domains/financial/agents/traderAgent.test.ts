@@ -333,3 +333,40 @@ describe("TraderAgent.buildRunSummaryEmail", () => {
     expect(TraderAgent.buildRunSummaryEmail(baseReport({ status: "degraded" }), "2026-10-08").subject).toContain("(with warnings)");
   });
 });
+
+describe("run summary in the recommendations email", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const report: any = {
+    script: "financial-daily",
+    dryRun: false,
+    status: "ok",
+    startedAt: "2026-10-08T15:30:00Z",
+    durationMs: 252000,
+    steps: { total: 9, ok: 3, failed: 0, truncated: 0, skipped: 6, retried: 0 },
+    subjects: 3,
+    skipped: [{ skill: "swing-trading-large-cap", subject: "INTU", reason: "no trigger: RSI 40 inside 30-70" }],
+    ran: 2,
+    calls: [],
+    totals: { calls: 2, inputTokens: 7000, outputTokens: 3300, costUsd: 0.05 },
+    failures: [],
+    truncations: [],
+    scriptExitCode: null,
+  };
+  const buys = [makeSignal("NFLX")];
+
+  it("appends the job run summary to both the text and HTML bodies", () => {
+    const text = TraderAgent.buildEmailBody(buys, [], [], [], {}, {}, "2026-10-08", report);
+    const html = TraderAgent.buildEmailHtml(buys, [], [], [], {}, {}, "2026-10-08", report);
+    expect(text).toContain("JOB RUN SUMMARY");
+    expect(text).toContain("est. cost $0.05");
+    expect(html).toContain("Job run summary");
+    expect(html).toContain("INTU swing-trading-large-cap: no trigger: RSI 40 inside 30-70");
+  });
+
+  it("leaves the email unchanged when there is no run report", () => {
+    const text = TraderAgent.buildEmailBody(buys, [], [], [], {}, {}, "2026-10-08");
+    const html = TraderAgent.buildEmailHtml(buys, [], [], [], {}, {}, "2026-10-08");
+    expect(text).not.toContain("JOB RUN SUMMARY");
+    expect(html).not.toContain("Job run summary");
+  });
+});

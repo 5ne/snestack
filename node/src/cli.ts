@@ -671,7 +671,8 @@ program
     "Path to a JSON file with an array of {ticker, recommendation, confidence, reasoning, fromWatchlist?}. Reads stdin if omitted."
   )
   .option("--dry-run", "Print what would be sent and exit — no email, nothing recorded in the signals table")
-  .action(async (opts: { file?: string; dryRun?: boolean }) => {
+  .option("--run-dir <dir>", "Append a summary of this run (from its run.jsonl) to the email; defaults to $SNESTACK_RUN_DIR")
+  .action(async (opts: { file?: string; dryRun?: boolean; runDir?: string }) => {
     if (opts.dryRun) {
       const raw = opts.file ? fs.readFileSync(opts.file, "utf8") : fs.readFileSync(0, "utf8");
       const preview = JSON.parse(raw) as Array<{ ticker: string; recommendation: string; confidence: number }>;
@@ -708,7 +709,9 @@ program
         config.getGmailAppPassword(),
         config.getNotificationEmail()
       );
-      const ok = await trader.sendBatchEmail(signals);
+      const runDir = opts.runDir ?? currentRunDir();
+      const events = runDir ? readRunEvents(runDir) : [];
+      const ok = await trader.sendBatchEmail(signals, {}, {}, undefined, events.length ? buildRunReport(events) : undefined);
       console.log(ok ? `Email sent: ${signals.length} signals` : "Email failed (signals not recorded)");
       if (!ok) process.exitCode = 1;
     } finally {
