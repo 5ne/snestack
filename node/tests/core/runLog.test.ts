@@ -7,6 +7,7 @@ import {
   summarizeRun,
   finalizeRun,
   estimateCostUsd,
+  extractErrorSummary,
   type RunEvent,
 } from "../../src/core/runLog";
 
@@ -67,7 +68,7 @@ describe("runLog", () => {
     ]);
     expect(summary.status).toBe("ok");
     expect(summary.script).toBe("financial-daily");
-    expect(summary.steps).toEqual({ total: 2, ok: 2, failed: 0, truncated: 0, skipped: 0 });
+    expect(summary.steps).toEqual({ total: 2, ok: 2, failed: 0, truncated: 0, skipped: 0, retried: 0 });
     expect(summary.model_calls.count).toBe(2);
     expect(summary.model_calls.max_latency_ms).toBe(4000);
     expect(summary.model_calls.by_model["claude-sonnet-5-5"].calls).toBe(1);
@@ -97,6 +98,20 @@ describe("runLog", () => {
     expect(summary.status).toBe("degraded");
     expect(summary.truncated_steps).toEqual([{ step: "run-skill:a", subject: "NFLX" }]);
     expect(summary.model_calls.truncated).toBe(1);
+  });
+
+  it("counts a retried step by its latest attempt, so a recovered failure doesn't fail the run", () => {
+    const summary = summarizeRun([
+      ev("run_start", { script: "x" }),
+      ev("step", { step: "run-skill:a", subject: "MSFT", status: "failed", exit_code: 5, error: "output file was empty" }),
+      ev("step", { step: "run-skill:a", subject: "MSFT", status: "ok", exit_code: 0 }),
+      ev("step", { step: "run-skill:a", subject: "GOOG", status: "failed", exit_code: 1 }),
+      ev("step", { step: "run-skill:a", subject: "GOOG", status: "failed", exit_code: 1 }),
+      ev("run_end", {}),
+    ]);
+    expect(summary.steps).toEqual({ total: 2, ok: 1, failed: 1, truncated: 0, skipped: 0, retried: 2 });
+    expect(summary.failed_steps.map((f) => f.subject)).toEqual(["GOOG"]);
+    expect(summary.status).toBe("failed");
   });
 
   it("treats a nonzero script exit code as failed even with no failed step (e.g. set -e abort)", () => {
@@ -130,5 +145,26 @@ describe("runLog", () => {
     expect(summary.ended_at).not.toBeNull();
     expect(JSON.parse(fs.readFileSync(path.join(dir, "run.json"), "utf8")).script).toBe("financial-daily");
     expect(fs.existsSync(path.join(dir, "run.json.tmp"))).toBe(false);
+  });
+});
+
+describe("extractErrorSummary", () => {
+  it("skips routine info lines and returns the real failure", () => {
+    const log = [
+      '2026-10-07 08:30:04 [info] Fundamentals: INTU PE=19.33 {"label":"EquityAgent"}',
+      '2026-10-07 08:30:06 [info] Quote: INTU @ $289.81 {"label":"QuoteAgent"}',
+      'run-skill failed: Error: 400 {"message":"Your credit balance is too low"}',
+    ].join("\n");
+    expect(extractErrorSummary(log)).toBe('run-skill failed: Error: 400 {"message":"Your credit balance is too low"}');
+  });
+  it("keeps only the last few meaningful lines", () => {
+    expect(extractErrorSummary("a\nb\nc\nd\ne")).toBe("c | d | e");
+  });
+  it("falls back to whatever is there when everything is info, and caps the length", () => {
+    expect(extractErrorSummary("[info] only info")).toBe("[info] only info");
+    expect(extractErrorSummary("x".repeat(1000), 50)).toHaveLength(50);
+  });
+  it("returns null for an empty log", () => {
+    expect(extractErrorSummary("  \n\n")).toBeNull();
   });
 });

@@ -5,3 +5,9 @@
  */
 export type ContextTool = (subject: string) => Promise<unknown>;
 export type ContextToolMap = Record<string, ContextTool>;
+
+/**
+ * Optional: a domain's facts for deciding whether a skill is worth running now
+ * (see core/gate.ts). Exported next to `contextTools` from the domain's module.
+ */
+export type GateFactsFn = (skillName: string, subject: string) => Promise<import("./gate").GateFacts>;

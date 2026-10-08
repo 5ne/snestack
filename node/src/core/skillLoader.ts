@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as yaml from "js-yaml";
+import type { GateConfig } from "./gate";
 
 export interface SkillFrontmatter {
   name?: string;
@@ -10,6 +11,10 @@ export interface SkillFrontmatter {
   status?: string;
   /** Cost tier for this skill's model call: "cheap" | "normal" | "expensive". Defaults to "normal". */
   model?: string;
+  /** When to run this skill at all — see core/gate.ts. Omit to always run. */
+  gate?: GateConfig;
+  /** The skill must end with a `VERDICT: LABEL | confidence | reasoning` line — see core/verdict.ts. */
+  verdict?: boolean;
   /** Output token budget for this skill's model call. Defaults to runPrompt's own default (8000) if unset. */
   maxTokens?: number;
   [key: string]: unknown;

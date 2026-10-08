@@ -14,7 +14,7 @@ function summary(over: Partial<RunSummary> = {}): RunSummary {
     duration_ms: 300000,
     status: "ok",
     script_exit_code: 0,
-    steps: { total: 3, ok: 3, failed: 0, truncated: 0, skipped: 0 },
+    steps: { total: 3, ok: 3, failed: 0, truncated: 0, skipped: 0, retried: 0 },
     failed_steps: [],
     truncated_steps: [],
     model_calls: { count: 3, errors: 0, truncated: 0, input_tokens: 1, output_tokens: 1, max_latency_ms: 1, est_cost_usd: 0.5, by_model: {} },
@@ -75,7 +75,7 @@ describe("evaluateRuns", () => {
       "2026-10-07",
       summary({
         status: "failed",
-        steps: { total: 3, ok: 2, failed: 1, truncated: 0, skipped: 0 },
+        steps: { total: 3, ok: 2, failed: 1, truncated: 0, skipped: 0, retried: 0 },
         failed_steps: [{ step: "run-skill:long-term-quality", subject: "RIVN", exit_code: 1, error: "401 invalid key" }],
       })
     );

@@ -319,6 +319,17 @@ export class Db {
       .all(ticker, days) as unknown as SignalRow[];
   }
 
+  /** The most recent signal for a ticker whose reasoning starts with `prefix` (e.g. "[Long-term]"). */
+  getLastSignalWithPrefix(ticker: string, prefix: string): SignalRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM signals
+         WHERE ticker = ? AND substr(reasoning, 1, length(?)) = ?
+         ORDER BY date DESC LIMIT 1`
+      )
+      .get(ticker, prefix, prefix) as unknown as SignalRow | undefined;
+  }
+
   getAllSignals(limit = 100): SignalRow[] {
     return this.db
       .prepare("SELECT * FROM signals ORDER BY created_at DESC LIMIT ?")

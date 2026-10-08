@@ -6,6 +6,8 @@ import type { ContextToolMap } from "../../core/contextTools";
 import { QuoteAgent } from "./agents/quoteAgent";
 import { EquityAgent } from "./agents/equityAgent";
 
+export { gateFacts } from "./gate";
+
 /**
  * The financial domain's contextTools map — what the skill frontmatter's
  * `requires: [quote, fundamentals, brain]` actually resolves to. core/ never

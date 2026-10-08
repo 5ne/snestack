@@ -1,7 +1,10 @@
 import * as fs from "fs";
 import * as path from "path";
 import { loadSkillFile } from "./skillLoader";
-import { getDomainConfig, loadContextTools } from "./domainRegistry";
+import { getDomainConfig, loadContextTools, loadGateFacts } from "./domainRegistry";
+import { evaluateGate, type GateDecision } from "./gate";
+import { parseVerdict, type Verdict } from "./verdict";
+import { logRunEvent } from "./runLog";
 import { runPrompt } from "./executor";
 import { getConfig, MODEL_TIERS, type ModelTier } from "./config";
 import { getLogger } from "./logger";
@@ -21,6 +24,10 @@ export interface SkillRunResult {
   output: string;
   stopReason: string | null;
   outputTokensUsed: number | null;
+  /** True if the skill's frontmatter says it must end with a VERDICT line. */
+  verdictRequired: boolean;
+  /** The parsed VERDICT line, if the output has a valid one. */
+  verdict: Verdict | null;
 }
 
 export interface AssembledSkillPrompt {
@@ -30,6 +37,8 @@ export interface AssembledSkillPrompt {
   tier: ModelTier;
   /** Output token budget from the skill's frontmatter `maxTokens:`, if set. */
   maxTokens?: number;
+  /** Whether the skill must end with a VERDICT line (frontmatter `verdict: true`). */
+  verdictRequired: boolean;
 }
 
 /** Where this domain's skill markdown actually lives on disk (always under src/, even in a compiled build). */
@@ -102,7 +111,13 @@ export async function assembleSkillPrompt(
     [...contextSections, ...referenceSections].join("\n\n"),
   ].join("\n");
 
-  return { systemPrompt: GENERIC_SYSTEM_PROMPT, userPrompt, tier: tier as ModelTier, maxTokens: frontmatter.maxTokens };
+  return {
+    systemPrompt: GENERIC_SYSTEM_PROMPT,
+    userPrompt,
+    tier: tier as ModelTier,
+    maxTokens: frontmatter.maxTokens,
+    verdictRequired: frontmatter.verdict === true,
+  };
 }
 
 /**
@@ -116,7 +131,7 @@ export async function runSkill(
   skillName: string,
   subject: string
 ): Promise<SkillRunResult> {
-  const { systemPrompt, userPrompt, tier, maxTokens } = await assembleSkillPrompt(domain, skillName, subject);
+  const { systemPrompt, userPrompt, tier, maxTokens, verdictRequired } = await assembleSkillPrompt(domain, skillName, subject);
   logger.debug(`Running skill "${domain}/${skillName}" for ${subject} (tier: ${tier})`);
   const { output, stopReason, outputTokensUsed } = await runPrompt(
     getConfig().getClaudeApiKey(),
@@ -125,5 +140,37 @@ export async function runSkill(
     { tier, maxTokens, label: `${domain}/${skillName} ${subject}` }
   );
 
-  return { domain, skill: skillName, subject, output, stopReason, outputTokensUsed };
+  return {
+    domain,
+    skill: skillName,
+    subject,
+    output,
+    stopReason,
+    outputTokensUsed,
+    verdictRequired,
+    verdict: parseVerdict(output),
+  };
+}
+
+/**
+ * Decide, with no model call, whether this skill is worth running for this
+ * subject right now, using the skill's own `gate:` triggers and the domain's
+ * facts. Fails open: with no gate, no facts, or any error, the skill runs.
+ * The decision is recorded in the run log either way.
+ */
+export async function evaluateSkillGate(domain: string, skillName: string, subject: string): Promise<GateDecision> {
+  let decision: GateDecision;
+  try {
+    const skillPath = path.join(resolveSkillsDir(getDomainConfig(domain).skillsDir), `${skillName}.md`);
+    const { frontmatter } = loadSkillFile(skillPath);
+    const factsFn = frontmatter.gate ? await loadGateFacts(domain) : null;
+    decision =
+      frontmatter.gate && factsFn
+        ? evaluateGate(frontmatter.gate, await factsFn(skillName, subject))
+        : { run: true, reasons: ["no gate configured"] };
+  } catch (e) {
+    decision = { run: true, reasons: [`gate check failed (${String(e).slice(0, 120)}); running anyway`] };
+  }
+  logRunEvent("gate", { skill: `${domain}/${skillName}`, subject, run: decision.run, reasons: decision.reasons });
+  return decision;
 }

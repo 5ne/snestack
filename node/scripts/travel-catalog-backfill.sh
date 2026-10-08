@@ -62,18 +62,15 @@ if [ "$MODE" = "plan" ]; then
 fi
 
 BRAIN_ROOT="$(node -e 'console.log(require("./dist/core/config").getConfig().getBrainRoot())')"
-RUN_DIR="$BRAIN_ROOT/travel/_runs/$(date +%Y-%m-%d)"
-CATALOG_ARGS=("$YEAR")
-if [ "$MODE" = "dry-run" ]; then
-  RUN_DIR="${RUN_DIR}-dryrun"
-  rm -rf "$RUN_DIR"
-  CATALOG_ARGS+=(--out-dir "$RUN_DIR/draft")
-fi
+PUBLISH_DIR="$BRAIN_ROOT/travel/_runs/$(date +%Y-%m-%d)"
+[ "$MODE" = "dry-run" ] && PUBLISH_DIR="${PUBLISH_DIR}-dryrun"
 
-rl_init travel-backfill "$RUN_DIR" $([ "$MODE" = "dry-run" ] && echo --dry-run)
+rl_init travel-backfill "$PUBLISH_DIR" $([ "$MODE" = "dry-run" ] && echo --dry-run)   # sets $RUN_DIR (local staging)
 trap rl_finish EXIT
+CATALOG_ARGS=("$YEAR")
+[ "$MODE" = "dry-run" ] && CATALOG_ARGS+=(--out-dir "$RUN_DIR/draft")
 
-echo "$(date '+%F %T') Travel backfill: cataloging $YEAR (mode: $MODE, run dir: $RUN_DIR)..."
+echo "$(date '+%F %T') Travel backfill: cataloging $YEAR (mode: $MODE, run dir: $PUBLISH_DIR)..."
 RL_ERR_FILE="$RUN_DIR/catalog.log" rl_step travel-catalog "$YEAR" \
   node dist/cli.js travel catalog "${CATALOG_ARGS[@]}" > "$RUN_DIR/catalog.out" 2> "$RUN_DIR/catalog.log" || rc=$?
 cat "$RUN_DIR/catalog.out"

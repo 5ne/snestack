@@ -4,6 +4,12 @@ domain: financial
 requires: [quote, fundamentals, brain]
 model: normal
 references: [quality-bar]
+# Only worth a call when RSI is at an extreme — in between, the answer is always "no action".
+# The thresholds mirror references/quality-bar.md; keep them in sync if you tune that file.
+gate:
+  rsiBelow: 30
+  rsiAbove: 70
+verdict: true
 ---
 
 # Skill: Swing Trading (Large-Cap, Highly Profitable Only)
@@ -31,6 +37,12 @@ If a ticker fails this filter, stop here — it doesn't get a swing trade recomm
 ## Output
 
 A tactical BUY / SELL / no-action call for this ticker, clearly labeled as a swing-trade recommendation (not a long-term one), with the RSI level and eligibility check cited.
+
+**Final line (required, machine-read by automation):** end the response with exactly one line, in plain text with no markdown formatting:
+
+`VERDICT: <BUY|SELL|NONE> | <confidence 0.00-1.00> | <one or two sentences of reasoning>`
+
+Use BUY for an oversold entry and SELL for an overbought exit or trim. Use NONE when the ticker fails the eligibility filter or there is otherwise no swing trade to report, since NONE keeps it out of the email.
 
 ## Relationship to long-term-quality.md
 

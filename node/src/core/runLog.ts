@@ -38,7 +38,8 @@ export interface RunSummary {
   duration_ms: number | null;
   status: RunStatus;
   script_exit_code: number | null;
-  steps: { total: number; ok: number; failed: number; truncated: number; skipped: number };
+  /** Counted by each step's latest attempt; `retried` is how many steps needed more than one attempt. */
+  steps: { total: number; ok: number; failed: number; truncated: number; skipped: number; retried: number };
   failed_steps: FailedStep[];
   truncated_steps: Array<{ step: string; subject: string | null }>;
   model_calls: {
@@ -114,10 +115,19 @@ export function summarizeRun(events: RunEvent[], scriptExitCode: number | null =
   const start = mine.find((e) => e.event === "run_start");
   const end = [...mine].reverse().find((e) => e.event === "run_end");
 
-  const steps = { total: 0, ok: 0, failed: 0, truncated: 0, skipped: 0 };
+  const steps = { total: 0, ok: 0, failed: 0, truncated: 0, skipped: 0, retried: 0 };
   const failed_steps: FailedStep[] = [];
   const truncated_steps: Array<{ step: string; subject: string | null }> = [];
+  // A step retried after a failure counts by its latest attempt, so a recovered failure isn't a failed run.
+  const latest = new Map<string, RunEvent>();
+  const attempts = new Map<string, number>();
   for (const e of mine.filter((e) => e.event === "step")) {
+    const key = `${e.step}|${e.subject ?? ""}`;
+    latest.set(key, e);
+    attempts.set(key, (attempts.get(key) ?? 0) + 1);
+  }
+  steps.retried = [...attempts.values()].filter((n) => n > 1).length;
+  for (const e of latest.values()) {
     steps.total++;
     const status = String(e.status);
     if (status === "ok") steps.ok++;
@@ -197,4 +207,19 @@ export function finalizeRun(dir: string, scriptExitCode: number | null = null): 
   fs.writeFileSync(tmp, JSON.stringify(summary, null, 2) + "\n");
   fs.renameSync(tmp, target);
   return summary;
+}
+
+/**
+ * A short, useful error string from a step's stderr log: the last few lines that
+ * aren't routine info/debug logging (where the actual failure message lives),
+ * capped to the end of the text. Null if the log is empty.
+ */
+export function extractErrorSummary(text: string, maxChars = 400): string | null {
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const meaningful = lines.filter((l) => !/\[(info|debug|verbose)\]/.test(l));
+  const picked = (meaningful.length ? meaningful : lines).slice(-3).join(" | ");
+  return picked ? picked.slice(-maxChars) : null;
 }

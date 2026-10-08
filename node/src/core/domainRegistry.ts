@@ -1,6 +1,6 @@
 import * as path from "path";
 import domainsConfig from "../config/domains.json";
-import type { ContextToolMap } from "./contextTools";
+import type { ContextToolMap, GateFactsFn } from "./contextTools";
 
 export interface DomainConfig {
   /** Where this domain's skill markdown files live, relative to src/. */
@@ -27,4 +27,12 @@ export async function loadContextTools(domain: string): Promise<ContextToolMap> 
   const modulePath = path.join(__dirname, "..", cfg.contextToolsModule);
   const mod = (await import(modulePath)) as { contextTools: ContextToolMap };
   return mod.contextTools;
+}
+
+/** A domain's optional `gateFacts` function, or null if it doesn't define one. */
+export async function loadGateFacts(domain: string): Promise<GateFactsFn | null> {
+  const cfg = getDomainConfig(domain);
+  const modulePath = path.join(__dirname, "..", cfg.contextToolsModule);
+  const mod = (await import(modulePath)) as { gateFacts?: GateFactsFn };
+  return mod.gateFacts ?? null;
 }

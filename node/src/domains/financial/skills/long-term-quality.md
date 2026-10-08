@@ -4,6 +4,16 @@ domain: financial
 requires: [quote, fundamentals, brain]
 model: normal
 references: [quality-bar]
+# Run only when something worth a fresh look has happened: RSI at a level that matters
+# for adds (under 40) or stretched (over 70), a 5%+ move since the last run, a new
+# Morningstar report or brain-file edit, or it has been a week. Otherwise skip the call.
+gate:
+  rsiBelow: 40
+  rsiAbove: 70
+  priceMovePct: 5
+  maxAgeDays: 7
+  inputsUpdated: true
+verdict: true
 ---
 
 # Skill: Long-Term Quality Investing
@@ -31,6 +41,12 @@ references: [quality-bar]
 ## Output
 
 A recommendation for this ticker under the long-term strategy — BUY-more / HOLD / TRIM / SELL — with one paragraph of reasoning tracing back to steps 1–6, and a note on whether this changes anything in the ticker's brain file (a thesis update, a new red flag worth recording).
+
+**Final line (required, machine-read by automation):** end the response with exactly one line, in plain text with no markdown formatting:
+
+`VERDICT: <BUY|SELL|HOLD> | <confidence 0.00-1.00> | <one or two sentences of reasoning>`
+
+Map this skill's own vocabulary onto those three labels: BUY-more -> BUY, TRIM or SELL -> SELL, HOLD -> HOLD. The confidence is your honest read of how strongly the reasoning supports the call.
 
 ## Relationship to swing-trading-large-cap.md
 

@@ -6,13 +6,15 @@ import { getConfig } from "./core/config";
 import { setupInteractive, validateEnv } from "./core/setup";
 import { organizeStagedReports } from "./domains/financial/tools/reportOrganizer";
 import { Db } from "./core/db";
-import { runSkill, assembleSkillPrompt } from "./core/runSkill";
+import { runSkill, assembleSkillPrompt, evaluateSkillGate } from "./core/runSkill";
 import { runPrompt } from "./core/executor";
 import { authorizeGoogleCalendar } from "./domains/calendar/setup";
 import { authorizeGmail } from "./domains/travel/setup";
 import { parseMultiFileOutput, writeStagedCatalogFiles, writeCatalogFilesToDir } from "./domains/travel/tools/fileWriter";
 import { nextBackfillYear, BACKFILL_START_YEAR, BACKFILL_END_YEAR } from "./domains/travel/tools/backfill";
-import { logRunEvent, finalizeRun, currentRunDir } from "./core/runLog";
+import { logRunEvent, finalizeRun, currentRunDir, extractErrorSummary } from "./core/runLog";
+import { buildSignalsFromDir } from "./domains/financial/tools/signalBuilder";
+import { writeVerified } from "./core/safeWrite";
 import { evaluateRuns, dayString, type RunExpectation } from "./core/runCheck";
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
@@ -310,12 +312,30 @@ program
     "Run a named skill against a subject through the core harness " +
       "(e.g. run-skill financial long-term-quality NVDA)"
   )
-  .action(async (domain: string, skill: string, subject: string) => {
+  .option(
+    "--gated",
+    "Apply the skill's own `gate:` triggers first and exit 4 without a model call when none fire (see core/gate.ts)"
+  )
+  .option(
+    "--out <file>",
+    "Write the write-up to this file (and read it back to confirm) instead of stdout. Exit 5 if the file doesn't hold what was written."
+  )
+  .action(async (domain: string, skill: string, subject: string, opts: { gated?: boolean; out?: string }) => {
     if (!validateEnv()) {
       process.exitCode = 1;
       return;
     }
     try {
+      if (opts.gated) {
+        const decision = await evaluateSkillGate(domain, skill, subject);
+        if (!decision.run) {
+          // Exit code 4 = skipped by the gate (not an error); automation records it as skipped.
+          console.error(`gate: skipped ${domain}/${skill} ${subject} - ${decision.reasons.join("; ")}`);
+          process.exitCode = 4;
+          return;
+        }
+        console.error(`gate: running ${domain}/${skill} ${subject} - ${decision.reasons.join("; ")}`);
+      }
       const result = await runSkill(domain, skill, subject);
       if (!result.output.trim()) {
         console.error(
@@ -324,8 +344,23 @@ program
         process.exitCode = 1;
         return;
       }
-      console.log(`\n=== ${result.domain}/${result.skill} — ${result.subject} ===\n`);
-      console.log(result.output);
+      const text = `\n=== ${result.domain}/${result.skill} — ${result.subject} ===\n\n${result.output}\n`;
+      if (opts.out) {
+        const problem = writeVerified(opts.out, text);
+        if (problem) {
+          // Exit 5 = the model call worked but its output didn't land on disk; callers may retry.
+          console.error(`run-skill failed: ${problem}`);
+          process.exitCode = 5;
+          return;
+        }
+      } else {
+        process.stdout.write(text);
+      }
+      if (result.verdictRequired && !result.verdict) {
+        console.error('run-skill failed: the output has no valid "VERDICT: LABEL | confidence | reasoning" line');
+        process.exitCode = 1;
+        return;
+      }
       if (result.stopReason === "max_tokens") {
         // Exit code 3 = output kept but cut off, so automation can tell it from a clean run or a failure.
         console.error(`run-skill warning: output truncated at max_tokens (${result.outputTokensUsed} output tokens)`);
@@ -461,7 +496,7 @@ travel
 program
   .command("distill-signals")
   .description(
-    "Turn a directory of run-skill output files into a notify-ready signals JSON array, " +
+    "[No longer used by daily-analysis.sh — see build-signals] Turn a directory of run-skill output files into a notify-ready signals JSON array, " +
       "via a single Claude call over all of them at once. Reads every " +
       "*-long-term-quality.md / *-swing-trading-large-cap.md file in --dir, plus that " +
       "dir's data-dump.json (if present) for isWatchlist flags. Prints the JSON array to " +
@@ -568,6 +603,29 @@ program
   });
 
 program
+  .command("build-signals")
+  .description(
+    "Build the notify-ready signals array from a run directory by reading each skill write-up's trailing " +
+      "`VERDICT:` line. Deterministic, no model call. Prints the JSON array to stdout; files with a missing " +
+      "or invalid verdict are listed on stderr and make the command exit 1 (the valid signals are still printed)."
+  )
+  .requiredOption("--dir <path>", "Run directory containing *-long-term-quality.md / *-swing-trading-large-cap.md files")
+  .action((opts: { dir: string }) => {
+    if (!fs.existsSync(opts.dir)) {
+      console.error(`Directory not found: ${opts.dir}`);
+      process.exitCode = 1;
+      return;
+    }
+    const result = buildSignalsFromDir(opts.dir);
+    console.log(JSON.stringify(result.signals, null, 2));
+    console.error(
+      `build-signals: ${result.signals.length} signals, ${result.noSignal.length} with nothing to report, ${result.errors.length} errors`
+    );
+    result.errors.forEach((e) => console.error(`  ERROR ${e}`));
+    if (result.errors.length > 0) process.exitCode = 1;
+  });
+
+program
   .command("notify")
   .description(
     "Send a batch email for a set of signals and record them in signal history. " +
@@ -666,9 +724,10 @@ runLog
       if (opts.status) fields.status = opts.status;
       if (opts.exitCode !== undefined) fields.exit_code = parseInt(opts.exitCode, 10);
       if (opts.durationMs !== undefined) fields.duration_ms = parseInt(opts.durationMs, 10);
-      if (opts.errorFile && opts.status !== "ok" && opts.status !== "skipped" && fs.existsSync(opts.errorFile)) {
-        const text = fs.readFileSync(opts.errorFile, "utf8");
-        fields.error = text.slice(-500).trim() || null;
+      if (opts.errorFile && opts.status !== "ok" && fs.existsSync(opts.errorFile)) {
+        const summary = extractErrorSummary(fs.readFileSync(opts.errorFile, "utf8"));
+        // "error" is reserved for real failures; skipped/truncated steps get "detail" (e.g. the gate's reason).
+        fields[opts.status === "failed" ? "error" : "detail"] = summary;
       }
       logRunEvent(type, fields, opts.dir ?? currentRunDir());
     }
