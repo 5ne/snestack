@@ -45,21 +45,21 @@ npm run dev -- organize-reports
 ./scripts/daily-analysis.sh
 ```
 
-Four cron jobs together make up the split-cadence pipeline (`npm run build` first against each — all four scripts run the built CLI, not `npm run dev`). Times below are US/Eastern market hours; adjust for your own timezone and trading hours:
+Four cron jobs together make up the split-cadence pipeline (`npm run build` first against each — all four scripts run the built CLI, not `npm run dev`). The market trades on US/Eastern hours regardless of where the cron daemon runs, so the times below are given in `America/Los_Angeles` (Pacific) but converted to still land within 9:30am-4pm ET market hours — adjust if your own timezone differs:
 
-| Script | Cadence | What it does |
+| Script | Cadence (Pacific) | What it does |
 | --- | --- | --- |
-| `scripts/data-refresh-intraday.sh` | every 30-60 min, market hours | Live quote price only (skips fundamentals) |
-| `scripts/data-refresh-daily.sh` | nightly | Quote + RSI/MA + Finnhub fundamentals; Morningstar re-parse on Mondays only |
-| `scripts/daily-analysis.sh` | nightly, after `data-refresh-daily.sh` | `long-term-quality` skill for every ticker, email + signal history |
-| `scripts/swing-check.sh` | hourly, market hours | `swing-trading-large-cap` skill for every ticker, its own email + signal history |
+| `scripts/data-refresh-intraday.sh` | every 30 min, 6:30am-1pm PT (market hours) | Live quote price only (skips fundamentals) |
+| `scripts/data-refresh-daily.sh` | 2pm PT, nightly | Quote + RSI/MA + Finnhub fundamentals; Morningstar re-parse on Mondays only |
+| `scripts/daily-analysis.sh` | 2:30pm PT, nightly, after `data-refresh-daily.sh` | `long-term-quality` skill for every ticker, email + signal history |
+| `scripts/swing-check.sh` | hourly, 7am-1pm PT (market hours) | `swing-trading-large-cap` skill for every ticker, its own email + signal history |
 
 ```cron
 # crontab -e  (adjust paths; each line's CRON_TZ sets that line's own timezone)
-CRON_TZ=America/New_York */30 9-16 * * 1-5 cd <repo>/node && ./scripts/data-refresh-intraday.sh >> logs/data-refresh-intraday.cron.log 2>&1
-CRON_TZ=America/New_York 0 17 * * 1-5 cd <repo>/node && ./scripts/data-refresh-daily.sh >> logs/data-refresh-daily.cron.log 2>&1
-CRON_TZ=America/New_York 30 17 * * 1-5 cd <repo>/node && ./scripts/daily-analysis.sh >> logs/daily-analysis.cron.log 2>&1
-CRON_TZ=America/New_York 0 10-16 * * 1-5 cd <repo>/node && ./scripts/swing-check.sh >> logs/swing-check.cron.log 2>&1
+CRON_TZ=America/Los_Angeles */30 6-13 * * 1-5 cd <repo>/node && ./scripts/data-refresh-intraday.sh >> logs/data-refresh-intraday.cron.log 2>&1
+CRON_TZ=America/Los_Angeles 0 14 * * 1-5 cd <repo>/node && ./scripts/data-refresh-daily.sh >> logs/data-refresh-daily.cron.log 2>&1
+CRON_TZ=America/Los_Angeles 30 14 * * 1-5 cd <repo>/node && ./scripts/daily-analysis.sh >> logs/daily-analysis.cron.log 2>&1
+CRON_TZ=America/Los_Angeles 0 7-13 * * 1-5 cd <repo>/node && ./scripts/swing-check.sh >> logs/swing-check.cron.log 2>&1
 ```
 
 Each script supports `--dry-run` (runs everything but emails/records nothing, output goes to a `-dryrun` directory) and `--tickers A,B,C` (overrides the positions+watchlist default). `snestack run-check` summarizes recent runs across all four — see `node/src/core/runCheck.ts`.

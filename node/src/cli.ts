@@ -751,23 +751,25 @@ program
     // expectation back here if it's ever rescheduled.
     const expectations: RunExpectation[] = [
       {
+        // graceHour values below assume run-check runs on the same machine/timezone as cron —
+        // see node/README.md's cron table, given in America/Los_Angeles (Pacific).
         name: "financial",
         runsRoot: path.join(brainRoot, "financial", "signals"),
-        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: weekdays 8:30
-        graceHour: 10,
+        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: 2:30pm PT, after data-refresh-daily.sh
+        graceHour: 16,
         since: RUN_LOG_SINCE,
       },
       {
         name: "financial-daily-refresh",
         runsRoot: path.join(brainRoot, "financial", "runs", "data-refresh-daily"),
-        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: nightly, before financial-daily
-        graceHour: 8,
+        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: 2pm PT, nightly, before financial-daily
+        graceHour: 15,
         since: SPLIT_CADENCE_SINCE,
       },
       {
         name: "financial-intraday",
         runsRoot: path.join(brainRoot, "financial", "runs", "intraday"),
-        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: every 30-60 min, market hours
+        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: every 30 min, 6:30am-1pm PT (market hours)
         graceHour: 11, // a couple hours into market open before flagging a short day
         since: SPLIT_CADENCE_SINCE,
         minRunsPerDay: 3,
@@ -775,7 +777,7 @@ program
       {
         name: "financial-swing-check",
         runsRoot: path.join(brainRoot, "financial", "runs", "swing-check"),
-        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: hourly, market hours
+        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: hourly, 7am-1pm PT (market hours)
         graceHour: 11,
         since: SPLIT_CADENCE_SINCE,
         minRunsPerDay: 3,
