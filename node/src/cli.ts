@@ -13,7 +13,7 @@ import { authorizeGmail } from "./domains/travel/setup";
 import { parseMultiFileOutput, writeStagedCatalogFiles, writeCatalogFilesToDir } from "./domains/travel/tools/fileWriter";
 import { nextBackfillYear, BACKFILL_START_YEAR, BACKFILL_END_YEAR } from "./domains/travel/tools/backfill";
 import { logRunEvent, finalizeRun, currentRunDir } from "./core/runLog";
-import { evaluateRuns, dayString, type RunExpectation } from "./core/runCheck";
+import { evaluateRuns, checkCacheStaleness, dayString, type RunExpectation } from "./core/runCheck";
 import { defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
 import { resolveTickerUniverse } from "./domains/financial/cliHelpers";
@@ -731,12 +731,16 @@ runLog
 
 // Runs before this date aren't expected to have run.json (run logging didn't exist yet).
 const RUN_LOG_SINCE = "2026-10-07";
+// The split-cadence scripts (data-refresh-daily/intraday.sh, swing-check.sh) are new as of the
+// pipeline migration's Phase 6 — don't expect runs for them before that landed.
+const SPLIT_CADENCE_SINCE = "2026-10-09";
 
 program
   .command("run-check")
   .description(
     "Check recent automation runs for problems: missing or crashed runs, failed or truncated steps, model errors, " +
-      "cost spikes. Prints findings; exits 1 if any are errors. Meant for a person or a watcher agent to read."
+      "cost spikes, and (for the financial domain) stale cached data despite refreshes having run. Prints " +
+      "findings; exits 1 if any are errors. Meant for a person or a watcher agent to read."
   )
   .option("--days <n>", "How many days back to check, including today", "3")
   .option("--json", "Print findings as JSON")
@@ -753,8 +757,49 @@ program
         graceHour: 10,
         since: RUN_LOG_SINCE,
       },
+      {
+        name: "financial-daily-refresh",
+        runsRoot: path.join(brainRoot, "financial", "runs", "data-refresh-daily"),
+        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: nightly, before financial-daily
+        graceHour: 8,
+        since: SPLIT_CADENCE_SINCE,
+      },
+      {
+        name: "financial-intraday",
+        runsRoot: path.join(brainRoot, "financial", "runs", "intraday"),
+        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: every 30-60 min, market hours
+        graceHour: 11, // a couple hours into market open before flagging a short day
+        since: SPLIT_CADENCE_SINCE,
+        minRunsPerDay: 3,
+      },
+      {
+        name: "financial-swing-check",
+        runsRoot: path.join(brainRoot, "financial", "runs", "swing-check"),
+        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: hourly, market hours
+        graceHour: 11,
+        since: SPLIT_CADENCE_SINCE,
+        minRunsPerDay: 3,
+      },
     ];
     const findings = evaluateRuns({ now: new Date(), days: Math.max(1, parseInt(opts.days, 10) || 3), expectations });
+
+    const config = getConfig();
+    const db = new Db(config.getDatabasePath());
+    try {
+      const tickers = resolveTickerUniverse(db);
+      const ageMs = (fetchedAt: string | null): number | null => (fetchedAt ? Date.now() - Date.parse(fetchedAt) : null);
+      findings.push(
+        ...checkCacheStaleness({
+          now: new Date(),
+          tickers,
+          getLatestQuoteAge: (ticker) => ageMs(db.getLatestQuote(ticker)?.fetched_at ?? null),
+          getLatestFundamentalsAge: (ticker, source) => ageMs(db.getLatestFundamentals(ticker, source)?.fetched_at ?? null),
+        })
+      );
+    } finally {
+      db.close();
+    }
+
     if (opts.json) {
       console.log(JSON.stringify({ checked_at: new Date().toISOString(), ok: findings.length === 0, findings }, null, 2));
     } else if (findings.length === 0) {

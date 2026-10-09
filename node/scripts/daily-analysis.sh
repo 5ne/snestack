@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Nightly financial analysis: data-dump -> run-skill (both skills, every ticker)
-# -> distill-signals -> notify. This is the automated version of
-# prompts/daily-analysis.md, using `distill-signals` in place of a human/Claude-Code
-# session doing step 3 by hand. Every command here is a plain deterministic CLI
-# call (each with its own single Claude API call where noted) — no agentic
-# tool-use loop, so no elevated/unattended permissions are needed to run this
-# unattended from cron.
+# Nightly long-term-quality analysis: data-dump (cache snapshot + ticker
+# list) -> run-skill long-term-quality (every ticker) -> distill-signals ->
+# notify. Swing-trading now runs on its own, tighter cadence via
+# scripts/swing-check.sh — this script no longer calls that skill. This
+# script does NOT itself refresh the cache — scripts/data-refresh-daily.sh
+# is expected to run first (earlier in cron) and populate it; calling
+# data-refresh again here would just repeat the same live Finnhub fetch.
+# See the financial pipeline migration plan. Every command here is a plain
+# deterministic CLI call (each with its own single Claude API call where
+# noted) — no agentic tool-use loop, so no elevated/unattended permissions
+# are needed to run this unattended from cron.
 #
 # Each step's outcome, and every model call's tokens/latency/stop reason, is recorded
 # in <run dir>/run.jsonl and summarized in run.json (see src/core/runLog.ts). Model
@@ -58,7 +62,8 @@ rl_init financial-daily "$RUN_DIR" $([ "$DRY_RUN" -eq 1 ] && echo --dry-run)
 trap rl_finish EXIT
 echo "Run directory: $RUN_DIR (dry run: $DRY_RUN)"
 
-# Step 1: refresh quote/RSI/MA + fundamentals for every position/watchlist ticker.
+# Step 1: snapshot the cache (data-refresh-daily.sh is expected to have already
+# populated it tonight — see header) and get the ticker list from it.
 RL_ERR_FILE="$RUN_DIR/data-dump.log" rl_step data-dump all \
   node dist/cli.js data-dump > "$RUN_DIR/data-dump.json" 2> "$RUN_DIR/data-dump.log"
 
@@ -80,22 +85,21 @@ if [ -z "$TICKERS" ]; then
   exit 0
 fi
 
-# Step 2: run both skills for every ticker. Each call is its own Claude judgment.
+# Step 2: run the long-term-quality skill for every ticker. Each call is its own Claude judgment.
+SKILL=long-term-quality
 while IFS= read -r TICKER; do
   echo "Analyzing $TICKER..."
-  for SKILL in long-term-quality swing-trading-large-cap; do
-    OUT="$RUN_DIR/$TICKER-$SKILL.md"
-    ERR="$RUN_DIR/$TICKER-$SKILL.log"
-    rc=0
-    RL_ERR_FILE="$ERR" rl_step "run-skill:$SKILL" "$TICKER" \
-      node dist/cli.js run-skill financial "$SKILL" "$TICKER" > "$OUT.tmp" 2> "$ERR" || rc=$?
-    # Keep the write-up if it succeeded or was merely cut off; drop it (and any stale copy) on failure.
-    if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then mv "$OUT.tmp" "$OUT"; else rm -f "$OUT.tmp" "$OUT"; fi
-  done
+  OUT="$RUN_DIR/$TICKER-$SKILL.md"
+  ERR="$RUN_DIR/$TICKER-$SKILL.log"
+  rc=0
+  RL_ERR_FILE="$ERR" rl_step "run-skill:$SKILL" "$TICKER" \
+    node dist/cli.js run-skill financial "$SKILL" "$TICKER" > "$OUT.tmp" 2> "$ERR" || rc=$?
+  # Keep the write-up if it succeeded or was merely cut off; drop it (and any stale copy) on failure.
+  if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then mv "$OUT.tmp" "$OUT"; else rm -f "$OUT.tmp" "$OUT"; fi
 done <<< "$TICKERS"
 
 # Step 3: distill all of the successful write-ups into one signals array.
-if compgen -G "$RUN_DIR/*-long-term-quality.md" >/dev/null || compgen -G "$RUN_DIR/*-swing-trading-large-cap.md" >/dev/null; then
+if compgen -G "$RUN_DIR/*-long-term-quality.md" >/dev/null; then
   RL_ERR_FILE="$RUN_DIR/distill.log" rl_step distill all \
     node dist/cli.js distill-signals --dir "$RUN_DIR" > "$RUN_DIR/signals.json" 2> "$RUN_DIR/distill.log" || true
 else

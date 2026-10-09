@@ -40,11 +40,29 @@ npm run dev -- signals NVDA
 # ~/Documents/personal-brain/financial/reports/staging (override with SNESTACK_BRAIN_ROOT)
 npm run dev -- organize-reports
 
-# Full nightly pipeline (data-dump -> run-skill x2 per ticker -> distill-signals -> notify).
-# Point cron at this against the built CLI (`npm run build` first), e.g.:
-#   0 17 * * 1-5 cd <repo>/node && ./scripts/daily-analysis.sh >> logs/daily-analysis.cron.log 2>&1
+# Full nightly long-term-quality pipeline (data-dump -> run-skill long-term-quality
+# per ticker -> distill-signals -> notify).
 ./scripts/daily-analysis.sh
 ```
+
+Four cron jobs together make up the split-cadence pipeline (`npm run build` first against each — all four scripts run the built CLI, not `npm run dev`). Times below are US/Eastern market hours; adjust for your own timezone and trading hours:
+
+| Script | Cadence | What it does |
+| --- | --- | --- |
+| `scripts/data-refresh-intraday.sh` | every 30-60 min, market hours | Live quote price only (skips fundamentals) |
+| `scripts/data-refresh-daily.sh` | nightly | Quote + RSI/MA + Finnhub fundamentals; Morningstar re-parse on Mondays only |
+| `scripts/daily-analysis.sh` | nightly, after `data-refresh-daily.sh` | `long-term-quality` skill for every ticker, email + signal history |
+| `scripts/swing-check.sh` | hourly, market hours | `swing-trading-large-cap` skill for every ticker, its own email + signal history |
+
+```cron
+# crontab -e  (adjust paths; each line's CRON_TZ sets that line's own timezone)
+CRON_TZ=America/New_York */30 9-16 * * 1-5 cd <repo>/node && ./scripts/data-refresh-intraday.sh >> logs/data-refresh-intraday.cron.log 2>&1
+CRON_TZ=America/New_York 0 17 * * 1-5 cd <repo>/node && ./scripts/data-refresh-daily.sh >> logs/data-refresh-daily.cron.log 2>&1
+CRON_TZ=America/New_York 30 17 * * 1-5 cd <repo>/node && ./scripts/daily-analysis.sh >> logs/daily-analysis.cron.log 2>&1
+CRON_TZ=America/New_York 0 10-16 * * 1-5 cd <repo>/node && ./scripts/swing-check.sh >> logs/swing-check.cron.log 2>&1
+```
+
+Each script supports `--dry-run` (runs everything but emails/records nothing, output goes to a `-dryrun` directory) and `--tickers A,B,C` (overrides the positions+watchlist default). `snestack run-check` summarizes recent runs across all four — see `node/src/core/runCheck.ts`.
 
 `setup` is fully interactive — it prompts for each API key, validates the
 format, and writes `.env` for you, mirroring `snestack setup` in the Python
@@ -65,6 +83,8 @@ NODE_OPTIONS=--experimental-sqlite npm run test:coverage
 
 Lives outside the repo, in the shared Google Drive folder at `<SNESTACK_BRAIN_ROOT>/financial/snestack.db` — derived from `SNESTACK_BRAIN_ROOT` in `.env` (default `~/Documents/personal-brain`), not set independently. Point `SNESTACK_BRAIN_ROOT` at wherever your Drive folder actually syncs to (e.g. `~/Google Drive/My Drive/personal-brain`) and the db, brain, and reports all follow.
 
+A `fundamentals` table holds one cached row per `(ticker, as_of_date, source)` — `source` is `finnhub` or `morningstar`, kept as two independent rows rather than merged, since the two providers' figures aren't reconciled against each other. `quotes` has a `fetched_at` column alongside it. `data-refresh` (see "Skill harness" below) is the only thing that writes either table; everything else (`run-skill`, `data-dump`) only reads from them.
+
 ## Project Layout
 
 ```
@@ -77,7 +97,8 @@ node/
 │   │   └── domains.json         # registers each domain's skillsDir + contextToolsModule
 │   ├── domains/
 │   │   ├── financial/           # skills/, brain/ (external, see Database below), agents/,
-│   │   │                        # tools/, providers/, contextTools.ts
+│   │   │                        # tools/, providers/, contextTools.ts, dataRefresh.ts
+│   │   │                        # (tiered ingestion), cliHelpers.ts (shared ticker resolution)
 │   │   └── calendar/            # skills/, tools/, googleAuth.ts, setup.ts, contextTools.ts
 │   └── cli.ts
 └── tests/                       # Jest test suite (mirrors src/)
@@ -90,6 +111,14 @@ node/
 ```bash
 snestack run-skill financial long-term-quality NVDA
 snestack run-skill calendar daily-agenda today
+```
+
+For the financial domain, `run-skill`/`data-dump` never call Finnhub/Twelve Data/Morningstar themselves — they only read `snestack.db`'s cache (falling back to a live fetch, with a logged warning, only if the cache is missing or badly stale). `data-refresh --tier <intraday|daily|weekly>` is the one command that populates that cache:
+
+```bash
+snestack data-refresh --tier daily            # quote + RSI/MA + Finnhub fundamentals, all positions/watchlist
+snestack data-refresh --tier intraday --tickers NVDA,TSLA   # live price only, scoped to two tickers
+snestack data-refresh --tier weekly           # re-parse the current Morningstar PDF per ticker
 ```
 
 ### Calendar domain setup (Google Calendar, read-only)
