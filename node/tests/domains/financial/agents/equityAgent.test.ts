@@ -1,5 +1,7 @@
 import { EquityAgent } from "../../../../src/domains/financial/agents/equityAgent";
 import type { MorningstarData } from "../../../../src/domains/financial/tools/morningstarParser";
+import type { FundamentalsProvider } from "../../../../src/domains/financial/providers/types";
+import type { Db } from "../../../../src/core/db";
 
 describe("EquityAgent.detectRedFlags", () => {
   it("returns empty array for clean fundamentals", () => {
@@ -82,5 +84,49 @@ describe("EquityAgent.analyze (no PDF)", () => {
     const agent = new EquityAgent("/nonexistent/path");
     const result = await agent.safeAnalyze("FAKE");
     expect(result).toBeNull();
+  });
+});
+
+describe("EquityAgent.analyze persists to db", () => {
+  function makeProvider(data: MorningstarData): FundamentalsProvider {
+    return { getFundamentals: jest.fn().mockResolvedValue(data) };
+  }
+
+  function makeDb(): Db {
+    return { addFundamentals: jest.fn() } as unknown as Db;
+  }
+
+  it("calls db.addFundamentals with source 'morningstar' on a successful parse", async () => {
+    const provider = makeProvider({ pe_ratio: 28.4, debt_to_equity: 0.6, fcf: 5e9 });
+    const db = makeDb();
+    const agent = new EquityAgent(undefined, provider, db);
+
+    await agent.analyze("NVDA");
+
+    expect(db.addFundamentals).toHaveBeenCalledTimes(1);
+    const row = (db.addFundamentals as jest.Mock).mock.calls[0][0];
+    expect(row.ticker).toBe("NVDA");
+    expect(row.source).toBe("morningstar");
+    expect(row.pe_ratio).toBe(28.4);
+    expect(row.debt_to_equity).toBe(0.6);
+    expect(row.fcf).toBe(5e9);
+    expect(typeof row.red_flags).toBe("string"); // JSON-stringified array
+  });
+
+  it("does not call db.addFundamentals when no db is provided", async () => {
+    const provider = makeProvider({ pe_ratio: 28.4 });
+    const agent = new EquityAgent(undefined, provider);
+    await expect(agent.analyze("NVDA")).resolves.not.toBeNull();
+  });
+
+  it("does not call db.addFundamentals when the provider returns null", async () => {
+    const provider: FundamentalsProvider = { getFundamentals: jest.fn().mockResolvedValue(null) };
+    const db = makeDb();
+    const agent = new EquityAgent(undefined, provider, db);
+
+    const result = await agent.analyze("NVDA");
+
+    expect(result).toBeNull();
+    expect(db.addFundamentals).not.toHaveBeenCalled();
   });
 });

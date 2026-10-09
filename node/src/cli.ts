@@ -14,9 +14,11 @@ import { parseMultiFileOutput, writeStagedCatalogFiles, writeCatalogFilesToDir }
 import { nextBackfillYear, BACKFILL_START_YEAR, BACKFILL_END_YEAR } from "./domains/travel/tools/backfill";
 import { logRunEvent, finalizeRun, currentRunDir } from "./core/runLog";
 import { evaluateRuns, dayString, type RunExpectation } from "./core/runCheck";
-import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
-import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
+import { defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
+import { resolveTickerUniverse } from "./domains/financial/cliHelpers";
+import { runDataRefresh, DATA_REFRESH_TIERS, type DataRefreshTier } from "./domains/financial/dataRefresh";
+import { equityDataFromCache } from "./domains/financial/fundamentalsCache";
 import type { Signal } from "./core/models";
 
 const program = new Command();
@@ -248,8 +250,10 @@ program
 program
   .command("data-dump")
   .description(
-    "Dump quote + fundamentals data for all positions/watchlist tickers as JSON. " +
-      "No Claude call — purely deterministic data for an external judgment step to consume."
+    "Print cached quote + fundamentals data for all positions/watchlist tickers as JSON — a pure " +
+      "reporting view over what `data-refresh` last wrote, with no Finnhub/Morningstar calls of its " +
+      "own. Useful for a manual sanity check. Run `data-refresh --tier daily` (and `--tier weekly` " +
+      "for Morningstar) first if the cache is empty or stale; this command will not populate it."
   )
   .action(async () => {
     const config = getConfig();
@@ -259,25 +263,17 @@ program
       const watchlist = db.getWatchlist();
       const positionsByTicker = Object.fromEntries(positions.map((p) => [p.ticker, p]));
       const watchlistByTicker = Object.fromEntries(watchlist.map((w) => [w.ticker, w]));
-      const allTickers = [...new Set([...positions.map((p) => p.ticker), ...watchlist.map((w) => w.ticker)])];
+      const allTickers = resolveTickerUniverse(db);
 
       if (allTickers.length === 0) {
         console.log(JSON.stringify([]));
         return;
       }
 
-      const quoteAgent = new QuoteAgent(config.getFinnhubApiKey(), db);
-      const equityAgent = new EquityAgent();
-
-      // QuoteAgent writes quote+indicators into the db as a side effect; read
-      // them back from there rather than from its return value, which doesn't
-      // include RSI/MA (those are computed and persisted, not returned).
-      await quoteAgent.batchAnalyze(allTickers);
-      const equities = await equityAgent.batchAnalyze(allTickers);
-
       const output = allTickers.map((ticker) => {
         const pos = positionsByTicker[ticker];
         const watch = watchlistByTicker[ticker];
+        const fundRow = db.getLatestFundamentals(ticker, "morningstar");
         return {
           ticker,
           isPosition: !!pos,
@@ -287,11 +283,48 @@ program
           costBasis: pos?.cost_basis ?? null,
           watchlistThesis: watch?.thesis ?? null,
           quote: db.getLatestQuote(ticker) ?? null,
-          equity: equities[ticker] ?? null,
+          equity: fundRow ? equityDataFromCache(fundRow) : null,
         };
       });
 
       console.log(JSON.stringify(output, null, 2));
+    } finally {
+      db.close();
+    }
+  });
+
+// ── Tiered data refresh (core of the harness/data-pipeline migration) ──────
+// The dispatch logic lives in domains/financial/dataRefresh.ts (importable
+// without triggering this file's program.parseAsync side effect below, so it
+// can be unit-tested directly) — this is just the CLI wiring around it.
+
+program
+  .command("data-refresh")
+  .description(
+    "Refresh cached quote/technicals/fundamentals for positions+watchlist tickers, scoped by tier. " +
+      "intraday: quote + RSI/MA only (skips Finnhub fundamentals). " +
+      "daily: quote + RSI/MA + Finnhub live fundamentals. " +
+      "weekly: Morningstar PDF re-parse only. " +
+      "This is the only command that calls Finnhub/Twelve Data/Morningstar — run-skill and data-dump " +
+      "read only from the cache this leaves behind."
+  )
+  .requiredOption("--tier <tier>", "intraday | daily | weekly")
+  .option("--tickers <list>", "comma-separated subset; default: all positions+watchlist")
+  .action(async (opts: { tier: string; tickers?: string }) => {
+    if (!DATA_REFRESH_TIERS.includes(opts.tier as DataRefreshTier)) {
+      console.error(`Invalid --tier "${opts.tier}" — expected one of: ${DATA_REFRESH_TIERS.join(", ")}`);
+      process.exitCode = 1;
+      return;
+    }
+    const config = getConfig();
+    const db = new Db(config.getDatabasePath());
+    try {
+      const { tickers } = await runDataRefresh(opts.tier as DataRefreshTier, opts.tickers, { config, db });
+      if (tickers.length === 0) {
+        console.log(`No tickers to refresh (no positions/watchlist entries, and no --tickers given).`);
+        return;
+      }
+      console.log(`Refreshed ${opts.tier} tier for ${tickers.length} ticker(s): ${tickers.join(", ")}`);
     } finally {
       db.close();
     }

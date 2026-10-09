@@ -6,6 +6,7 @@ import type { MorningstarData } from "../tools/morningstarParser";
 import { MorningstarFundamentalsProvider } from "../providers/morningstarFundamentalsProvider";
 import type { FundamentalsProvider } from "../providers/types";
 import { getConfig } from "../../../core/config";
+import type { Db } from "../../../core/db";
 
 /** Default location of Morningstar PDFs: the shared Google Drive-synced folder, outside the repo. */
 export function defaultReportsDir(): string {
@@ -14,10 +15,12 @@ export function defaultReportsDir(): string {
 
 export class EquityAgent extends ThrottledAPIAgent<EquityData> {
   private readonly provider: FundamentalsProvider;
+  private readonly db?: Db;
 
-  constructor(reportsDir?: string, provider?: FundamentalsProvider) {
+  constructor(reportsDir?: string, provider?: FundamentalsProvider, db?: Db) {
     super("EquityAgent", 60, 0.9);
     this.provider = provider ?? new MorningstarFundamentalsProvider(reportsDir ?? defaultReportsDir());
+    this.db = db;
   }
 
   async analyze(ticker: string): Promise<EquityData | null> {
@@ -51,6 +54,32 @@ export class EquityAgent extends ThrottledAPIAgent<EquityData> {
         capitalAllocation: fundamentals.capital_allocation ?? null,
         timestamp: new Date(),
       };
+
+      if (this.db) {
+        this.db.addFundamentals({
+          ticker,
+          as_of_date: new Date().toISOString().split("T")[0],
+          source: "morningstar",
+          pe_ratio: result.peRatio ?? null,
+          pb_ratio: result.pbRatio ?? null,
+          debt_to_equity: result.debtToEquity ?? null,
+          fcf: result.fcf ?? null,
+          fcf_fiscal_year: result.fcfFiscalYear ?? null,
+          fcf_yield: result.fcfYield ?? null,
+          fcf_margin: null,
+          fcf_positive: null,
+          dividend_yield: result.dividendYield ?? null,
+          earnings_growth: result.earningsGrowth ?? null,
+          revenue_growth: result.revenueGrowth ?? null,
+          fair_value: result.fairValue ?? null,
+          price_to_fair_value: result.priceToFairValue ?? null,
+          economic_moat: result.economicMoat ?? null,
+          morningstar_rating: result.morningstarRating ?? null,
+          uncertainty: result.uncertainty ?? null,
+          capital_allocation: result.capitalAllocation ?? null,
+          red_flags: JSON.stringify(redFlags),
+        });
+      }
 
       this.logger.info(
         `Fundamentals: ${ticker} PE=${result.peRatio} D/E=${result.debtToEquity} redFlags=${redFlags.length}`
