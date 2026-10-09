@@ -99,7 +99,7 @@ describe("QuoteAgent.analyze — cached technicals", () => {
     } as unknown as Db;
   }
 
-  it("reuses today's cached RSI/MA and skips the historical-closes fetch", async () => {
+  it("reuses today's cached RSI/MA, skips the historical-closes fetch, but still persists the fresh price", async () => {
     const today = new Date().toISOString().split("T")[0];
     const provider = makeProvider();
     const db = makeDb({
@@ -113,6 +113,7 @@ describe("QuoteAgent.analyze — cached technicals", () => {
       rsi: 42,
       ma_50: 200,
       ma_200: 190,
+      fetched_at: null,
     });
 
     const result = await new QuoteAgent("key", db, provider).analyze("NVDA");
@@ -121,7 +122,9 @@ describe("QuoteAgent.analyze — cached technicals", () => {
     expect(result?.ma50).toBe(200);
     expect(result?.ma200).toBe(190);
     expect(provider.getHistoricalCloses).not.toHaveBeenCalled();
-    expect(db.addQuote).not.toHaveBeenCalled();
+    // The live price still needs to persist on every call (that's the whole point of running
+    // the intraday tier repeatedly) — only the expensive historical-closes recompute is skipped.
+    expect(db.addQuote).toHaveBeenCalledWith("NVDA", today, 99, 101, 98, 100, 1000, 42, 200, 190, expect.any(String));
   });
 
   it("fetches fresh when the cached row is from a prior day", async () => {
@@ -137,6 +140,7 @@ describe("QuoteAgent.analyze — cached technicals", () => {
       rsi: 42,
       ma_50: 200,
       ma_200: 190,
+      fetched_at: null,
     });
 
     await new QuoteAgent("key", db, provider).analyze("NVDA");
@@ -152,5 +156,83 @@ describe("QuoteAgent.analyze — cached technicals", () => {
     await new QuoteAgent("key", db, provider).analyze("NVDA");
 
     expect(provider.getHistoricalCloses).toHaveBeenCalled();
+  });
+});
+
+describe("QuoteAgent.analyze persists fundamentals", () => {
+  function makeProviderWithFundamentals(): QuoteProvider {
+    return {
+      getQuote: jest.fn().mockResolvedValue({ price: 100, open: 99, high: 101, low: 98, volume: 1000 }),
+      getHistoricalCloses: jest.fn().mockResolvedValue(Array.from({ length: 250 }, (_, i) => 100 + i * 0.1)),
+      getFundamentals: jest.fn().mockResolvedValue({
+        peRatio: 65.2,
+        pbRatio: 30.1,
+        debtToEquity: 0.4,
+        fcfYield: 0.02,
+        fcfMargin: 0.3,
+        fcfPositive: true,
+        dividendYield: 0.001,
+        earningsGrowth: 0.5,
+        revenueGrowth: 0.3,
+      }),
+    };
+  }
+
+  function makeDb(cachedRow: QuoteRow | undefined): Db {
+    return {
+      getLatestQuote: jest.fn().mockReturnValue(cachedRow),
+      addQuote: jest.fn(),
+      addFundamentals: jest.fn(),
+    } as unknown as Db;
+  }
+
+  it("persists fundamentals as source 'finnhub' on a cache-miss (fresh technicals) call", async () => {
+    const provider = makeProviderWithFundamentals();
+    const db = makeDb(undefined);
+
+    await new QuoteAgent("key", db, provider).analyze("NVDA");
+
+    expect(db.addFundamentals).toHaveBeenCalledTimes(1);
+    const row = (db.addFundamentals as jest.Mock).mock.calls[0][0];
+    expect(row.ticker).toBe("NVDA");
+    expect(row.source).toBe("finnhub");
+    expect(row.pe_ratio).toBe(65.2);
+    expect(row.fcf_positive).toBe(1);
+  });
+
+  it("still persists fundamentals even on a same-day technicals cache hit", async () => {
+    const today = new Date().toISOString().split("T")[0];
+    const provider = makeProviderWithFundamentals();
+    const db = makeDb({
+      ticker: "NVDA",
+      date: today,
+      open: 1,
+      high: 1,
+      low: 1,
+      close: 1,
+      volume: 1,
+      rsi: 42,
+      ma_50: 200,
+      ma_200: 190,
+      fetched_at: null,
+    });
+
+    await new QuoteAgent("key", db, provider).analyze("NVDA");
+
+    expect(provider.getHistoricalCloses).not.toHaveBeenCalled(); // technicals cache hit
+    expect(db.addFundamentals).toHaveBeenCalledTimes(1); // fundamentals persisted anyway
+  });
+
+  it("does not call db.addFundamentals when fundamentals are unavailable", async () => {
+    const provider: QuoteProvider = {
+      getQuote: jest.fn().mockResolvedValue({ price: 100, open: 99, high: 101, low: 98, volume: 1000 }),
+      getHistoricalCloses: jest.fn().mockResolvedValue(null),
+      getFundamentals: jest.fn().mockResolvedValue(null),
+    };
+    const db = makeDb(undefined);
+
+    await new QuoteAgent("key", db, provider).analyze("NVDA");
+
+    expect(db.addFundamentals).not.toHaveBeenCalled();
   });
 });

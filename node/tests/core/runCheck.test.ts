@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { evaluateRuns, type RunExpectation } from "../../src/core/runCheck";
+import { evaluateRuns, checkCacheStaleness, type RunExpectation } from "../../src/core/runCheck";
 import type { RunSummary } from "../../src/core/runLog";
 
 function summary(over: Partial<RunSummary> = {}): RunSummary {
@@ -111,5 +111,99 @@ describe("evaluateRuns", () => {
     writeRun("2026-10-07", summary());
     expect(evaluateRuns({ now, days: 1, expectations: [expectation()] })).toEqual([]);
     expect(evaluateRuns({ now, days: 5, expectations: [expectation({ since: "2026-10-07" })] })).toEqual([]);
+  });
+
+  describe("minRunsPerDay (multi-run-a-day automations)", () => {
+    const writeMultiRun = (date: string, time: string, s: RunSummary) => {
+      const dir = path.join(root, date, time);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "run.jsonl"), "{}\n");
+      fs.writeFileSync(path.join(dir, "run.json"), JSON.stringify(s));
+    };
+
+    it("reports nothing when enough runs landed today, all ok", () => {
+      writeMultiRun("2026-10-07", "093000", summary());
+      writeMultiRun("2026-10-07", "103000", summary());
+      writeMultiRun("2026-10-07", "113000", summary());
+      const findings = evaluateRuns({
+        now,
+        days: 1,
+        expectations: [expectation({ minRunsPerDay: 3 })],
+      });
+      expect(findings).toEqual([]);
+    });
+
+    it("errors when zero runs landed on an expected day", () => {
+      const findings = evaluateRuns({ now, days: 1, expectations: [expectation({ minRunsPerDay: 3 })] });
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({ severity: "error", code: "missing_run" });
+    });
+
+    it("warns (not errors) when fewer than the minimum ran", () => {
+      writeMultiRun("2026-10-07", "093000", summary());
+      const findings = evaluateRuns({ now, days: 1, expectations: [expectation({ minRunsPerDay: 3 })] });
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({ severity: "warn", code: "missing_run" });
+    });
+
+    it("surfaces a failed step from one of several runs, labeled by its run time", () => {
+      writeMultiRun("2026-10-07", "093000", summary());
+      writeMultiRun(
+        "2026-10-07",
+        "103000",
+        summary({
+          status: "failed",
+          steps: { total: 1, ok: 0, failed: 1, truncated: 0, skipped: 0, retried: 0 },
+          failed_steps: [{ step: "data-refresh", subject: "all", exit_code: 1, error: "rate limited" }],
+        })
+      );
+      writeMultiRun("2026-10-07", "113000", summary());
+      const findings = evaluateRuns({ now, days: 1, expectations: [expectation({ minRunsPerDay: 3 })] });
+      const failed = findings.find((f) => f.code === "failed");
+      expect(failed).toBeDefined();
+      expect(failed!.message).toContain("103000");
+      expect(failed!.message).toContain("rate limited");
+    });
+
+    it("does not flag cost anomalies in multi-run mode", () => {
+      writeMultiRun("2026-10-07", "093000", summary({ model_calls: { ...summary().model_calls, est_cost_usd: 50 } }));
+      writeMultiRun("2026-10-07", "103000", summary());
+      writeMultiRun("2026-10-07", "113000", summary());
+      const findings = evaluateRuns({ now, days: 1, expectations: [expectation({ minRunsPerDay: 3 })] });
+      expect(findings.some((f) => f.code === "cost_anomaly")).toBe(false);
+    });
+  });
+});
+
+describe("checkCacheStaleness", () => {
+  const now = new Date(2026, 9, 7, 12, 0, 0);
+  const hoursAgoMs = (h: number) => h * 60 * 60 * 1000;
+  const daysAgoMs = (d: number) => d * 24 * 60 * 60 * 1000;
+
+  it("reports nothing when every ticker's cache is fresh", () => {
+    const findings = checkCacheStaleness({
+      now,
+      tickers: ["AAPL", "NVDA"],
+      getLatestQuoteAge: () => hoursAgoMs(1),
+      getLatestFundamentalsAge: (ticker, source) => (source === "finnhub" ? hoursAgoMs(1) : daysAgoMs(1)),
+    });
+    expect(findings).toEqual([]);
+  });
+
+  it("flags a ticker with a stale or missing quote/fundamentals row", () => {
+    const findings = checkCacheStaleness({
+      now,
+      tickers: ["AAPL", "NVDA"],
+      getLatestQuoteAge: (ticker) => (ticker === "AAPL" ? hoursAgoMs(72) : hoursAgoMs(1)),
+      getLatestFundamentalsAge: (ticker, source) => {
+        if (source === "finnhub") return hoursAgoMs(1);
+        return ticker === "NVDA" ? null : daysAgoMs(1);
+      },
+    });
+    expect(findings).toHaveLength(2);
+    const quoteFinding = findings.find((f) => f.message.startsWith("quotes"));
+    expect(quoteFinding?.message).toContain("AAPL");
+    const morningstarFinding = findings.find((f) => f.message.startsWith("morningstar"));
+    expect(morningstarFinding?.message).toContain("NVDA");
   });
 });

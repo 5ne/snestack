@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Nightly financial analysis: data-dump -> run-skill (both skills, every ticker)
-# -> distill-signals -> notify. This is the automated version of
-# prompts/daily-analysis.md, using `distill-signals` in place of a human/Claude-Code
-# session doing step 3 by hand. Every command here is a plain deterministic CLI
-# call (each with its own single Claude API call where noted) — no agentic
-# tool-use loop, so no elevated/unattended permissions are needed to run this
-# unattended from cron.
+# Nightly long-term-quality analysis: data-dump -> run-skill long-term-quality
+# (every ticker, gated) -> build-signals -> notify/notify-summary. Swing-trading
+# now runs on its own, tighter cadence via scripts/swing-check.sh — this script
+# no longer calls that skill. This script does NOT itself refresh the cache —
+# scripts/data-refresh-daily.sh is expected to run first (earlier in cron) and
+# populate it; data-dump here is a cache snapshot (and the ticker-list source),
+# not a refresh. This is the automated version of prompts/daily-analysis.md.
+# Every command here is a plain deterministic CLI call (each with its own
+# single Claude API call where noted) — no agentic tool-use loop, so no
+# elevated/unattended permissions are needed to run this unattended from cron.
 #
 # Each skill call is first checked against the skill's own `gate:` triggers (run-skill
-# --gated) and skipped with no model call when nothing worth a fresh look has happened,
-# e.g. a swing check on a ticker whose RSI is neutral. Results are read from each
-# write-up's trailing VERDICT line by `build-signals` (no model call).
+# --gated) and skipped with no model call when nothing worth a fresh look has happened.
+# Results are read from each write-up's trailing VERDICT line by `build-signals` (no
+# model call).
 #
 # Each step's outcome, and every model call's tokens/latency/stop reason, is recorded
 # in run.jsonl and summarized in run.json (see src/core/runLog.ts). Model output goes to
@@ -68,7 +71,8 @@ rl_init financial-daily "$PUBLISH_DIR" $([ "$DRY_RUN" -eq 1 ] && echo --dry-run)
 trap rl_finish EXIT
 echo "Run directory: $PUBLISH_DIR (staged in $RUN_DIR; dry run: $DRY_RUN)"
 
-# Step 1: refresh quote/RSI/MA + fundamentals for every position/watchlist ticker.
+# Step 1: snapshot the cache (data-refresh-daily.sh is expected to have already
+# populated it tonight — see header) and get the ticker list from it.
 # An empty data-dump.json from a successful run has been seen once, so verify and retry once.
 for ATTEMPT in 1 2; do
   RL_ERR_FILE="$RUN_DIR/data-dump.log" rl_step data-dump all \
@@ -100,23 +104,22 @@ if [ -z "$TICKERS" ]; then
   exit 0
 fi
 
-# Step 2: run both skills for every ticker. Each call is its own Claude judgment.
+# Step 2: run the long-term-quality skill for every ticker. Each call is its own Claude judgment.
+SKILL=long-term-quality
 while IFS= read -r TICKER; do
   echo "Analyzing $TICKER..."
-  for SKILL in long-term-quality swing-trading-large-cap; do
-    OUT="$RUN_DIR/$TICKER-$SKILL.md"
-    ERR="$RUN_DIR/$TICKER-$SKILL.log"
-    # run-skill writes and verifies its own output file; exit 5 means the model answered but the file
-    # didn't hold it, which is worth one retry.
-    for ATTEMPT in 1 2; do
-      rc=0
-      RL_ERR_FILE="$ERR" rl_step "run-skill:$SKILL" "$TICKER" \
-        node dist/cli.js run-skill financial "$SKILL" "$TICKER" --gated --out "$OUT.tmp" 2> "$ERR" || rc=$?
-      [ "$rc" -ne 5 ] && break
-    done
-    # Keep the write-up if it succeeded or was merely cut off; drop it on failure or when the gate skipped the call.
-    if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then mv "$OUT.tmp" "$OUT"; else rm -f "$OUT.tmp" "$OUT"; fi
+  OUT="$RUN_DIR/$TICKER-$SKILL.md"
+  ERR="$RUN_DIR/$TICKER-$SKILL.log"
+  # run-skill writes and verifies its own output file; exit 5 means the model answered but the file
+  # didn't hold it, which is worth one retry.
+  for ATTEMPT in 1 2; do
+    rc=0
+    RL_ERR_FILE="$ERR" rl_step "run-skill:$SKILL" "$TICKER" \
+      node dist/cli.js run-skill financial "$SKILL" "$TICKER" --gated --out "$OUT.tmp" 2> "$ERR" || rc=$?
+    [ "$rc" -ne 5 ] && break
   done
+  # Keep the write-up if it succeeded or was merely cut off; drop it on failure or when the gate skipped the call.
+  if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then mv "$OUT.tmp" "$OUT"; else rm -f "$OUT.tmp" "$OUT"; fi
 done <<< "$TICKERS"
 
 # Step 3: build the signals array from each write-up's VERDICT line (deterministic, no model call).

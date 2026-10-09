@@ -12,15 +12,17 @@ import { authorizeGoogleCalendar } from "./domains/calendar/setup";
 import { authorizeGmail } from "./domains/travel/setup";
 import { parseMultiFileOutput, writeStagedCatalogFiles, writeCatalogFilesToDir } from "./domains/travel/tools/fileWriter";
 import { nextBackfillYear, BACKFILL_START_YEAR, BACKFILL_END_YEAR } from "./domains/travel/tools/backfill";
-import { logRunEvent, finalizeRun, currentRunDir, extractErrorSummary } from "./core/runLog";
+import { logRunEvent, finalizeRun, currentRunDir, extractErrorSummary, readRunEvents } from "./core/runLog";
 import { buildSignalsFromDir } from "./domains/financial/tools/signalBuilder";
 import { writeVerified } from "./core/safeWrite";
-import { readRunEvents } from "./core/runLog";
 import { buildRunReport, formatRunReportText } from "./core/runReport";
-import { evaluateRuns, dayString, type RunExpectation } from "./core/runCheck";
+import { evaluateRuns, checkCacheStaleness, dayString, type RunExpectation } from "./core/runCheck";
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
+import { resolveTickerUniverse } from "./domains/financial/cliHelpers";
+import { runDataRefresh, DATA_REFRESH_TIERS, type DataRefreshTier } from "./domains/financial/dataRefresh";
+import { equityDataFromCache } from "./domains/financial/fundamentalsCache";
 import type { Signal } from "./core/models";
 
 const program = new Command();
@@ -252,8 +254,10 @@ program
 program
   .command("data-dump")
   .description(
-    "Dump quote + fundamentals data for all positions/watchlist tickers as JSON. " +
-      "No Claude call — purely deterministic data for an external judgment step to consume."
+    "Print cached quote + fundamentals data for all positions/watchlist tickers as JSON — a pure " +
+      "reporting view over what `data-refresh` last wrote, with no Finnhub/Morningstar calls of its " +
+      "own. Useful for a manual sanity check. Run `data-refresh --tier daily` (and `--tier weekly` " +
+      "for Morningstar) first if the cache is empty or stale; this command will not populate it."
   )
   .action(async () => {
     const config = getConfig();
@@ -263,25 +267,17 @@ program
       const watchlist = db.getWatchlist();
       const positionsByTicker = Object.fromEntries(positions.map((p) => [p.ticker, p]));
       const watchlistByTicker = Object.fromEntries(watchlist.map((w) => [w.ticker, w]));
-      const allTickers = [...new Set([...positions.map((p) => p.ticker), ...watchlist.map((w) => w.ticker)])];
+      const allTickers = resolveTickerUniverse(db);
 
       if (allTickers.length === 0) {
         console.log(JSON.stringify([]));
         return;
       }
 
-      const quoteAgent = new QuoteAgent(config.getFinnhubApiKey(), db);
-      const equityAgent = new EquityAgent();
-
-      // QuoteAgent writes quote+indicators into the db as a side effect; read
-      // them back from there rather than from its return value, which doesn't
-      // include RSI/MA (those are computed and persisted, not returned).
-      await quoteAgent.batchAnalyze(allTickers);
-      const equities = await equityAgent.batchAnalyze(allTickers);
-
       const output = allTickers.map((ticker) => {
         const pos = positionsByTicker[ticker];
         const watch = watchlistByTicker[ticker];
+        const fundRow = db.getLatestFundamentals(ticker, "morningstar");
         return {
           ticker,
           isPosition: !!pos,
@@ -291,11 +287,48 @@ program
           costBasis: pos?.cost_basis ?? null,
           watchlistThesis: watch?.thesis ?? null,
           quote: db.getLatestQuote(ticker) ?? null,
-          equity: equities[ticker] ?? null,
+          equity: fundRow ? equityDataFromCache(fundRow) : null,
         };
       });
 
       console.log(JSON.stringify(output, null, 2));
+    } finally {
+      db.close();
+    }
+  });
+
+// ── Tiered data refresh (core of the harness/data-pipeline migration) ──────
+// The dispatch logic lives in domains/financial/dataRefresh.ts (importable
+// without triggering this file's program.parseAsync side effect below, so it
+// can be unit-tested directly) — this is just the CLI wiring around it.
+
+program
+  .command("data-refresh")
+  .description(
+    "Refresh cached quote/technicals/fundamentals for positions+watchlist tickers, scoped by tier. " +
+      "intraday: quote + RSI/MA only (skips Finnhub fundamentals). " +
+      "daily: quote + RSI/MA + Finnhub live fundamentals. " +
+      "weekly: Morningstar PDF re-parse only. " +
+      "This is the only command that calls Finnhub/Twelve Data/Morningstar — run-skill and data-dump " +
+      "read only from the cache this leaves behind."
+  )
+  .requiredOption("--tier <tier>", "intraday | daily | weekly")
+  .option("--tickers <list>", "comma-separated subset; default: all positions+watchlist")
+  .action(async (opts: { tier: string; tickers?: string }) => {
+    if (!DATA_REFRESH_TIERS.includes(opts.tier as DataRefreshTier)) {
+      console.error(`Invalid --tier "${opts.tier}" — expected one of: ${DATA_REFRESH_TIERS.join(", ")}`);
+      process.exitCode = 1;
+      return;
+    }
+    const config = getConfig();
+    const db = new Db(config.getDatabasePath());
+    try {
+      const { tickers } = await runDataRefresh(opts.tier as DataRefreshTier, opts.tickers, { config, db });
+      if (tickers.length === 0) {
+        console.log(`No tickers to refresh (no positions/watchlist entries, and no --tickers given).`);
+        return;
+      }
+      console.log(`Refreshed ${opts.tier} tier for ${tickers.length} ticker(s): ${tickers.join(", ")}`);
     } finally {
       db.close();
     }
@@ -795,12 +828,16 @@ runLog
 
 // Runs before this date aren't expected to have run.json (run logging didn't exist yet).
 const RUN_LOG_SINCE = "2026-10-07";
+// The split-cadence scripts (data-refresh-daily/intraday.sh, swing-check.sh) are new as of the
+// pipeline migration's Phase 6 — don't expect runs for them before that landed.
+const SPLIT_CADENCE_SINCE = "2026-10-09";
 
 program
   .command("run-check")
   .description(
     "Check recent automation runs for problems: missing or crashed runs, failed or truncated steps, model errors, " +
-      "cost spikes. Prints findings; exits 1 if any are errors. Meant for a person or a watcher agent to read."
+      "cost spikes, and (for the financial domain) stale cached data despite refreshes having run. Prints " +
+      "findings; exits 1 if any are errors. Meant for a person or a watcher agent to read."
   )
   .option("--days <n>", "How many days back to check, including today", "3")
   .option("--json", "Print findings as JSON")
@@ -811,14 +848,57 @@ program
     // expectation back here if it's ever rescheduled.
     const expectations: RunExpectation[] = [
       {
+        // graceHour values below assume run-check runs on the same machine/timezone as cron —
+        // see node/README.md's cron table, given in America/Los_Angeles (Pacific).
         name: "financial",
         runsRoot: path.join(brainRoot, "financial", "signals"),
-        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: weekdays 8:30
-        graceHour: 10,
+        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: 2:30pm PT, after data-refresh-daily.sh
+        graceHour: 16,
         since: RUN_LOG_SINCE,
+      },
+      {
+        name: "financial-daily-refresh",
+        runsRoot: path.join(brainRoot, "financial", "runs", "data-refresh-daily"),
+        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: 2pm PT, nightly, before financial-daily
+        graceHour: 15,
+        since: SPLIT_CADENCE_SINCE,
+      },
+      {
+        name: "financial-intraday",
+        runsRoot: path.join(brainRoot, "financial", "runs", "intraday"),
+        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: every 30 min, 6:30am-1pm PT (market hours)
+        graceHour: 11, // a couple hours into market open before flagging a short day
+        since: SPLIT_CADENCE_SINCE,
+        minRunsPerDay: 3,
+      },
+      {
+        name: "financial-swing-check",
+        runsRoot: path.join(brainRoot, "financial", "runs", "swing-check"),
+        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: hourly, 7am-1pm PT (market hours)
+        graceHour: 11,
+        since: SPLIT_CADENCE_SINCE,
+        minRunsPerDay: 3,
       },
     ];
     const findings = evaluateRuns({ now: new Date(), days: Math.max(1, parseInt(opts.days, 10) || 3), expectations });
+
+    const config = getConfig();
+    const db = new Db(config.getDatabasePath());
+    try {
+      const tickers = resolveTickerUniverse(db);
+      const ageMs = (fetchedAt: string | null): number | null => (fetchedAt ? Date.now() - Date.parse(fetchedAt) : null);
+      findings.push(
+        ...checkCacheStaleness({
+          now: new Date(),
+          tickers,
+          getLatestQuoteAge: (ticker) => ageMs(db.getLatestQuote(ticker)?.fetched_at ?? null),
+          getLatestFundamentalsAge: (ticker, source) => ageMs(db.getLatestFundamentals(ticker, source)?.fetched_at ?? null),
+        })
+      );
+    } finally {
+      db.close();
+    }
+
     if (opts.json) {
       console.log(JSON.stringify({ checked_at: new Date().toISOString(), ok: findings.length === 0, findings }, null, 2));
     } else if (findings.length === 0) {

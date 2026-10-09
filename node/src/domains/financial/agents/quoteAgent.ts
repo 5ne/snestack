@@ -31,7 +31,7 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
     this.db = db;
   }
 
-  async analyze(ticker: string): Promise<QuoteData | null> {
+  async analyze(ticker: string, opts: { skipFundamentals?: boolean } = {}): Promise<QuoteData | null> {
     await this.checkRateLimit();
 
     return retryAsync(
@@ -63,7 +63,13 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
           rsi = cached.rsi;
           ma50 = cached.ma_50;
           ma200 = cached.ma_200;
-          fundamentals = await this.provider.getFundamentals(ticker);
+          fundamentals = opts.skipFundamentals ? null : await this.provider.getFundamentals(ticker);
+        } else if (opts.skipFundamentals) {
+          const closes = await this.provider.getHistoricalCloses(ticker, 250);
+          rsi = closes ? QuoteAgent.calculateRsi(closes) : null;
+          ma50 = closes ? QuoteAgent.calculateMovingAverage(closes, 50) : null;
+          ma200 = closes ? QuoteAgent.calculateMovingAverage(closes, 200) : null;
+          fundamentals = null;
         } else {
           const [closes, freshFundamentals] = await Promise.all([
             this.provider.getHistoricalCloses(ticker, 250),
@@ -97,7 +103,12 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
           timestamp: new Date(),
         };
 
-        if (this.db && !useCachedTechnicals && quote.open && quote.high && quote.low && quote.price) {
+        // Always persist the fresh live price, even on a same-day cache hit for RSI/MA (the
+        // point of the intraday tier is to keep the price current across repeated same-day
+        // calls — only the technicals recompute above is worth skipping). rsi/ma50/ma200 here
+        // are either freshly computed or the reused cached values, so this re-write is a no-op
+        // for those fields on a cache hit, not a regression.
+        if (this.db && quote.open && quote.high && quote.low && quote.price) {
           this.db.addQuote(
             ticker,
             today,
@@ -108,8 +119,39 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
             quote.volume ?? 0,
             rsi,
             ma50,
-            ma200
+            ma200,
+            new Date().toISOString()
           );
+        }
+
+        // Persist the live Finnhub fundamentals snapshot regardless of the
+        // technicals cache branch above — getFundamentals() is always called
+        // fresh (see the comment on `fundamentals` above), so there's always
+        // something new to persist here even on a cache-hit day.
+        if (this.db && fundamentals) {
+          this.db.addFundamentals({
+            ticker,
+            as_of_date: today,
+            source: "finnhub",
+            pe_ratio: fundamentals.peRatio,
+            pb_ratio: fundamentals.pbRatio,
+            debt_to_equity: fundamentals.debtToEquity,
+            fcf: null,
+            fcf_fiscal_year: null,
+            fcf_yield: fundamentals.fcfYield,
+            fcf_margin: fundamentals.fcfMargin,
+            fcf_positive: fundamentals.fcfPositive == null ? null : fundamentals.fcfPositive ? 1 : 0,
+            dividend_yield: fundamentals.dividendYield,
+            earnings_growth: fundamentals.earningsGrowth,
+            revenue_growth: fundamentals.revenueGrowth,
+            fair_value: null,
+            price_to_fair_value: null,
+            economic_moat: null,
+            morningstar_rating: null,
+            uncertainty: null,
+            capital_allocation: null,
+            red_flags: null,
+          });
         }
 
         this.logger.info(
@@ -150,8 +192,11 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
     return Math.round(avg * 100) / 100;
   }
 
-  async batchAnalyze(tickers: string[]): Promise<Record<string, QuoteData | null>> {
-    const results = await Promise.all(tickers.map((t) => this.safeAnalyze(t)));
+  async batchAnalyze(
+    tickers: string[],
+    opts: { skipFundamentals?: boolean } = {}
+  ): Promise<Record<string, QuoteData | null>> {
+    const results = await Promise.all(tickers.map((t) => this.safeAnalyze(t, opts)));
     return Object.fromEntries(tickers.map((t, i) => [t, results[i]]));
   }
 }

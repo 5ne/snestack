@@ -32,6 +32,38 @@ export interface QuoteRow {
   rsi: number | null;
   ma_50: number | null;
   ma_200: number | null;
+  fetched_at: string | null;
+}
+
+/**
+ * A cached fundamentals snapshot for a ticker, from one of two independent
+ * sources (never merged — see domains/financial's data pipeline catalog on
+ * why Finnhub-live and Morningstar figures are kept distinct). Two rows can
+ * exist for the same (ticker, as_of_date): one per source.
+ */
+export interface FundamentalsRow {
+  ticker: string;
+  as_of_date: string;
+  source: "finnhub" | "morningstar";
+  pe_ratio: number | null;
+  pb_ratio: number | null;
+  debt_to_equity: number | null;
+  fcf: number | null;
+  fcf_fiscal_year: number | null;
+  fcf_yield: number | null;
+  fcf_margin: number | null;
+  fcf_positive: number | null; // 0/1, sqlite has no boolean
+  dividend_yield: number | null;
+  earnings_growth: number | null;
+  revenue_growth: number | null;
+  fair_value: number | null;
+  price_to_fair_value: number | null;
+  economic_moat: string | null;
+  morningstar_rating: number | null;
+  uncertainty: string | null;
+  capital_allocation: string | null;
+  red_flags: string | null; // JSON array, Morningstar-source rows only
+  fetched_at: string;
 }
 
 export interface SignalRow {
@@ -107,6 +139,33 @@ export class Db {
         FOREIGN KEY (ticker) REFERENCES tickers(symbol)
       );
 
+      CREATE TABLE IF NOT EXISTS fundamentals (
+        ticker TEXT NOT NULL,
+        as_of_date TEXT NOT NULL,
+        source TEXT NOT NULL CHECK(source IN ('finnhub','morningstar')),
+        pe_ratio REAL,
+        pb_ratio REAL,
+        debt_to_equity REAL,
+        fcf REAL,
+        fcf_fiscal_year INTEGER,
+        fcf_yield REAL,
+        fcf_margin REAL,
+        fcf_positive INTEGER,
+        dividend_yield REAL,
+        earnings_growth REAL,
+        revenue_growth REAL,
+        fair_value REAL,
+        price_to_fair_value REAL,
+        economic_moat TEXT,
+        morningstar_rating INTEGER,
+        uncertainty TEXT,
+        capital_allocation TEXT,
+        red_flags TEXT,
+        fetched_at TEXT NOT NULL,
+        PRIMARY KEY (ticker, as_of_date, source),
+        FOREIGN KEY (ticker) REFERENCES tickers(symbol)
+      );
+
       CREATE TABLE IF NOT EXISTS signals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ticker TEXT NOT NULL,
@@ -122,6 +181,7 @@ export class Db {
       CREATE INDEX IF NOT EXISTS idx_quotes_date ON quotes(date);
       CREATE INDEX IF NOT EXISTS idx_signals_date ON signals(date);
       CREATE INDEX IF NOT EXISTS idx_signals_ticker ON signals(ticker);
+      CREATE INDEX IF NOT EXISTS idx_fundamentals_ticker ON fundamentals(ticker, source);
     `);
   }
 
@@ -140,6 +200,14 @@ export class Db {
         `ALTER TABLE positions ADD COLUMN strategy TEXT NOT NULL DEFAULT 'long-term'
          CHECK(strategy IN ('long-term','swing','both'))`
       );
+    }
+
+    const quoteCols = this.db
+      .prepare("PRAGMA table_info(quotes)")
+      .all() as unknown as Array<{ name: string }>;
+    const hasFetchedAt = quoteCols.some((c) => c.name === "fetched_at");
+    if (!hasFetchedAt) {
+      this.db.exec(`ALTER TABLE quotes ADD COLUMN fetched_at TEXT`);
     }
   }
 
@@ -253,16 +321,29 @@ export class Db {
     volume: number,
     rsi?: number | null,
     ma50?: number | null,
-    ma200?: number | null
+    ma200?: number | null,
+    fetchedAt?: string
   ): boolean {
     try {
       this.db
         .prepare(
           `INSERT OR REPLACE INTO quotes
-           (ticker, date, open, high, low, close, volume, rsi, ma_50, ma_200)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (ticker, date, open, high, low, close, volume, rsi, ma_50, ma_200, fetched_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(ticker, date, open, high, low, close, volume, rsi ?? null, ma50 ?? null, ma200 ?? null);
+        .run(
+          ticker,
+          date,
+          open,
+          high,
+          low,
+          close,
+          volume,
+          rsi ?? null,
+          ma50 ?? null,
+          ma200 ?? null,
+          fetchedAt ?? new Date().toISOString()
+        );
       return true;
     } catch {
       return false;
@@ -279,6 +360,80 @@ export class Db {
     return this.db
       .prepare("SELECT * FROM quotes WHERE ticker = ? ORDER BY date DESC LIMIT ?")
       .all(ticker, limit) as unknown as QuoteRow[];
+  }
+
+  /** Latest quote row, or undefined if missing or older than maxAgeMs (by fetched_at; a row with no fetched_at — pre-migration — is always treated as stale). */
+  getQuoteIfFresh(ticker: string, maxAgeMs: number): QuoteRow | undefined {
+    const row = this.getLatestQuote(ticker);
+    if (!row?.fetched_at) return undefined;
+    const age = Date.now() - Date.parse(row.fetched_at);
+    return isFinite(age) && age <= maxAgeMs ? row : undefined;
+  }
+
+  // ── Fundamentals ───────────────────────────────────────────────────────────
+
+  addFundamentals(row: Omit<FundamentalsRow, "fetched_at"> & { fetched_at?: string }): boolean {
+    try {
+      this.db
+        .prepare(
+          `INSERT OR REPLACE INTO fundamentals
+           (ticker, as_of_date, source, pe_ratio, pb_ratio, debt_to_equity, fcf, fcf_fiscal_year,
+            fcf_yield, fcf_margin, fcf_positive, dividend_yield, earnings_growth, revenue_growth,
+            fair_value, price_to_fair_value, economic_moat, morningstar_rating, uncertainty,
+            capital_allocation, red_flags, fetched_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          row.ticker,
+          row.as_of_date,
+          row.source,
+          row.pe_ratio ?? null,
+          row.pb_ratio ?? null,
+          row.debt_to_equity ?? null,
+          row.fcf ?? null,
+          row.fcf_fiscal_year ?? null,
+          row.fcf_yield ?? null,
+          row.fcf_margin ?? null,
+          row.fcf_positive ?? null,
+          row.dividend_yield ?? null,
+          row.earnings_growth ?? null,
+          row.revenue_growth ?? null,
+          row.fair_value ?? null,
+          row.price_to_fair_value ?? null,
+          row.economic_moat ?? null,
+          row.morningstar_rating ?? null,
+          row.uncertainty ?? null,
+          row.capital_allocation ?? null,
+          row.red_flags ?? null,
+          row.fetched_at ?? new Date().toISOString()
+        );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  getLatestFundamentals(
+    ticker: string,
+    source: "finnhub" | "morningstar"
+  ): FundamentalsRow | undefined {
+    return this.db
+      .prepare(
+        "SELECT * FROM fundamentals WHERE ticker = ? AND source = ? ORDER BY as_of_date DESC, fetched_at DESC LIMIT 1"
+      )
+      .get(ticker, source) as unknown as FundamentalsRow | undefined;
+  }
+
+  /** Latest fundamentals row for this source, or undefined if missing or older than maxAgeMs (by fetched_at). */
+  getFundamentalsIfFresh(
+    ticker: string,
+    source: "finnhub" | "morningstar",
+    maxAgeMs: number
+  ): FundamentalsRow | undefined {
+    const row = this.getLatestFundamentals(ticker, source);
+    if (!row) return undefined;
+    const age = Date.now() - Date.parse(row.fetched_at);
+    return isFinite(age) && age <= maxAgeMs ? row : undefined;
   }
 
   // ── Signals ────────────────────────────────────────────────────────────────
