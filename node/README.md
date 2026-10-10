@@ -40,8 +40,8 @@ npm run dev -- signals NVDA
 # ~/Documents/personal-brain/financial/reports/staging (override with SNESTACK_BRAIN_ROOT)
 npm run dev -- organize-reports
 
-# Full nightly long-term-quality pipeline (data-dump -> run-skill long-term-quality
-# per ticker -> distill-signals -> notify).
+# Full nightly long-term-quality pipeline (data-dump -> gated run-skill long-term-quality
+# per ticker -> build-signals -> notify/notify-summary).
 ./scripts/daily-analysis.sh
 ```
 
@@ -68,10 +68,10 @@ Each script supports `--dry-run` (runs everything but emails/records nothing, ou
 
 - **`data-refresh-intraday.sh`** — one step: `data-refresh --tier intraday` for every position/watchlist ticker. Refreshes live quote price only; Finnhub fundamentals are skipped entirely (that's the daily tier's job), and RSI/50MA/200MA are left alone too — they're gated to update at most once a day inside `data-refresh`, so running this every 30 min mostly just keeps the live price current. Writes its own timestamped run directory under `<brain>/financial/runs/intraday/<date>/<time>/`, since it fires multiple times a day.
 - **`data-refresh-daily.sh`** — two steps: `data-refresh --tier daily` (quote + RSI/MA + Finnhub live fundamentals for every ticker), then `data-refresh --tier weekly` (re-parses whatever Morningstar PDF currently sits in `reports/`) — but only on Mondays, since re-parsing the same on-disk PDF every night would be pure waste. This is what's expected to populate the cache before `daily-analysis.sh` runs. One run directory per day under `<brain>/financial/runs/data-refresh-daily/<date>/`.
-- **`daily-analysis.sh`** — four steps: (1) `data-dump` to snapshot the cache (populated by `data-refresh-daily.sh` earlier) and get the ticker list; (2) run the `long-term-quality` skill against every ticker, one Claude call each, writing `<ticker>-long-term-quality.md`; (3) `distill-signals` to turn the successful write-ups into one structured signals array; (4) `notify` to email that batch and record it in `snestack.db`'s `signals` table. No longer touches `swing-trading-large-cap` — that moved to its own script. Output lands in `<brain>/financial/signals/<date>/`.
-- **`swing-check.sh`** — the same four-step shape as `daily-analysis.sh`, but for `swing-trading-large-cap` only, and run several times a day instead of once overnight: (1) `data-dump` for the ticker list, (2) the skill per ticker, (3) `distill-signals`, (4) `notify` — scoped automatically to just this run's tickers since each run gets its own directory under `<brain>/financial/runs/swing-check/<date>/<time>/`.
+- **`daily-analysis.sh`** — four steps: (1) `data-dump` to snapshot the cache (populated by `data-refresh-daily.sh` earlier) and get the ticker list; (2) run the `long-term-quality` skill against every ticker with `--gated --out`, one Claude call each *if* the skill's own `gate:` triggers fire (RSI, price-move, age, or a changed Morningstar/brain file — see `core/gate.ts`), writing `<ticker>-long-term-quality.md`; (3) `build-signals` to read each write-up's trailing `VERDICT:` line into one structured signals array, deterministically, no model call; (4) `notify` to email that batch and record it in `snestack.db`'s `signals` table — or, if every call was gated off (nothing worth a fresh look happened), `notify-summary` instead, emailing a "no changes today" heartbeat rather than staying silent. No longer touches `swing-trading-large-cap` — that moved to its own script. Output lands in `<brain>/financial/signals/<date>/`.
+- **`swing-check.sh`** — the same four-step shape as `daily-analysis.sh`, but for `swing-trading-large-cap` only, and run several times a day instead of once overnight: (1) `data-dump` for the ticker list, (2) the skill per ticker (also gated — RSI outside 30-70 is "no action" and skips the call), (3) `build-signals`, (4) `notify` if there's something to report. Unlike `daily-analysis.sh`, a quiet run here does **not** email a summary — several "nothing happened" emails a day would defeat the point of gating — it's just recorded in `run.json` for `run-check` to see. Each run gets its own timestamped directory under `<brain>/financial/runs/swing-check/<date>/<time>/`, so distill/notify are automatically scoped to that run's own tickers.
 
-All four record step-by-step outcomes to `run.jsonl`/`run.json` (see `core/runLog.ts`), which `snestack run-check` reads to flag missing/failed/degraded runs and stale cached data.
+All four record step-by-step outcomes to `run.jsonl`/`run.json` (see `core/runLog.ts`, staged locally under `~/Library/Logs/snestack/runs/` and published to the paths above when each run finishes), which `snestack run-check` reads to flag missing/failed/degraded runs and stale cached data.
 
 `setup` is fully interactive — it prompts for each API key, validates the
 format, and writes `.env` for you, mirroring `snestack setup` in the Python
