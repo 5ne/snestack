@@ -21,11 +21,27 @@ import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
 import { resolveTickerUniverse } from "./domains/financial/cliHelpers";
+import { financialRunExpectations } from "./domains/financial/runExpectations";
 import { runDataRefresh, DATA_REFRESH_TIERS, type DataRefreshTier } from "./domains/financial/dataRefresh";
 import { equityDataFromCache } from "./domains/financial/fundamentalsCache";
 import type { Signal } from "./core/models";
+import { getDomainConfig } from "./core/domainRegistry";
+import { recordReflectRun } from "./core/reflect";
+import {
+  parseProposals,
+  writeProposals,
+  listProposals,
+  findProposalBySlug,
+  setProposalStatus,
+  type ProposalStatus,
+} from "./core/featureRequests";
+import { buildReflectEmail, type DomainReflectResult } from "./core/reflectNotify";
+import { sendEmail } from "./core/email";
+import domainsConfig from "./config/domains.json";
 
 const program = new Command();
+
+const REGISTERED_DOMAINS = Object.keys(domainsConfig);
 
 program
   .name("snestack")
@@ -851,12 +867,6 @@ runLog
     if (summary.status === "failed") process.exitCode = 1;
   });
 
-// Runs before this date aren't expected to have run.json (run logging didn't exist yet).
-const RUN_LOG_SINCE = "2026-10-07";
-// The split-cadence scripts (data-refresh-daily/intraday.sh, swing-check.sh) are new as of the
-// pipeline migration's Phase 6 — don't expect runs for them before that landed.
-const SPLIT_CADENCE_SINCE = "2026-10-09";
-
 program
   .command("run-check")
   .description(
@@ -871,40 +881,7 @@ program
     // The nightly travel backfill is deprecated and unscheduled (see scripts/travel-catalog-backfill.sh),
     // so no travel run is expected. Add a { name: "travel-backfill", runsRoot: <brain>/travel/_runs, ... }
     // expectation back here if it's ever rescheduled.
-    const expectations: RunExpectation[] = [
-      {
-        // graceHour values below assume run-check runs on the same machine/timezone as cron —
-        // see node/README.md's cron table, given in America/Los_Angeles (Pacific).
-        name: "financial",
-        runsRoot: path.join(brainRoot, "financial", "signals"),
-        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: 2:30pm PT, after data-refresh-daily.sh
-        graceHour: 16,
-        since: RUN_LOG_SINCE,
-      },
-      {
-        name: "financial-daily-refresh",
-        runsRoot: path.join(brainRoot, "financial", "runs", "data-refresh-daily"),
-        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: 2pm PT, nightly, before financial-daily
-        graceHour: 15,
-        since: SPLIT_CADENCE_SINCE,
-      },
-      {
-        name: "financial-intraday",
-        runsRoot: path.join(brainRoot, "financial", "runs", "intraday"),
-        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: every 30 min, 6:30am-1pm PT (market hours)
-        graceHour: 11, // a couple hours into market open before flagging a short day
-        since: SPLIT_CADENCE_SINCE,
-        minRunsPerDay: 3,
-      },
-      {
-        name: "financial-swing-check",
-        runsRoot: path.join(brainRoot, "financial", "runs", "swing-check"),
-        expectedOn: (d) => d.getDay() >= 1 && d.getDay() <= 5, // cron: hourly, 7am-1pm PT (market hours)
-        graceHour: 11,
-        since: SPLIT_CADENCE_SINCE,
-        minRunsPerDay: 3,
-      },
-    ];
+    const expectations: RunExpectation[] = financialRunExpectations(brainRoot);
     const findings = evaluateRuns({ now: new Date(), days: Math.max(1, parseInt(opts.days, 10) || 3), expectations });
 
     const config = getConfig();
@@ -944,6 +921,191 @@ travel
     const year = nextBackfillYear(path.join(getConfig().getBrainRoot(), "travel"));
     if (year !== null) console.log(year);
   });
+
+// ── Reflection: improve-self ────────────────────────────────────────────────
+// `snestack reflect` is the harness-level job that runs each registered
+// domain's `improve-self` skill (gated, same machinery as `run-skill --gated`)
+// and writes any resulting proposals under <brain>/<domain>/feature-requests/.
+// It never touches source code, skills, or config — see core/featureRequests.ts.
+// `snestack feature ...` manages those proposals' lifecycle afterward.
+
+program
+  .command("reflect")
+  .description(
+    "Run each registered domain's improve-self skill (gated — see core/gate.ts) to look at how the " +
+      "harness itself is running, and write any new proposals under <brain>/<domain>/feature-requests/."
+  )
+  .option("--domain <d>", "Only reflect on this domain (default: every registered domain with an improve-self skill)")
+  .option("--json", "Print the summary as JSON")
+  .action(async (opts: { domain?: string; json?: boolean }) => {
+    if (!validateEnv()) {
+      process.exitCode = 1;
+      return;
+    }
+    const brainRoot = getConfig().getBrainRoot();
+    const domains = opts.domain ? [opts.domain] : REGISTERED_DOMAINS;
+    const now = new Date();
+    const results: DomainReflectResult[] = [];
+
+    for (const domain of domains) {
+      const skillPath = path.join(process.cwd(), "src", getDomainConfig(domain).skillsDir, "improve-self.md");
+      if (!fs.existsSync(skillPath)) {
+        results.push({ domain, ran: false, reason: "no improve-self skill for this domain yet", written: [], skippedDuplicates: [], parseErrors: [] });
+        continue;
+      }
+
+      const decision = await evaluateSkillGate(domain, "improve-self", domain);
+      if (!decision.run) {
+        results.push({ domain, ran: false, reason: decision.reasons.join("; "), written: [], skippedDuplicates: [], parseErrors: [] });
+        continue;
+      }
+
+      const result = await runSkill(domain, "improve-self", domain);
+      recordReflectRun(brainRoot, domain, now);
+
+      if (!result.output.trim()) {
+        results.push({
+          domain,
+          ran: true,
+          reason: `model returned no text (stop_reason: ${result.stopReason})`,
+          written: [],
+          skippedDuplicates: [],
+          parseErrors: [],
+        });
+        continue;
+      }
+
+      const { proposals, errors } = parseProposals(result.output);
+      const written = writeProposals(brainRoot, domain, proposals, { now });
+      results.push({
+        domain,
+        ran: true,
+        reason: decision.reasons.join("; "),
+        written: written.filter((w) => w.file != null).map((w) => w.file!),
+        skippedDuplicates: written.filter((w) => w.skippedAsDuplicateOf).map((w) => w.skippedAsDuplicateOf!),
+        parseErrors: errors.map((e) => `"${e.title}": ${e.reason}`),
+      });
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(results, null, 2));
+    } else {
+      for (const r of results) {
+        if (!r.ran) {
+          console.log(`${r.domain}: skipped (${r.reason})`);
+          continue;
+        }
+        console.log(`${r.domain}: ran (${r.reason})`);
+        r.written.forEach((f) => console.log(`  + ${f}`));
+        r.skippedDuplicates.forEach((f) => console.log(`  = looked like a duplicate of ${f}, skipped`));
+        r.parseErrors.forEach((e) => console.log(`  ! parse error: ${e}`));
+      }
+    }
+    if (results.some((r) => r.parseErrors.length)) process.exitCode = 1;
+  });
+
+program
+  .command("reflect-notify")
+  .description(
+    "Send one combined email summarizing new feature-request proposals from a `snestack reflect --json` " +
+      "result, each with its `feature approve` command. Sends nothing (exit 0) when there's nothing new."
+  )
+  .requiredOption("--file <path>", "JSON file produced by `snestack reflect --json`")
+  .option("--dry-run", "Build the email but print it instead of sending")
+  .action(async (opts: { file: string; dryRun?: boolean }) => {
+    let results: DomainReflectResult[];
+    try {
+      results = JSON.parse(fs.readFileSync(opts.file, "utf8")) as DomainReflectResult[];
+    } catch (e) {
+      console.error(`reflect-notify: could not read/parse ${opts.file}: ${e}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const email = buildReflectEmail(results);
+    if (!email) {
+      console.log("No new proposals (and no parse errors) — nothing to send.");
+      return;
+    }
+    if (opts.dryRun) {
+      console.log(`Subject: ${email.subject}\n\n${email.text}`);
+      return;
+    }
+    if (!validateEnv()) {
+      process.exitCode = 1;
+      return;
+    }
+    const ok = await sendEmail(email.subject, email.text);
+    console.log(ok ? "Email sent." : "Email failed to send.");
+    if (!ok) process.exitCode = 1;
+  });
+
+const feature = program.command("feature").description("Manage improve-self feature-request proposals (proposed -> in-progress -> done)");
+
+feature
+  .command("list")
+  .description("List feature-request proposals")
+  .option("--domain <d>", "Only this domain (default: every registered domain)")
+  .option("--status <s>", "Only this status: proposed | in-progress | done")
+  .action((opts: { domain?: string; status?: string }) => {
+    const brainRoot = getConfig().getBrainRoot();
+    const domains = opts.domain ? [opts.domain] : REGISTERED_DOMAINS;
+    const rows = domains.flatMap((d) => listProposals(brainRoot, d));
+    const filtered = opts.status ? rows.filter((r) => r.status === opts.status) : rows;
+    if (filtered.length === 0) {
+      console.log("No feature-request proposals found.");
+      return;
+    }
+    for (const p of filtered) {
+      console.log(`${p.slug}  [${p.status}]  ${p.domain}  impact=${p.impact ?? "?"} effort=${p.effort ?? "?"}  ${p.title}`);
+    }
+  });
+
+/** Finds a proposal by slug, searching every registered domain unless `domainHint` narrows it. Throws on an ambiguous match. */
+function findProposalAnyDomain(
+  brainRoot: string,
+  slug: string,
+  domainHint?: string
+): { domain: string; file: string } | null {
+  const domains = domainHint ? [domainHint] : REGISTERED_DOMAINS;
+  const matches = domains
+    .map((domain) => ({ domain, proposal: findProposalBySlug(brainRoot, domain, slug) }))
+    .filter((m): m is { domain: string; proposal: NonNullable<ReturnType<typeof findProposalBySlug>> } => m.proposal != null);
+  if (matches.length === 0) return null;
+  if (matches.length > 1) {
+    throw new Error(`"${slug}" exists in multiple domains (${matches.map((m) => m.domain).join(", ")}) — pass --domain to disambiguate`);
+  }
+  return { domain: matches[0].domain, file: matches[0].proposal.file };
+}
+
+function setStatusCommand(id: string, domainHint: string | undefined, status: ProposalStatus, label: string): void {
+  const brainRoot = getConfig().getBrainRoot();
+  try {
+    const found = findProposalAnyDomain(brainRoot, id, domainHint);
+    if (!found) {
+      console.error(`feature ${label}: no proposal found with id "${id}"`);
+      process.exitCode = 1;
+      return;
+    }
+    setProposalStatus(found.file, status);
+    console.log(`${found.domain}/${id}: -> ${status}`);
+  } catch (e) {
+    console.error(`feature ${label}: ${e}`);
+    process.exitCode = 1;
+  }
+}
+
+feature
+  .command("approve <id>")
+  .description("Mark a proposal in-progress — <id> is its filename without the .md extension (see `feature list`)")
+  .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
+  .action((id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "in-progress", "approve"));
+
+feature
+  .command("done <id>")
+  .description("Mark a proposal done — <id> is its filename without the .md extension (see `feature list`)")
+  .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
+  .action((id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "done", "done"));
 
 program.parseAsync(process.argv).catch((e) => {
   console.error(e);

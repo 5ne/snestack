@@ -3,6 +3,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { Db } from "../../../src/core/db";
 import { resetConfig } from "../../../src/core/config";
+import { writeProposals } from "../../../src/core/featureRequests";
 
 const quoteSafeAnalyze = jest.fn();
 const equitySafeAnalyze = jest.fn();
@@ -182,6 +183,31 @@ describe("financial contextTools (cache-read behavior)", () => {
 
     it("returns null when the brain file doesn't exist", async () => {
       expect(await contextTools.brain("nvda")).toBeNull();
+    });
+  });
+
+  describe("reflectionDigest", () => {
+    it("builds a digest including existing feature-request proposals, wired to the real brain root and run roots", async () => {
+      writeProposals(brainRoot, "financial", [
+        {
+          title: "Add retry backoff to data-refresh",
+          impact: "medium",
+          effort: "small",
+          evidence: "429s three days running.",
+          body: "Add backoff.",
+        },
+      ]);
+
+      const digest = (await contextTools.reflectionDigest("financial")) as string;
+
+      expect(digest).toContain("existing-feature-requests");
+      expect(digest).toContain("Add retry backoff to data-refresh");
+    });
+
+    it("ignores the subject argument — it's domain-level, not per-ticker", async () => {
+      const a = (await contextTools.reflectionDigest("whatever")) as string;
+      const b = (await contextTools.reflectionDigest("something-else")) as string;
+      expect(a).toBe(b);
     });
   });
 });
