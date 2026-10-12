@@ -110,4 +110,29 @@ describe("filterUnchangedSignals", () => {
     expect(changed.map((s) => s.ticker)).toEqual(["RIVN"]);
     expect(unchanged.map((s) => s.ticker)).toEqual(["MSFT"]);
   });
+
+  it("still treats a same-recommendation signal as changed when confidence moved enough (default threshold 0.1)", () => {
+    db.addSignal("MSFT", "2026-10-12T07:00:00.000Z", "SELL", 0.55, "[Swing] overbought");
+    const signal = { ...swing("MSFT", "SELL"), confidence: 0.8 }; // +0.25
+    const { changed, unchanged } = filterUnchangedSignals(db, [signal]);
+    expect(changed).toHaveLength(1);
+    expect(unchanged).toEqual([]);
+  });
+
+  it("keeps a same-recommendation signal unchanged when confidence barely moved", () => {
+    db.addSignal("MSFT", "2026-10-12T07:00:00.000Z", "SELL", 0.55, "[Swing] overbought");
+    const signal = { ...swing("MSFT", "SELL"), confidence: 0.58 }; // +0.03, under the default 0.1 threshold
+    const { changed, unchanged } = filterUnchangedSignals(db, [signal]);
+    expect(changed).toEqual([]);
+    expect(unchanged).toHaveLength(1);
+  });
+
+  it("respects a custom confidenceMoveThreshold", () => {
+    db.addSignal("MSFT", "2026-10-12T07:00:00.000Z", "SELL", 0.55, "[Swing] overbought");
+    const signal = { ...swing("MSFT", "SELL"), confidence: 0.58 }; // +0.03
+    // with a tighter 0.02 threshold, even this small a move counts as changed
+    const { changed, unchanged } = filterUnchangedSignals(db, [signal], 0.02);
+    expect(changed).toHaveLength(1);
+    expect(unchanged).toEqual([]);
+  });
 });

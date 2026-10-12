@@ -24,18 +24,26 @@ const KNOWN_PREFIXES = ["[Long-term]", "[Swing]"];
 
 /**
  * Drops any signal whose recommendation matches the last one recorded in `signals` for
- * the same ticker and strategy — a ticker sitting at the same RSI extreme for hours
- * (or an unchanged long-term thesis) otherwise re-emails the identical verdict on every
- * run. A signal with no recognized strategy prefix, or no prior recorded signal, always
- * passes through unchanged (fails open, same philosophy as core/gate.ts).
+ * the same ticker and strategy, AND whose confidence hasn't moved by at least
+ * `confidenceMoveThreshold` — a ticker sitting at the same RSI extreme for hours (or an
+ * unchanged long-term thesis) otherwise re-emails the identical verdict on every run, but
+ * a same-label conviction swing (e.g. SELL 55% -> SELL 80%) is still worth surfacing. A
+ * signal with no recognized strategy prefix, or no prior recorded signal, always passes
+ * through unchanged (fails open, same philosophy as core/gate.ts).
  */
-export function filterUnchangedSignals(db: Db, signals: BuiltSignal[]): { changed: BuiltSignal[]; unchanged: BuiltSignal[] } {
+export function filterUnchangedSignals(
+  db: Db,
+  signals: BuiltSignal[],
+  confidenceMoveThreshold = 0.1
+): { changed: BuiltSignal[]; unchanged: BuiltSignal[] } {
   const changed: BuiltSignal[] = [];
   const unchanged: BuiltSignal[] = [];
   for (const s of signals) {
     const prefix = KNOWN_PREFIXES.find((p) => s.reasoning.startsWith(p));
     const last = prefix ? db.getLastSignalWithPrefix(s.ticker, prefix) : undefined;
-    if (last && last.recommendation === s.recommendation) {
+    const sameLabel = last && last.recommendation === s.recommendation;
+    const confidenceMoved = last != null && Math.abs(s.confidence - last.confidence) >= confidenceMoveThreshold;
+    if (sameLabel && !confidenceMoved) {
       unchanged.push(s);
     } else {
       changed.push(s);

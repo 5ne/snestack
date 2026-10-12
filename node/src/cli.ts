@@ -680,10 +680,16 @@ program
   .requiredOption("--dir <path>", "Run directory containing *-long-term-quality.md / *-swing-trading-large-cap.md files")
   .option(
     "--only-changed",
-    "Drop any signal whose recommendation matches the last one recorded for that ticker+strategy — " +
-      "for a skill run several times a day, an unmoved verdict otherwise re-emails the same call every time."
+    "Drop any signal whose recommendation matches the last one recorded for that ticker+strategy and whose " +
+      "confidence hasn't moved by --confidence-move either — for a skill run several times a day, an unmoved " +
+      "verdict otherwise re-emails the same call every time."
   )
-  .action((opts: { dir: string; onlyChanged?: boolean }) => {
+  .option(
+    "--confidence-move <pct>",
+    "With --only-changed: still treat a same-recommendation signal as changed if confidence moved at least this much (0-1)",
+    "0.1"
+  )
+  .action((opts: { dir: string; onlyChanged?: boolean; confidenceMove: string }) => {
     if (!fs.existsSync(opts.dir)) {
       console.error(`Directory not found: ${opts.dir}`);
       process.exitCode = 1;
@@ -696,7 +702,7 @@ program
       const config = getConfig();
       const db = new Db(config.getDatabasePath());
       try {
-        const filtered = filterUnchangedSignals(db, result.signals);
+        const filtered = filterUnchangedSignals(db, result.signals, parseFloat(opts.confidenceMove));
         signals = filtered.changed;
         unchangedCount = filtered.unchanged.length;
       } finally {
