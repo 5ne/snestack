@@ -102,8 +102,10 @@ while IFS= read -r TICKER; do
 done <<< "$TICKERS"
 
 # Step 3: build the signals array from each write-up's VERDICT line (deterministic, no model call).
+# --only-changed drops a verdict that matches the last one recorded for that ticker+strategy —
+# running hourly, an unmoved RSI extreme would otherwise re-email the identical call every time.
 RL_ERR_FILE="$RUN_DIR/build-signals.log" rl_step build-signals all \
-  node dist/cli.js build-signals --dir "$RUN_DIR" > "$RUN_DIR/signals.json" 2> "$RUN_DIR/build-signals.log" || true
+  node dist/cli.js build-signals --dir "$RUN_DIR" --only-changed > "$RUN_DIR/signals.json" 2> "$RUN_DIR/build-signals.log" || true
 
 # Step 4: send the batch email and record signals in snestack.db (dry run: preview only).
 # Unlike daily-analysis.sh (once a night, so a "no changes" summary is a useful heartbeat),

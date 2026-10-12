@@ -48,6 +48,7 @@ describe("computeGateFacts", () => {
     const longTerm = computeGateFacts(db, "long-term-quality", "INTU", opts());
     expect(longTerm.lastRunAt?.toISOString()).toBe("2026-10-06T08:00:00.000Z");
     expect(longTerm.lastRunPrice).toBe(275);
+    expect(longTerm.lastRunRsi).toBe(31);
     const swing = computeGateFacts(db, "swing-trading-large-cap", "INTU", opts());
     expect(swing.lastRunAt?.toISOString()).toBe("2026-10-07T08:00:00.000Z");
   });

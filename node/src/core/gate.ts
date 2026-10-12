@@ -16,6 +16,14 @@ export interface GateConfig {
   maxAgeDays?: number;
   /** Run when the skill's inputs (reports, notes) changed since the last run. */
   inputsUpdated?: boolean;
+  /**
+   * When set, an RSI-threshold trigger only counts if RSI has moved at least this many
+   * points since the last run — otherwise a ticker sitting at an extreme re-triggers a
+   * fresh (billed) model call on every single check, forever, with nothing new to say.
+   * Only suppresses the RSI reason specifically; any other trigger (price move, age,
+   * inputs updated) still fires normally.
+   */
+  minRsiMoveToRerun?: number;
 }
 
 export interface GateFacts {
@@ -26,6 +34,8 @@ export interface GateFacts {
   lastRunAt: Date | null;
   /** The subject's price at that time, if known. */
   lastRunPrice: number | null;
+  /** The subject's RSI at that time, if known. */
+  lastRunRsi: number | null;
   inputsUpdatedAfterLastRun: boolean;
 }
 
@@ -46,9 +56,22 @@ export function evaluateGate(cfg: GateConfig | undefined, facts: GateFacts): Gat
   if (usesRsi && facts.rsi == null) return { run: true, reasons: ["no RSI data available (running to be safe)"] };
 
   const triggers: string[] = [];
+  const rsiQuiet: string[] = [];
   if (facts.rsi != null) {
-    if (cfg.rsiBelow != null && facts.rsi < cfg.rsiBelow) triggers.push(`RSI ${facts.rsi} is below ${cfg.rsiBelow}`);
-    if (cfg.rsiAbove != null && facts.rsi > cfg.rsiAbove) triggers.push(`RSI ${facts.rsi} is above ${cfg.rsiAbove}`);
+    const belowHit = cfg.rsiBelow != null && facts.rsi < cfg.rsiBelow;
+    const aboveHit = cfg.rsiAbove != null && facts.rsi > cfg.rsiAbove;
+    if (belowHit || aboveHit) {
+      const band = belowHit ? `below ${cfg.rsiBelow}` : `above ${cfg.rsiAbove}`;
+      const moveSinceLastRun =
+        cfg.minRsiMoveToRerun != null && facts.lastRunRsi != null ? Math.abs(facts.rsi - facts.lastRunRsi) : null;
+      if (moveSinceLastRun != null && moveSinceLastRun < cfg.minRsiMoveToRerun!) {
+        rsiQuiet.push(
+          `RSI ${facts.rsi} is still ${band}, but only moved ${moveSinceLastRun.toFixed(1)} since the last run's ${facts.lastRunRsi} (need ${cfg.minRsiMoveToRerun})`
+        );
+      } else {
+        triggers.push(`RSI ${facts.rsi} is ${band}`);
+      }
+    }
   }
 
   const quiet: string[] = [];
@@ -76,7 +99,7 @@ export function evaluateGate(cfg: GateConfig | undefined, facts: GateFacts): Gat
   if (triggers.length > 0) return { run: true, reasons: triggers };
 
   const parts: string[] = [];
-  if (usesRsi && facts.rsi != null) {
+  if (usesRsi && facts.rsi != null && rsiQuiet.length === 0) {
     const band =
       cfg.rsiBelow != null && cfg.rsiAbove != null
         ? `${cfg.rsiBelow}-${cfg.rsiAbove}`
@@ -85,5 +108,5 @@ export function evaluateGate(cfg: GateConfig | undefined, facts: GateFacts): Gat
           : `<= ${cfg.rsiAbove}`;
     parts.push(`RSI ${facts.rsi} inside ${band}`);
   }
-  return { run: false, reasons: [`no trigger: ${[...parts, ...quiet].join(", ")}`] };
+  return { run: false, reasons: [`no trigger: ${[...parts, ...rsiQuiet, ...quiet].join(", ")}`] };
 }

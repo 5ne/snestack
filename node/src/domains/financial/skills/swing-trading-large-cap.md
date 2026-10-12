@@ -6,9 +6,14 @@ model: normal
 references: [quality-bar]
 # Only worth a call when RSI is at an extreme — in between, the answer is always "no action".
 # The thresholds mirror references/quality-bar.md; keep them in sync if you tune that file.
+# minRsiMoveToRerun: with this run several times a day, a ticker sitting at the same
+# extreme for hours would otherwise re-trigger (and get billed) on every single check
+# with nothing new to say. RSI only updates once a day anyway (see contextTools.ts), so
+# this effectively caps a quiet, unmoved extreme to one real call per day per ticker.
 gate:
   rsiBelow: 30
   rsiAbove: 70
+  minRsiMoveToRerun: 5
 verdict: true
 ---
 

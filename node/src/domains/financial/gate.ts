@@ -45,6 +45,7 @@ export function computeGateFacts(
   const lastRunAt = lastSignal ? new Date(lastSignal.date) : null;
 
   let lastRunPrice: number | null = null;
+  let lastRunRsi: number | null = null;
   if (lastRunAt) {
     const lastDay = lastRunAt.getTime();
     let best = Infinity;
@@ -53,6 +54,7 @@ export function computeGateFacts(
       if (gap < best && gap <= 3 * DAY_MS) {
         best = gap;
         lastRunPrice = q.close;
+        lastRunRsi = q.rsi ?? null;
       }
     }
   }
@@ -67,6 +69,7 @@ export function computeGateFacts(
     price: quoteFresh ? latest!.close : null,
     lastRunAt,
     lastRunPrice,
+    lastRunRsi,
     inputsUpdatedAfterLastRun: inputsChanged,
   };
 }

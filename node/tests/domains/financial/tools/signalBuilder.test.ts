@@ -1,7 +1,8 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { buildSignalsFromDir } from "../../../../src/domains/financial/tools/signalBuilder";
+import { Db } from "../../../../src/core/db";
+import { buildSignalsFromDir, filterUnchangedSignals, type BuiltSignal } from "../../../../src/domains/financial/tools/signalBuilder";
 
 describe("buildSignalsFromDir", () => {
   let dir: string;
@@ -53,5 +54,60 @@ describe("buildSignalsFromDir", () => {
     write("signals.json", "[]");
     write("INTU-long-term-quality.log", "stderr");
     expect(buildSignalsFromDir(dir)).toEqual({ signals: [], noSignal: [], errors: [] });
+  });
+});
+
+describe("filterUnchangedSignals", () => {
+  let tmp: string;
+  let db: Db;
+  const swing = (ticker: string, recommendation: BuiltSignal["recommendation"], reasoning = "RSI stuff"): BuiltSignal => ({
+    ticker,
+    recommendation,
+    confidence: 0.8,
+    reasoning: `[Swing] ${reasoning}`,
+    fromWatchlist: false,
+  });
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-dedupe-"));
+    db = new Db(path.join(tmp, "test.db"));
+    db.addTicker("MSFT", "MSFT", "PUBLIC");
+    db.addTicker("RIVN", "RIVN", "PUBLIC");
+  });
+  afterEach(() => {
+    db.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("drops a signal whose recommendation matches the last recorded one for that ticker+strategy", () => {
+    db.addSignal("MSFT", "2026-10-12T07:00:00.000Z", "SELL", 0.8, "[Swing] overbought");
+    const { changed, unchanged } = filterUnchangedSignals(db, [swing("MSFT", "SELL")]);
+    expect(changed).toEqual([]);
+    expect(unchanged).toHaveLength(1);
+  });
+
+  it("keeps a signal whose recommendation differs from the last recorded one", () => {
+    db.addSignal("MSFT", "2026-10-12T07:00:00.000Z", "SELL", 0.8, "[Swing] overbought");
+    const { changed, unchanged } = filterUnchangedSignals(db, [swing("MSFT", "HOLD")]);
+    expect(changed).toHaveLength(1);
+    expect(unchanged).toEqual([]);
+  });
+
+  it("keeps a signal with no prior recorded signal (fails open)", () => {
+    const { changed } = filterUnchangedSignals(db, [swing("MSFT", "SELL")]);
+    expect(changed).toHaveLength(1);
+  });
+
+  it("does not compare across strategies — a matching long-term call doesn't suppress a swing one", () => {
+    db.addSignal("MSFT", "2026-10-12T07:00:00.000Z", "SELL", 0.8, "[Long-term] thesis broke");
+    const { changed } = filterUnchangedSignals(db, [swing("MSFT", "SELL")]);
+    expect(changed).toHaveLength(1);
+  });
+
+  it("filters independently per ticker", () => {
+    db.addSignal("MSFT", "2026-10-12T07:00:00.000Z", "SELL", 0.8, "[Swing] overbought");
+    const { changed, unchanged } = filterUnchangedSignals(db, [swing("MSFT", "SELL"), swing("RIVN", "BUY")]);
+    expect(changed.map((s) => s.ticker)).toEqual(["RIVN"]);
+    expect(unchanged.map((s) => s.ticker)).toEqual(["MSFT"]);
   });
 });

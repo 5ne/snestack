@@ -7,6 +7,7 @@ const facts = (over: Partial<GateFacts> = {}): GateFacts => ({
   price: 100,
   lastRunAt: new Date("2026-10-07T15:30:00Z"),
   lastRunPrice: 100,
+  lastRunRsi: 50,
   inputsUpdatedAfterLastRun: false,
   ...over,
 });
@@ -38,6 +39,36 @@ describe("evaluateGate", () => {
       const d = evaluateGate(cfg, facts({ rsi: null }));
       expect(d.run).toBe(true);
       expect(d.reasons[0]).toContain("no RSI");
+    });
+  });
+
+  describe("minRsiMoveToRerun (swing re-run cooldown)", () => {
+    const cfg = { rsiBelow: 30, rsiAbove: 70, minRsiMoveToRerun: 5 };
+    it("suppresses a repeat trigger when RSI barely moved since the last run", () => {
+      const d = evaluateGate(cfg, facts({ rsi: 27.3, lastRunRsi: 27.0 }));
+      expect(d.run).toBe(false);
+      expect(d.reasons[0]).toContain("only moved");
+    });
+    it("still runs once RSI has moved enough since the last run", () => {
+      expect(evaluateGate(cfg, facts({ rsi: 20, lastRunRsi: 27.0 })).run).toBe(true);
+    });
+    it("runs on a fresh crossing with no known lastRunRsi (fails open)", () => {
+      expect(evaluateGate(cfg, facts({ rsi: 27.3, lastRunRsi: null })).run).toBe(true);
+    });
+    it("is irrelevant to a neutral RSI (no threshold crossed at all)", () => {
+      const d = evaluateGate(cfg, facts({ rsi: 50, lastRunRsi: 50.5 }));
+      expect(d.run).toBe(false);
+      expect(d.reasons[0]).not.toContain("only moved");
+    });
+  });
+
+  describe("minRsiMoveToRerun does not affect other triggers (long-term)", () => {
+    const cfg = { rsiBelow: 40, rsiAbove: 70, priceMovePct: 5, minRsiMoveToRerun: 5 };
+    it("still runs on a price move even when RSI is cooldown-suppressed", () => {
+      const d = evaluateGate(cfg, facts({ rsi: 71, lastRunRsi: 70.5, price: 120 }));
+      expect(d.run).toBe(true);
+      expect(d.reasons.some((r) => r.includes("price moved"))).toBe(true);
+      expect(d.reasons.some((r) => r.includes("RSI"))).toBe(false);
     });
   });
 

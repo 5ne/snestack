@@ -13,7 +13,7 @@ import { authorizeGmail } from "./domains/travel/setup";
 import { parseMultiFileOutput, writeStagedCatalogFiles, writeCatalogFilesToDir } from "./domains/travel/tools/fileWriter";
 import { nextBackfillYear, BACKFILL_START_YEAR, BACKFILL_END_YEAR } from "./domains/travel/tools/backfill";
 import { logRunEvent, finalizeRun, currentRunDir, extractErrorSummary, readRunEvents } from "./core/runLog";
-import { buildSignalsFromDir } from "./domains/financial/tools/signalBuilder";
+import { buildSignalsFromDir, filterUnchangedSignals } from "./domains/financial/tools/signalBuilder";
 import { writeVerified } from "./core/safeWrite";
 import { buildRunReport, formatRunReportText } from "./core/runReport";
 import { evaluateRuns, checkCacheStaleness, dayString, type RunExpectation } from "./core/runCheck";
@@ -678,16 +678,35 @@ program
       "or invalid verdict are listed on stderr and make the command exit 1 (the valid signals are still printed)."
   )
   .requiredOption("--dir <path>", "Run directory containing *-long-term-quality.md / *-swing-trading-large-cap.md files")
-  .action((opts: { dir: string }) => {
+  .option(
+    "--only-changed",
+    "Drop any signal whose recommendation matches the last one recorded for that ticker+strategy — " +
+      "for a skill run several times a day, an unmoved verdict otherwise re-emails the same call every time."
+  )
+  .action((opts: { dir: string; onlyChanged?: boolean }) => {
     if (!fs.existsSync(opts.dir)) {
       console.error(`Directory not found: ${opts.dir}`);
       process.exitCode = 1;
       return;
     }
     const result = buildSignalsFromDir(opts.dir);
-    console.log(JSON.stringify(result.signals, null, 2));
+    let signals = result.signals;
+    let unchangedCount = 0;
+    if (opts.onlyChanged) {
+      const config = getConfig();
+      const db = new Db(config.getDatabasePath());
+      try {
+        const filtered = filterUnchangedSignals(db, result.signals);
+        signals = filtered.changed;
+        unchangedCount = filtered.unchanged.length;
+      } finally {
+        db.close();
+      }
+    }
+    console.log(JSON.stringify(signals, null, 2));
     console.error(
-      `build-signals: ${result.signals.length} signals, ${result.noSignal.length} with nothing to report, ${result.errors.length} errors`
+      `build-signals: ${signals.length} signals, ${result.noSignal.length} with nothing to report, ${result.errors.length} errors` +
+        (opts.onlyChanged ? `, ${unchangedCount} unchanged from last time (dropped)` : "")
     );
     result.errors.forEach((e) => console.error(`  ERROR ${e}`));
     if (result.errors.length > 0) process.exitCode = 1;
