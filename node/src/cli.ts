@@ -932,12 +932,13 @@ travel
 program
   .command("reflect")
   .description(
-    "Run each registered domain's improve-self skill (gated — see core/gate.ts) to look at how the " +
-      "harness itself is running, and write any new proposals under <brain>/<domain>/feature-requests/."
+    "Run each registered domain's improve-self skill (gated — see core/gate.ts — unless --force) to look at how " +
+      "the harness itself is running, and write any new proposals under <brain>/<domain>/feature-requests/."
   )
   .option("--domain <d>", "Only reflect on this domain (default: every registered domain with an improve-self skill)")
+  .option("--force", "Bypass each domain's gate and run improve-self unconditionally, same as `run-skill` without --gated")
   .option("--json", "Print the summary as JSON")
-  .action(async (opts: { domain?: string; json?: boolean }) => {
+  .action(async (opts: { domain?: string; force?: boolean; json?: boolean }) => {
     if (!validateEnv()) {
       process.exitCode = 1;
       return;
@@ -954,7 +955,7 @@ program
         continue;
       }
 
-      const decision = await evaluateSkillGate(domain, "improve-self", domain);
+      const decision = opts.force ? { run: true, reasons: ["--force"] } : await evaluateSkillGate(domain, "improve-self", domain);
       if (!decision.run) {
         results.push({ domain, ran: false, reason: decision.reasons.join("; "), written: [], skippedDuplicates: [], parseErrors: [] });
         continue;

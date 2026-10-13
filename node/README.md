@@ -136,20 +136,23 @@ snestack data-refresh --tier weekly           # re-parse the current Morningstar
 
 ### Reflection: improve-self
 
-`snestack reflect [--domain <d>] [--json]` is a harness-level job, not a financial one: it loops every domain registered in `config/domains.json` (or just the one named with `--domain`) and, for each one that has an `improve-self.md` skill (financial only, for now — see `src/domains/financial/skills/improve-self.md`), checks the skill's own `gate:` first (same `--gated` machinery as `run-skill`) and runs it if due. The skill reads a `reflectionDigest` of recent `run-check` findings, recent run summaries, and every existing feature-request proposal (so it doesn't duplicate one), and writes its judgment as zero or more `## Feature Request: <title>` sections. `core/featureRequests.ts` parses those deterministically and writes each as its own file under `<brain>/<domain>/feature-requests/<date>-<slug>.md`, skipping (and reporting) anything that looks like a near-duplicate of an existing `proposed`/`in-progress` proposal.
+`snestack reflect [--domain <d>] [--force] [--json]` is a harness-level job, not a financial one: it loops every domain registered in `config/domains.json` (or just the one named with `--domain`) and, for each one that has an `improve-self.md` skill (financial only, for now — see `src/domains/financial/skills/improve-self.md`), checks the skill's own `gate:` first (same `--gated` machinery as `run-skill`) and runs it if due. The skill reads a `reflectionDigest` of recent `run-check` findings, recent run summaries, and every existing feature-request proposal (so it doesn't duplicate one), and writes its judgment as zero or more `## Feature Request: <title>` sections. `core/featureRequests.ts` parses those deterministically and writes each as its own file under `<brain>/<domain>/feature-requests/<date>-<slug>.md`, skipping (and reporting) anything that looks like a near-duplicate of an existing `proposed`/`in-progress` proposal.
 
 **The hard safety line:** this never edits source code, skills, or config — it only ever writes new files under `feature-requests/`. Turning a proposal into actual work is a separate, deliberate, human-initiated step.
 
 ```bash
 snestack reflect                        # every registered domain with an improve-self skill
 snestack reflect --domain financial     # just financial
+snestack reflect --domain financial --force   # bypass the gate, run it right now regardless of last-run/inputs
 snestack feature list                   # every proposal, any domain/status
 snestack feature list --domain financial --status proposed
 snestack feature approve 2026-10-13-add-retry-backoff-to-data-refresh   # proposed -> in-progress
 snestack feature done 2026-10-13-add-retry-backoff-to-data-refresh      # -> done
 ```
 
-`snestack reflect --json` prints a per-domain summary (ran/skipped, files written, duplicates skipped, parse errors) that `snestack reflect-notify --file <that json>` turns into one combined email — each new proposal with its `feature approve` command — sending nothing when there's nothing new. `scripts/reflect-check.sh` (cron table above) chains the two nightly.
+`snestack reflect --json` prints a per-domain summary (ran/skipped, files written, duplicates skipped, parse errors) that `snestack reflect-notify --file <that json>` turns into one combined email — each new proposal with its `feature approve` command — sending nothing when there's nothing new. `scripts/reflect-check.sh --force` (cron table above) chains the two, forced; `reflect-check.sh` alone respects the gate as usual.
+
+`--force` skips the gate check but not the "does this domain have an `improve-self.md` skill" check — it still reports `skipped (no improve-self skill for this domain yet)` for calendar/travel until those are built. A quiet result (zero proposals) right after a forced run is expected and fine — it means the skill looked and genuinely found nothing worth proposing, not that the force didn't work; check the model's own write-up (`snestack run-skill financial improve-self financial`, no gate at all) if you want to see its reasoning directly.
 
 ### Calendar domain setup (Google Calendar, read-only)
 

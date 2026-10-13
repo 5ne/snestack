@@ -86,6 +86,43 @@ describe("CLI: feature (no model calls — safe to smoke-test)", () => {
   });
 });
 
+describe("CLI: reflect --force (no model call for a domain with no improve-self skill yet)", () => {
+  let brainRoot: string;
+
+  const run = (args: string) =>
+    execSync(`NODE_OPTIONS=--experimental-sqlite npx ts-node --project tsconfig.json ${CLI} ${args}`, {
+      cwd: path.resolve(__dirname, ".."),
+      encoding: "utf8",
+      stdio: "pipe",
+      env: {
+        ...process.env,
+        SNESTACK_BRAIN_ROOT: brainRoot,
+        SNESTACK_FINNHUB_API_KEY: "fake-finnhub-key-0123456789",
+        SNESTACK_CLAUDE_API_KEY: "sk-fake-claude-key-0123456789",
+        SNESTACK_GMAIL_ADDRESS: "test@example.com",
+        SNESTACK_NOTIFICATION_EMAIL: "test@example.com",
+      },
+    });
+
+  beforeEach(() => {
+    brainRoot = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-cli-reflect-force-"));
+  });
+  afterEach(() => fs.rmSync(brainRoot, { recursive: true, force: true }));
+
+  it("--force still skips a domain with no improve-self skill (the no-skill check runs before the gate/force check)", () => {
+    const out = run("reflect --domain calendar --force");
+    expect(out).toMatch(/skipped \(no improve-self skill for this domain yet\)/);
+  });
+
+  it("--force reports as forced in --json output's reason for a domain with no skill (still skipped, not run)", () => {
+    const out = run("reflect --domain travel --force --json");
+    const results = JSON.parse(out);
+    expect(results).toEqual([
+      { domain: "travel", ran: false, reason: "no improve-self skill for this domain yet", written: [], skippedDuplicates: [], parseErrors: [] },
+    ]);
+  });
+});
+
 describe("CLI: reflect-notify --dry-run (no email send — safe to smoke-test)", () => {
   let brainRoot: string;
 

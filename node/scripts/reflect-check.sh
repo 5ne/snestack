@@ -12,15 +12,20 @@
 # src/core/featureRequests.ts's header comment for the safety line. It only
 # ever writes new files under <brain>/<domain>/feature-requests/.
 #
-# Usage: reflect-check.sh [--dry-run]
+# Usage: reflect-check.sh [--dry-run] [--force]
 #   --dry-run  run reflect for real (gate + skill + parsing), but don't send
 #              the summary email even if something new was written.
+#   --force    bypass every domain's gate and run improve-self unconditionally
+#              (e.g. to re-check right after a gated-off run, or while testing
+#              a skill prompt change) instead of waiting for it to trigger.
 set -euo pipefail
 
 DRY_RUN=0
+FORCE_FLAG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
+    --force) FORCE_FLAG="--force" ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -57,7 +62,7 @@ echo "Run directory: $PUBLISH_DIR (staged in $RUN_DIR; dry run: $DRY_RUN)"
 # a quiet day/week for a given domain costs no model call at all, just the digest assembly).
 rc=0
 RL_ERR_FILE="$RUN_DIR/reflect.log" rl_step reflect all \
-  node dist/cli.js reflect --json > "$RUN_DIR/reflect.json" 2> "$RUN_DIR/reflect.log" || rc=$?
+  node dist/cli.js reflect --json $FORCE_FLAG > "$RUN_DIR/reflect.json" 2> "$RUN_DIR/reflect.log" || rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$RUN_DIR/reflect.json" ]; then
   echo "reflect produced no output (exit $rc) — nothing to notify on." >&2
   exit "$rc"
