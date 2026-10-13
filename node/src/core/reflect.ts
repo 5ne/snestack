@@ -122,12 +122,20 @@ export function runSummariesSource(runRoots: string[]): DigestSource {
   };
 }
 
-/** Every existing feature-request proposal for the domain, any status — the key dedup input. */
+/**
+ * Every existing feature-request proposal for the domain, any status — the key
+ * dedup input. Always returns non-empty text, even with zero proposals —
+ * `gatherReflectionDigest` drops an empty source's section entirely, and the
+ * skill is explicitly told to read this section before proposing anything, so
+ * it must never look simply absent from a digest that in fact had nothing to
+ * report here.
+ */
 export function existingFeatureRequestsSource(): DigestSource {
   return {
     name: "existing-feature-requests",
     fetch(opts) {
       const proposals = listProposals(opts.brainRoot, opts.domain);
+      if (proposals.length === 0) return "(none yet — no existing proposals for this domain.)";
       return proposals.map((p) => `- [${p.status}] ${p.slug}: ${p.title} (impact=${p.impact ?? "?"}, effort=${p.effort ?? "?"})`).join("\n");
     },
   };

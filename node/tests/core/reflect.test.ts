@@ -153,9 +153,14 @@ describe("existingFeatureRequestsSource", () => {
   });
   afterEach(() => fs.rmSync(brainRoot, { recursive: true, force: true }));
 
-  it("is empty for a domain with no feature-requests yet", () => {
+  it("says explicitly that there are none yet, rather than returning empty text, for a domain with no feature-requests", () => {
+    // Must stay non-empty: gatherReflectionDigest drops an empty source's section
+    // entirely, and the skill is told to read this section before proposing
+    // anything — it must never look simply absent when it in fact had nothing to say.
     const opts: ReflectOpts = { domain: "calendar", brainRoot, now, days: 7 };
-    expect(existingFeatureRequestsSource().fetch(opts)).toBe("");
+    const text = existingFeatureRequestsSource().fetch(opts);
+    expect(text).not.toBe("");
+    expect(text).toMatch(/none yet/i);
   });
 
   it("lists every existing proposal with status, impact, and effort", () => {
