@@ -18,20 +18,23 @@ export async function runDataRefresh(
   tier: DataRefreshTier,
   tickersFlag: string | undefined,
   deps: { config: Config; db: Db }
-): Promise<{ tickers: string[] }> {
+): Promise<{ tickers: string[]; failed: string[] }> {
   const { config, db } = deps;
   const tickers = resolveTickerUniverse(db, tickersFlag);
-  if (tickers.length === 0) return { tickers };
+  if (tickers.length === 0) return { tickers, failed: [] };
 
+  let results: Record<string, unknown>;
   if (tier === "intraday") {
     const quoteAgent = new QuoteAgent(config.getFinnhubApiKey(), db);
-    await quoteAgent.batchAnalyze(tickers, { skipFundamentals: true });
+    results = await quoteAgent.batchAnalyze(tickers, { skipFundamentals: true });
   } else if (tier === "daily") {
     const quoteAgent = new QuoteAgent(config.getFinnhubApiKey(), db);
-    await quoteAgent.batchAnalyze(tickers, { skipFundamentals: false });
+    results = await quoteAgent.batchAnalyze(tickers, { skipFundamentals: false });
   } else {
     const equityAgent = new EquityAgent(undefined, undefined, db);
-    await equityAgent.batchAnalyze(tickers);
+    results = await equityAgent.batchAnalyze(tickers);
   }
-  return { tickers };
+  // Agents swallow per-ticker errors (logged at error level) and return null; surface which ones.
+  const failed = tickers.filter((t) => results[t] == null);
+  return { tickers, failed };
 }

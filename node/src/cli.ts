@@ -339,7 +339,10 @@ program
     const config = getConfig();
     const db = new Db(config.getDatabasePath());
     try {
-      const { tickers } = await runDataRefresh(opts.tier as DataRefreshTier, opts.tickers, { config, db });
+      const { tickers, failed } = await runDataRefresh(opts.tier as DataRefreshTier, opts.tickers, { config, db });
+      if (failed.length > 0) {
+        console.error(`data-refresh ${opts.tier}: ${failed.length}/${tickers.length} ticker(s) failed: ${failed.join(", ")}`);
+      }
       if (tickers.length === 0) {
         console.log(`No tickers to refresh (no positions/watchlist entries, and no --tickers given).`);
         return;

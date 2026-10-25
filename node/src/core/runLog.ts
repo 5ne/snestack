@@ -214,15 +214,16 @@ export function finalizeRun(dir: string, scriptExitCode: number | null = null): 
 
 /**
  * A short, useful error string from a step's stderr log: the last few lines that
- * aren't routine info/debug logging (where the actual failure message lives),
- * capped to the end of the text. Null if the log is empty.
+ * aren't routine info/debug logging or stack frames (where the actual failure
+ * message lives, not the `at Command._chainOrCall ...` tail), capped to the end
+ * of the text. Null if the log is empty.
  */
 export function extractErrorSummary(text: string, maxChars = 400): string | null {
   const lines = text
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
-  const meaningful = lines.filter((l) => !/\[(info|debug|verbose)\]/.test(l));
+  const meaningful = lines.filter((l) => !/\[(info|debug|verbose)\]/.test(l) && !/^at\s/.test(l));
   const picked = (meaningful.length ? meaningful : lines).slice(-3).join(" | ");
   return picked ? picked.slice(-maxChars) : null;
 }
