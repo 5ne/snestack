@@ -33,6 +33,7 @@ import {
   listProposals,
   findProposalBySlug,
   setProposalStatus,
+  readProposalFile,
   type ProposalStatus,
 } from "./core/featureRequests";
 import { buildReflectEmail, type DomainReflectResult } from "./core/reflectNotify";
@@ -1044,13 +1045,13 @@ program
     if (!ok) process.exitCode = 1;
   });
 
-const feature = program.command("feature").description("Manage improve-self feature-request proposals (proposed -> in-progress -> done)");
+const feature = program.command("feature").description("Manage improve-self feature-request proposals (proposed -> approved -> in-progress -> done)");
 
 feature
   .command("list")
   .description("List feature-request proposals")
   .option("--domain <d>", "Only this domain (default: every registered domain)")
-  .option("--status <s>", "Only this status: proposed | in-progress | done")
+  .option("--status <s>", "Only this status: proposed | approved | in-progress | done")
   .action((opts: { domain?: string; status?: string }) => {
     const brainRoot = getConfig().getBrainRoot();
     const domains = opts.domain ? [opts.domain] : REGISTERED_DOMAINS;
@@ -1082,7 +1083,13 @@ function findProposalAnyDomain(
   return { domain: matches[0].domain, file: matches[0].proposal.file };
 }
 
-function setStatusCommand(id: string, domainHint: string | undefined, status: ProposalStatus, label: string): void {
+function setStatusCommand(
+  id: string,
+  domainHint: string | undefined,
+  status: ProposalStatus,
+  label: string,
+  requireCurrent?: ProposalStatus
+): void {
   const brainRoot = getConfig().getBrainRoot();
   try {
     const found = findProposalAnyDomain(brainRoot, id, domainHint);
@@ -1090,6 +1097,14 @@ function setStatusCommand(id: string, domainHint: string | undefined, status: Pr
       console.error(`feature ${label}: no proposal found with id "${id}"`);
       process.exitCode = 1;
       return;
+    }
+    if (requireCurrent) {
+      const current = readProposalFile(found.file)?.status;
+      if (current !== requireCurrent) {
+        console.error(`feature ${label}: "${id}" is ${current ?? "unreadable"}, not ${requireCurrent} — nothing changed`);
+        process.exitCode = 1;
+        return;
+      }
     }
     setProposalStatus(found.file, status);
     console.log(`${found.domain}/${id}: -> ${status}`);
@@ -1101,9 +1116,15 @@ function setStatusCommand(id: string, domainHint: string | undefined, status: Pr
 
 feature
   .command("approve <id>")
-  .description("Mark a proposal in-progress — <id> is its filename without the .md extension (see `feature list`)")
+  .description("Mark a proposal approved (a human decision; nothing has started) — <id> is its filename without the .md extension (see `feature list`)")
   .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
-  .action((id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "in-progress", "approve"));
+  .action((id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "approved", "approve"));
+
+feature
+  .command("start <id>")
+  .description("Mark an approved proposal in-progress (run by whoever picks the work up, e.g. the eng skill) — refuses anything not currently approved")
+  .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
+  .action((id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "in-progress", "start", "approved"));
 
 feature
   .command("done <id>")

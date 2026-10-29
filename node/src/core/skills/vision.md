@@ -300,7 +300,7 @@ automation health (`core/reflect.ts`'s `gatherReflectionDigest`) and writes
 zero or more `## Feature Request:` sections, which `core/featureRequests.ts`
 parses deterministically into files under
 `<brain>/<domain>/feature-requests/<date>-<slug>.md`. A human reviews those
-with `snestack feature list` and moves one `proposed` → `in-progress` →
+with `snestack feature list` and moves one `proposed` → `approved` → `in-progress` (via `feature start`, run by whoever picks it up) →
 `done` by hand. That loop only ever *proposes*; it has no opinion on
 priority against a broader plan, and nothing today turns an approved
 proposal into actual code.

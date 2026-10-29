@@ -146,7 +146,7 @@ snestack reflect --domain financial     # just financial
 snestack reflect --domain financial --force   # bypass the gate, run it right now regardless of last-run/inputs
 snestack feature list                   # every proposal, any domain/status
 snestack feature list --domain financial --status proposed
-snestack feature approve 2026-10-13-add-retry-backoff-to-data-refresh   # proposed -> in-progress
+snestack feature approve 2026-10-13-add-retry-backoff-to-data-refresh   # proposed -> approved (then `feature start <id>` -> in-progress)
 snestack feature done 2026-10-13-add-retry-backoff-to-data-refresh      # -> done
 ```
 

@@ -22,6 +22,10 @@ as any other contribution (see `CONTRIBUTING.md`).
 
 ## How to work
 
+0. Only pick up a proposal whose status is `approved`. When you start,
+   run `snestack feature start <id>` (moves it to `in-progress`; it refuses
+   anything not `approved`, so a repeat run won't double-claim one). Leave
+   `done` to a human after the PR merges.
 1. Confirm the change actually belongs in `core/` before touching it: can
    every domain ignore this and keep working? If not, it's domain work —
    see "Domain-specific work" below.

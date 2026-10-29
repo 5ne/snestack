@@ -34,7 +34,7 @@ chat), not silently reordering a list.
    field as written by whatever proposed it.
 4. If the proposal is actually scoped to one domain, it belongs with that
    domain's own PM skill, not here — see "Domain-specific work" below.
-5. `proposed` → `in-progress` is a deliberate, human-reviewed step
+5. `proposed` → `approved` is a deliberate, human-reviewed step
    (`snestack feature approve <id> --domain _system`). Don't move a
    proposal forward just because it's next in a list.
 

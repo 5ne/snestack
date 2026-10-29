@@ -55,7 +55,7 @@ describe("CLI: feature (no model calls — safe to smoke-test)", () => {
     expect(empty).toMatch(/No feature-request proposals/i);
   });
 
-  it("feature approve moves proposed -> in-progress, and done moves it on to done", () => {
+  it("feature approve moves proposed -> approved, start moves approved -> in-progress, and done moves it on to done", () => {
     const [written] = writeProposals(
       brainRoot,
       "financial",
@@ -73,8 +73,14 @@ describe("CLI: feature (no model calls — safe to smoke-test)", () => {
     const slug = path.basename(written.file!, ".md");
 
     const approveOut = run(`feature approve ${slug}`);
-    expect(approveOut).toContain("-> in-progress");
+    expect(approveOut).toContain("-> approved");
+    expect(run("feature list")).toContain("[approved]");
+
+    const startOut = run(`feature start ${slug}`);
+    expect(startOut).toContain("-> in-progress");
     expect(run("feature list")).toContain("[in-progress]");
+    // start only works from approved
+    expect(() => run(`feature start ${slug}`)).toThrow(/not approved/);
 
     const doneOut = run(`feature done ${slug}`);
     expect(doneOut).toContain("-> done");

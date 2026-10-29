@@ -39,7 +39,7 @@ anything.
 2. **`run-summaries`** — a status/cost/error line for each recent run, even
    ones with no findings — gives you the healthy baseline to compare against.
 3. **`existing-feature-requests`** — every proposal already on file for this
-   domain, any status (`proposed`, `in-progress`, `done`). This is the most
+   domain, any status (`proposed`, `approved`, `in-progress`, `done`). This is the most
    important input to read carefully.
 
 ## Judgment process

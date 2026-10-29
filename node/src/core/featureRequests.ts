@@ -18,7 +18,7 @@ import { dayString } from "./runCheck";
 
 export type Impact = "low" | "medium" | "high";
 export type Effort = "small" | "medium" | "large";
-export type ProposalStatus = "proposed" | "in-progress" | "done";
+export type ProposalStatus = "proposed" | "approved" | "in-progress" | "done";
 
 export interface Proposal {
   title: string;
@@ -220,7 +220,7 @@ export interface WrittenProposal {
 /**
  * Writes each proposal as its own file, skipping (and reporting, not
  * silently dropping) any that look like a near-duplicate of an existing
- * proposed/in-progress proposal — the skill is told about existing proposals
+ * proposed/approved/in-progress proposal — the skill is told about existing proposals
  * too, but a model can still duplicate despite being told not to.
  */
 export function writeProposals(
@@ -234,7 +234,7 @@ export function writeProposals(
   const now = opts.now ?? new Date();
   const date = dayString(now);
 
-  const live = listProposals(brainRoot, domain).filter((p) => p.status === "proposed" || p.status === "in-progress");
+  const live = listProposals(brainRoot, domain).filter((p) => p.status === "proposed" || p.status === "approved" || p.status === "in-progress");
   const results: WrittenProposal[] = [];
 
   for (const proposal of proposals) {

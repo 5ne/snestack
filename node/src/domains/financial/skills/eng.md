@@ -13,6 +13,10 @@ is how to *apply* those, scoped to this domain.
 
 ## How to work
 
+0. Only pick up a proposal whose status is `approved`. When you start,
+   run `snestack feature start <id>` (moves it to `in-progress`; it refuses
+   anything not `approved`, so a repeat run won't double-claim one). Leave
+   `done` to a human after the PR merges.
 1. **Adding a skill** — new `domains/financial/skills/<name>.md` with
    `name`/`domain`/`requires`/`references` frontmatter (see any existing
    skill for the shape); add it to `skills/INDEX.md`'s list.

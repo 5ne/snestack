@@ -32,7 +32,7 @@ or filed manually) and decide, per proposal, whether it's worth doing now.
    the owner's judgment or just the plumbing around it?
 4. If a proposal is really about `core/` or spans another domain too, it's
    not this domain's call — see `core/skills/pm.md` instead.
-5. `proposed` → `in-progress` (`snestack feature approve <id> --domain
+5. `proposed` → `approved` (`snestack feature approve <id> --domain
    financial`) is a deliberate step; don't move something forward just
    because it's next in the list.
 
