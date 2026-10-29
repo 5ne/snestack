@@ -10,6 +10,7 @@ Entry point for Claude (or whatever thin harness is running snestack) when analy
 ## Available skills
 
 - `vision.md` — product/engineering vision for this domain: mission, non-negotiables, current state, candidate directions. Read this (plus `../../../core/skills/vision.md`) before triaging or implementing a `feature-requests/` proposal — it's never run through `run-skill`.
+- `pm.md` / `eng.md` — brief role grounding for whoever is acting as this domain's PM or engineer when triaging/implementing a `feature-requests/` proposal. Read the harness-level `../../../core/skills/pm.md`/`eng.md` first; neither is run through `run-skill`.
 - `long-term-quality.md` — buy-and-hold judgment: is the growth thesis intact, is the business durably profitable, is this a good moment to add. Applies to your current positions and most watchlist names by default.
 - `swing-trading-large-cap.md` — tactical RSI-swing trading, restricted to large-cap/highly-profitable names only. Can run alongside `long-term-quality.md` on the same ticker — they're independent judgments, not merged into one call.
 - `private-company-eval.md` — placeholder for private/pre-IPO holdings. Nothing exists to apply it to yet.

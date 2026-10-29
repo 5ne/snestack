@@ -5,7 +5,9 @@
 # no longer calls that skill. This script does NOT itself refresh the cache —
 # scripts/data-refresh-daily.sh is expected to run first (earlier in cron) and
 # populate it; data-dump here is a cache snapshot (and the ticker-list source),
-# not a refresh. This is the automated version of prompts/daily-analysis.md.
+# not a refresh. This is the automated version of the original manual nightly-analysis
+# workflow (the prompts/ directory this once lived in was removed as dead weight —
+# see domains/financial/skills/eng.md for how to change this script now).
 # Every command here is a plain deterministic CLI call (each with its own
 # single Claude API call where noted) — no agentic tool-use loop, so no
 # elevated/unattended permissions are needed to run this unattended from cron.
