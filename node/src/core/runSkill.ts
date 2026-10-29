@@ -140,6 +140,17 @@ export async function runSkill(
     { tier, maxTokens, label: `${domain}/${skillName} ${subject}` }
   );
 
+  const verdict = parseVerdict(output);
+  // Recorded so run-check --cost can measure how often a model call just repeats the previous verdict.
+  if (verdict) {
+    logRunEvent("verdict", {
+      skill: `${domain}/${skillName}`,
+      subject,
+      label: verdict.label,
+      confidence: verdict.confidence,
+    });
+  }
+
   return {
     domain,
     skill: skillName,
@@ -148,7 +159,7 @@ export async function runSkill(
     stopReason,
     outputTokensUsed,
     verdictRequired,
-    verdict: parseVerdict(output),
+    verdict,
   };
 }
 

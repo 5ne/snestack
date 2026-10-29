@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { evaluateRuns, checkCacheStaleness, readSummary, type RunExpectation, type Finding } from "./runCheck";
 import { listProposals, featureRequestsDir } from "./featureRequests";
+import { computeRunStats, formatRunStats, type RunStatsTarget } from "./runStats";
 
 /**
  * Builds the digest an `improve-self` skill reads: recent automation health,
@@ -118,6 +119,22 @@ export function runSummariesSource(runRoots: string[]): DigestSource {
         }
       }
       return lines.join("\n");
+    },
+  };
+}
+
+/**
+ * Cost, model-call, gate-skip and redundant-verdict rollup (7 and 30 days) for
+ * the given run roots — the numbers `improve-self` needs to propose gate changes
+ * from data rather than from reading run.jsonl by hand. Same data as
+ * `snestack run-check --cost`.
+ */
+export function runStatsSource(targets: RunStatsTarget[]): DigestSource {
+  return {
+    name: "cost-and-redundancy-rollup",
+    fetch(opts) {
+      if (targets.length === 0) return "";
+      return formatRunStats(computeRunStats(targets, opts.now));
     },
   };
 }

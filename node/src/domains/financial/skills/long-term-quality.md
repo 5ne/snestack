@@ -7,9 +7,13 @@ references: [quality-bar]
 # Run only when something worth a fresh look has happened: RSI at a level that matters
 # for adds (under 40) or stretched (over 70), a 5%+ move since the last run, a new
 # Morningstar report or brain-file edit, or it has been a week. Otherwise skip the call.
+# A name that merely stays past the RSI threshold (e.g. in a market-wide selloff) does not
+# re-trigger until RSI has moved at least 5 points since the last run; the weekly maxAgeDays
+# backstop still gives a stuck-oversold name a fresh look. Same rule the swing skill uses.
 gate:
   rsiBelow: 40
   rsiAbove: 70
+  minRsiMoveToRerun: 5
   priceMovePct: 5
   maxAgeDays: 7
   inputsUpdated: true

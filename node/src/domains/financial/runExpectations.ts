@@ -1,5 +1,6 @@
 import * as path from "path";
 import type { RunExpectation } from "../../core/runCheck";
+import type { RunStatsTarget } from "../../core/runStats";
 
 // Don't expect runs for an automation before run logging (or that automation's
 // own cadence split) existed — see node/README.md's cron table / pipeline history.
@@ -51,4 +52,9 @@ export function financialRunExpectations(brainRoot: string): RunExpectation[] {
 /** Every runsRoot financialRunExpectations knows about — for the run-summaries digest source. */
 export function financialRunRoots(brainRoot: string): string[] {
   return financialRunExpectations(brainRoot).map((e) => e.runsRoot);
+}
+
+/** The same automations as financialRunExpectations, shaped for the cost / redundancy rollup (`run-check --cost`, the reflection digest). */
+export function financialRunStatsTargets(brainRoot: string): RunStatsTarget[] {
+  return financialRunExpectations(brainRoot).map((e) => ({ domain: "financial", script: e.name, runsRoot: e.runsRoot }));
 }

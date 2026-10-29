@@ -4,12 +4,12 @@ import { getConfig } from "../../core/config";
 import { Db } from "../../core/db";
 import { getLogger } from "../../core/logger";
 import type { ContextToolMap } from "../../core/contextTools";
-import { gatherReflectionDigest, runCheckFindingsSource, runSummariesSource, existingFeatureRequestsSource } from "../../core/reflect";
+import { gatherReflectionDigest, runCheckFindingsSource, runSummariesSource, runStatsSource, existingFeatureRequestsSource } from "../../core/reflect";
 import { QuoteAgent } from "./agents/quoteAgent";
 import { EquityAgent } from "./agents/equityAgent";
 import { quoteDataFromCache, equityDataFromCache } from "./fundamentalsCache";
 import { resolveTickerUniverse } from "./cliHelpers";
-import { financialRunExpectations, financialRunRoots } from "./runExpectations";
+import { financialRunExpectations, financialRunRoots, financialRunStatsTargets } from "./runExpectations";
 
 const logger = getLogger("financial/contextTools");
 
@@ -120,6 +120,7 @@ export const contextTools: ContextToolMap = {
           getLatestFundamentalsAge: (ticker, source) => ageMs(db.getLatestFundamentals(ticker, source)?.fetched_at ?? null),
         }),
         runSummariesSource(financialRunRoots(brainRoot)),
+        runStatsSource(financialRunStatsTargets(brainRoot)),
         existingFeatureRequestsSource(),
       ];
       return gatherReflectionDigest(sources, {

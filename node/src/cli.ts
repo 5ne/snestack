@@ -21,7 +21,8 @@ import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
 import { resolveTickerUniverse } from "./domains/financial/cliHelpers";
-import { financialRunExpectations } from "./domains/financial/runExpectations";
+import { financialRunExpectations, financialRunStatsTargets } from "./domains/financial/runExpectations";
+import { computeRunStats, formatRunStats } from "./core/runStats";
 import { runDataRefresh, DATA_REFRESH_TIERS, type DataRefreshTier } from "./domains/financial/dataRefresh";
 import { equityDataFromCache } from "./domains/financial/fundamentalsCache";
 import type { Signal } from "./core/models";
@@ -43,6 +44,9 @@ import domainsConfig from "./config/domains.json";
 const program = new Command();
 
 const REGISTERED_DOMAINS = Object.keys(domainsConfig);
+// Cross-domain (harness-level) proposals live under <brain>/_system/feature-requests/ (see core/skills/pm.md).
+// `_system` isn't a runnable domain, so `reflect` keeps using REGISTERED_DOMAINS; only `feature` commands see it.
+const FEATURE_DOMAINS = [...REGISTERED_DOMAINS, "_system"];
 
 program
   .name("snestack")
@@ -880,8 +884,18 @@ program
   )
   .option("--days <n>", "How many days back to check, including today", "3")
   .option("--json", "Print findings as JSON")
-  .action((opts: { days: string; json?: boolean }) => {
+  .option(
+    "--cost",
+    "Instead of health findings, print a read-only cost rollup per script and per domain over 7 and 30 days: " +
+      "estimated cost, model calls, gate skip ratio, and the share of model calls that repeated the previous verdict for the same subject"
+  )
+  .action((opts: { days: string; json?: boolean; cost?: boolean }) => {
     const brainRoot = getConfig().getBrainRoot();
+    if (opts.cost) {
+      const stats = computeRunStats(financialRunStatsTargets(brainRoot), new Date());
+      console.log(opts.json ? JSON.stringify({ computed_at: new Date().toISOString(), ...stats }, null, 2) : formatRunStats(stats));
+      return;
+    }
     // The nightly travel backfill is deprecated and unscheduled (see scripts/travel-catalog-backfill.sh),
     // so no travel run is expected. Add a { name: "travel-backfill", runsRoot: <brain>/travel/_runs, ... }
     // expectation back here if it's ever rescheduled.
@@ -1054,7 +1068,7 @@ feature
   .option("--status <s>", "Only this status: proposed | approved | in-progress | done")
   .action((opts: { domain?: string; status?: string }) => {
     const brainRoot = getConfig().getBrainRoot();
-    const domains = opts.domain ? [opts.domain] : REGISTERED_DOMAINS;
+    const domains = opts.domain ? [opts.domain] : FEATURE_DOMAINS;
     const rows = domains.flatMap((d) => listProposals(brainRoot, d));
     const filtered = opts.status ? rows.filter((r) => r.status === opts.status) : rows;
     if (filtered.length === 0) {
@@ -1072,7 +1086,7 @@ function findProposalAnyDomain(
   slug: string,
   domainHint?: string
 ): { domain: string; file: string } | null {
-  const domains = domainHint ? [domainHint] : REGISTERED_DOMAINS;
+  const domains = domainHint ? [domainHint] : FEATURE_DOMAINS;
   const matches = domains
     .map((domain) => ({ domain, proposal: findProposalBySlug(brainRoot, domain, slug) }))
     .filter((m): m is { domain: string; proposal: NonNullable<ReturnType<typeof findProposalBySlug>> } => m.proposal != null);
