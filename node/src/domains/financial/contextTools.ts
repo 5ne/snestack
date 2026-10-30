@@ -8,7 +8,7 @@ import { gatherReflectionDigest, runCheckFindingsSource, runSummariesSource, run
 import { QuoteAgent } from "./agents/quoteAgent";
 import { EquityAgent } from "./agents/equityAgent";
 import { quoteDataFromCache, equityDataFromCache } from "./fundamentalsCache";
-import { resolveTickerUniverse } from "./cliHelpers";
+import { resolveTickerUniverse, loadCacheAgeGetters } from "./cliHelpers";
 import { financialRunExpectations, financialRunRoots, financialRunStatsTargets } from "./runExpectations";
 
 const logger = getLogger("financial/contextTools");
@@ -47,11 +47,11 @@ export const contextTools: ContextToolMap = {
   quote: async (subject) => {
     const ticker = subject.toUpperCase();
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
+    const db = await Db.open(config.getDatabaseUrl());
     try {
-      const quoteRow = db.getQuoteIfFresh(ticker, QUOTE_MAX_AGE_MS);
+      const quoteRow = await db.getQuoteIfFresh(ticker, QUOTE_MAX_AGE_MS);
       const fundRow = quoteRow
-        ? db.getFundamentalsIfFresh(ticker, "finnhub", FINNHUB_FUNDAMENTALS_MAX_AGE_MS)
+        ? await db.getFundamentalsIfFresh(ticker, "finnhub", FINNHUB_FUNDAMENTALS_MAX_AGE_MS)
         : undefined;
       if (quoteRow && fundRow) {
         return quoteDataFromCache(quoteRow, fundRow);
@@ -65,16 +65,16 @@ export const contextTools: ContextToolMap = {
       // burning another Twelve Data request for the same numbers.
       return await new QuoteAgent(config.getFinnhubApiKey(), db).safeAnalyze(ticker);
     } finally {
-      db.close();
+      await db.close();
     }
   },
 
   fundamentals: async (subject) => {
     const ticker = subject.toUpperCase();
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
+    const db = await Db.open(config.getDatabaseUrl());
     try {
-      const row = db.getFundamentalsIfFresh(ticker, "morningstar", MORNINGSTAR_MAX_AGE_MS);
+      const row = await db.getFundamentalsIfFresh(ticker, "morningstar", MORNINGSTAR_MAX_AGE_MS);
       if (row) return equityDataFromCache(row);
 
       logger.warn(
@@ -82,7 +82,7 @@ export const contextTools: ContextToolMap = {
       );
       return await new EquityAgent(undefined, undefined, db).safeAnalyze(ticker);
     } finally {
-      db.close();
+      await db.close();
     }
   },
 
@@ -109,15 +109,14 @@ export const contextTools: ContextToolMap = {
   reflectionDigest: async () => {
     const config = getConfig();
     const brainRoot = config.getBrainRoot();
-    const db = new Db(config.getDatabasePath());
+    const db = await Db.open(config.getDatabaseUrl());
     try {
-      const tickers = resolveTickerUniverse(db);
-      const ageMs = (fetchedAt: string | null): number | null => (fetchedAt ? Date.now() - Date.parse(fetchedAt) : null);
+      const tickers = await resolveTickerUniverse(db);
+      const ageGetters = await loadCacheAgeGetters(db, tickers);
       const sources = [
         runCheckFindingsSource(financialRunExpectations(brainRoot), {
           tickers,
-          getLatestQuoteAge: (ticker) => ageMs(db.getLatestQuote(ticker)?.fetched_at ?? null),
-          getLatestFundamentalsAge: (ticker, source) => ageMs(db.getLatestFundamentals(ticker, source)?.fetched_at ?? null),
+          ...ageGetters,
         }),
         runSummariesSource(financialRunRoots(brainRoot)),
         runStatsSource(financialRunStatsTargets(brainRoot)),
@@ -130,7 +129,7 @@ export const contextTools: ContextToolMap = {
         days: REFLECT_LOOKBACK_DAYS,
       });
     } finally {
-      db.close();
+      await db.close();
     }
   },
 };

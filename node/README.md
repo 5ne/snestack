@@ -1,6 +1,6 @@
 # snestack — Node.js / TypeScript Implementation
 
-The active implementation of snestack. Uses Node.js 22 with TypeScript, node:sqlite (built-in), and the Anthropic SDK.
+The active implementation of snestack. Uses Node.js 22 with TypeScript, Postgres (Supabase, via `pg`), and the Anthropic SDK. `node:sqlite` is only used by the one-time `db-migrate` import.
 
 ## Prerequisites
 
@@ -93,7 +93,12 @@ NODE_OPTIONS=--experimental-sqlite npm run test:coverage
 
 ## Database
 
-Lives outside the repo, in the shared Google Drive folder at `<SNESTACK_BRAIN_ROOT>/financial/snestack.db` — derived from `SNESTACK_BRAIN_ROOT` in `.env` (default `~/Documents/personal-brain`), not set independently. Point `SNESTACK_BRAIN_ROOT` at wherever your Drive folder actually syncs to (e.g. `~/Google Drive/My Drive/personal-brain`) and the db, brain, and reports all follow.
+A hosted Postgres (Supabase), reached with plain `pg` through the connection string in `SNESTACK_DATABASE_URL` (gitignored `node/.env` only — never committed, never in the Drive-synced brain). It replaces the old `snestack.db` SQLite file, whose WAL side files in a Drive-synced folder and single-writer locking caused `database is locked` failures when the intraday refresh and swing check started in the same minute. Tables are created on first connect (`CREATE TABLE IF NOT EXISTS`, with row level security enabled so Supabase's public API exposes nothing). Everything else — brain, reports, signals, run logs, travel — stays in the Drive-synced `SNESTACK_BRAIN_ROOT` folder as before.
+
+- **Unreachable database fails fast.** Every command opens the db up front; if Supabase can't be reached it exits with a `DatabaseError`, and `snestack run-check` reports a `database_unreachable` error finding. Nothing silently falls back to stale data.
+- **Direct host is IPv6-only.** `db.<ref>.supabase.co:5432` only resolves over IPv6. If the machine running cron is IPv4-only, use the *pooler* connection string from the Supabase dashboard instead (Connect → Session pooler).
+- **One-time import of the old history:** `snestack db-migrate --dry-run`, then `snestack db-migrate`. It reads `<SNESTACK_BRAIN_ROOT>/financial/snestack.db` read-only, copies every table, and checks per-table row counts. It is safe to re-run. Keep the SQLite file as the backup afterward.
+- **Free tier vs. cadence:** the intraday refresh runs every 30 minutes in market hours; each run opens a small pool (max 3 connections) and closes it. Free-tier projects pause after a week of inactivity and cap storage at 500 MB — neither should bite at this volume, but watch the first weeks.
 
 A `fundamentals` table holds one cached row per `(ticker, as_of_date, source)` — `source` is `finnhub` or `morningstar`, kept as two independent rows rather than merged, since the two providers' figures aren't reconciled against each other. `quotes` has a `fetched_at` column alongside it. `data-refresh` (see "Skill harness" below) is the only thing that writes either table; everything else (`run-skill`, `data-dump`) only reads from them.
 

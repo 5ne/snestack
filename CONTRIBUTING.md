@@ -27,7 +27,7 @@ cp .env.example .env
 None of this lives in the repo — it's all in a Google Drive-synced folder, one directory setting (`SNESTACK_BRAIN_ROOT` in `.env`) away from everything else. Default is `~/Documents/personal-brain`; point it at wherever your Drive actually syncs to (e.g. `~/Google Drive/My Drive/personal-brain`) and the db, brain, and reports all follow — there's no second setting to remember to update. See `.gitignore` and each subfolder's own README:
 - `<SNESTACK_BRAIN_ROOT>/financial/brain/` — per-company thesis notes
 - `<SNESTACK_BRAIN_ROOT>/financial/reports/` — Morningstar PDFs (see that folder's README for the download/organize workflow)
-- `<SNESTACK_BRAIN_ROOT>/financial/snestack.db` — the sqlite db (derived from `SNESTACK_BRAIN_ROOT`, not set independently)
+- The db is hosted Postgres (Supabase), via `SNESTACK_DATABASE_URL` in `node/.env`. Tests never touch it: they use `pg-mem` through `tests/helpers/testDb.ts` (`openTestDb()`; `shareDb()` for code that calls `Db.open` itself)
 
 ### Run Tests
 

@@ -84,8 +84,8 @@ export class TraderAgent extends BaseAgent<boolean> {
             `${holds.length} HOLD, ${actionNow.length} act-now, ${Object.keys(issues).length} with issues)`
         );
         for (const signal of signals) {
-          this.db.addTicker(signal.ticker, signal.ticker, "PUBLIC");
-          this.db.addSignal(
+          await this.db.addTicker(signal.ticker, signal.ticker, "PUBLIC");
+          await this.db.addSignal(
             signal.ticker,
             signal.date.toISOString(),
             signal.recommendation,

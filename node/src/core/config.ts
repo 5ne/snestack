@@ -32,10 +32,11 @@ export class Config {
   static readonly TWILIO_AUTH_TOKEN = "SNESTACK_TWILIO_AUTH_TOKEN";
   static readonly SMS_PHONE = "SNESTACK_SMS_PHONE";
   static readonly BRAIN_ROOT = "SNESTACK_BRAIN_ROOT";
+  static readonly DATABASE_URL = "SNESTACK_DATABASE_URL";
   // Root of the shared Google Drive-synced folder — the one directory setting
   // for all of a domain's shared data. Each domain's brain lives under
   // <root>/<domain>/brain/ (e.g. <root>/financial/brain/), and the financial
-  // domain's db lives at <root>/financial/snestack.db — both derived from
+  // domain's legacy SQLite db lived at <root>/financial/snestack.db (the live db is now Postgres, see SNESTACK_DATABASE_URL) — derived from
   // this single root rather than configured separately.
   static readonly DEFAULT_BRAIN_ROOT = path.join(os.homedir(), "Documents", "personal-brain");
 
@@ -61,9 +62,17 @@ export class Config {
     process.env[key] = value;
   }
 
-  /** Derived from getBrainRoot() — the db lives in the shared folder alongside brain/ and reports/. */
+  /** Legacy SQLite file, derived from getBrainRoot(). No longer the live db (see getDatabaseUrl) — kept only as the `db-migrate` source and backup. */
   getDatabasePath(): string {
     return path.join(this.getBrainRoot(), "financial", "snestack.db");
+  }
+
+  /**
+   * Postgres (Supabase) connection string for the financial db. Lives only in
+   * the gitignored node/.env — never in the Drive-synced brain or the repo.
+   */
+  getDatabaseUrl(): string {
+    return Config.require(Config.DATABASE_URL);
   }
 
   getBrainRoot(): string {

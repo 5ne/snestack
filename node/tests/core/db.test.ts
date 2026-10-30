@@ -1,211 +1,204 @@
-import * as os from "os";
-import * as path from "path";
-import * as fs from "fs";
 import { Db } from "../../src/core/db";
-
-function tmpDb(): Db {
-  const p = path.join(os.tmpdir(), `snestack-test-${Date.now()}-${Math.random()}.db`);
-  return new Db(p);
-}
+import { openTestDb } from "../helpers/testDb";
 
 describe("Db", () => {
   let db: Db;
 
-  beforeEach(() => {
-    db = tmpDb();
+  beforeEach(async () => {
+    db = await openTestDb();
   });
 
-  afterEach(() => {
-    db.close();
+  afterEach(async () => {
+    await db.close();
   });
 
   // ── Tickers ──────────────────────────────────────────────────────────────
 
   describe("addTicker", () => {
-    it("adds a ticker successfully", () => {
-      expect(db.addTicker("NVDA", "NVIDIA", "PUBLIC")).toBe(true);
+    it("adds a ticker successfully", async () => {
+      expect(await db.addTicker("NVDA", "NVIDIA", "PUBLIC")).toBe(true);
     });
 
-    it("ignores duplicate ticker", () => {
-      db.addTicker("NVDA", "NVIDIA", "PUBLIC");
-      expect(db.addTicker("NVDA", "NVIDIA", "PUBLIC")).toBe(true); // INSERT OR IGNORE
+    it("ignores duplicate ticker", async () => {
+      await db.addTicker("NVDA", "NVIDIA", "PUBLIC");
+      expect(await db.addTicker("NVDA", "NVIDIA", "PUBLIC")).toBe(true); // INSERT OR IGNORE
     });
   });
 
   // ── Positions ─────────────────────────────────────────────────────────────
 
   describe("positions", () => {
-    beforeEach(() => {
-      db.addTicker("NVDA", "NVIDIA", "PUBLIC");
+    beforeEach(async () => {
+      await db.addTicker("NVDA", "NVIDIA", "PUBLIC");
     });
 
-    it("adds a position", () => {
-      expect(db.addPosition("NVDA", 100, 850.0)).toBe(true);
-      const pos = db.getPosition("NVDA");
+    it("adds a position", async () => {
+      expect(await db.addPosition("NVDA", 100, 850.0)).toBe(true);
+      const pos = await db.getPosition("NVDA");
       expect(pos).toBeDefined();
       expect(pos?.shares).toBe(100);
       expect(pos?.cost_basis).toBe(850.0);
     });
 
-    it("returns undefined for missing position", () => {
-      expect(db.getPosition("AAPL")).toBeUndefined();
+    it("returns undefined for missing position", async () => {
+      expect(await db.getPosition("AAPL")).toBeUndefined();
     });
 
-    it("returns all positions", () => {
-      db.addPosition("NVDA", 100, 850.0);
-      expect(db.getAllPositions()).toHaveLength(1);
+    it("returns all positions", async () => {
+      await db.addPosition("NVDA", 100, 850.0);
+      expect(await db.getAllPositions()).toHaveLength(1);
     });
 
-    it("removes a position", () => {
-      db.addPosition("NVDA", 100, 850.0);
-      expect(db.removePosition("NVDA")).toBe(true);
-      expect(db.getPosition("NVDA")).toBeUndefined();
+    it("removes a position", async () => {
+      await db.addPosition("NVDA", 100, 850.0);
+      expect(await db.removePosition("NVDA")).toBe(true);
+      expect(await db.getPosition("NVDA")).toBeUndefined();
     });
 
-    it("removePosition returns false for non-existent", () => {
-      expect(db.removePosition("AAPL")).toBe(false);
+    it("removePosition returns false for non-existent", async () => {
+      expect(await db.removePosition("AAPL")).toBe(false);
     });
 
-    it("upserts position", () => {
-      db.addPosition("NVDA", 100, 850.0);
-      db.addPosition("NVDA", 200, 900.0);
-      const pos = db.getPosition("NVDA");
+    it("upserts position", async () => {
+      await db.addPosition("NVDA", 100, 850.0);
+      await db.addPosition("NVDA", 200, 900.0);
+      const pos = await db.getPosition("NVDA");
       expect(pos?.shares).toBe(200);
     });
 
-    it("defaults strategy to long-term when not specified", () => {
-      db.addPosition("NVDA", 100, 850.0);
-      expect(db.getPosition("NVDA")?.strategy).toBe("long-term");
+    it("defaults strategy to long-term when not specified", async () => {
+      await db.addPosition("NVDA", 100, 850.0);
+      expect((await db.getPosition("NVDA"))?.strategy).toBe("long-term");
     });
 
-    it("accepts an explicit strategy", () => {
-      db.addPosition("NVDA", 100, 850.0, null, "swing");
-      expect(db.getPosition("NVDA")?.strategy).toBe("swing");
+    it("accepts an explicit strategy", async () => {
+      await db.addPosition("NVDA", 100, 850.0, null, "swing");
+      expect((await db.getPosition("NVDA"))?.strategy).toBe("swing");
     });
 
-    it("preserves existing strategy on update when not re-specified", () => {
-      db.addPosition("NVDA", 100, 850.0, null, "both");
-      db.addPosition("NVDA", 200, 900.0); // no strategy passed — should not reset to long-term
-      expect(db.getPosition("NVDA")?.strategy).toBe("both");
+    it("preserves existing strategy on update when not re-specified", async () => {
+      await db.addPosition("NVDA", 100, 850.0, null, "both");
+      await db.addPosition("NVDA", 200, 900.0); // no strategy passed — should not reset to long-term
+      expect((await db.getPosition("NVDA"))?.strategy).toBe("both");
     });
 
-    it("preserves existing notes on update when not re-specified", () => {
-      db.addPosition("NVDA", 100, 850.0, "AI thesis");
-      db.addPosition("NVDA", 200, 900.0); // no notes passed — should not wipe them
-      expect(db.getPosition("NVDA")?.notes).toBe("AI thesis");
+    it("preserves existing notes on update when not re-specified", async () => {
+      await db.addPosition("NVDA", 100, 850.0, "AI thesis");
+      await db.addPosition("NVDA", 200, 900.0); // no notes passed — should not wipe them
+      expect((await db.getPosition("NVDA"))?.notes).toBe("AI thesis");
     });
 
-    it("updatePositionStrategy changes just the strategy", () => {
-      db.addPosition("NVDA", 100, 850.0);
-      expect(db.updatePositionStrategy("NVDA", "swing")).toBe(true);
-      const pos = db.getPosition("NVDA");
+    it("updatePositionStrategy changes just the strategy", async () => {
+      await db.addPosition("NVDA", 100, 850.0);
+      expect(await db.updatePositionStrategy("NVDA", "swing")).toBe(true);
+      const pos = await db.getPosition("NVDA");
       expect(pos?.strategy).toBe("swing");
       expect(pos?.shares).toBe(100); // untouched
     });
 
-    it("updatePositionStrategy rejects an invalid strategy", () => {
-      db.addPosition("NVDA", 100, 850.0);
-      expect(db.updatePositionStrategy("NVDA", "yolo")).toBe(false);
+    it("updatePositionStrategy rejects an invalid strategy", async () => {
+      await db.addPosition("NVDA", 100, 850.0);
+      expect(await db.updatePositionStrategy("NVDA", "yolo")).toBe(false);
     });
 
-    it("updatePositionStrategy returns false for a non-existent position", () => {
-      expect(db.updatePositionStrategy("AAPL", "swing")).toBe(false);
+    it("updatePositionStrategy returns false for a non-existent position", async () => {
+      expect(await db.updatePositionStrategy("AAPL", "swing")).toBe(false);
     });
   });
 
   // ── Watchlist ─────────────────────────────────────────────────────────────
 
   describe("watchlist", () => {
-    beforeEach(() => {
-      db.addTicker("TSLA", "Tesla", "PUBLIC");
+    beforeEach(async () => {
+      await db.addTicker("TSLA", "Tesla", "PUBLIC");
     });
 
-    it("adds to watchlist", () => {
-      expect(db.addWatchlist("TSLA", "wait for dip")).toBe(true);
-      const wl = db.getWatchlist();
+    it("adds to watchlist", async () => {
+      expect(await db.addWatchlist("TSLA", "wait for dip")).toBe(true);
+      const wl = await db.getWatchlist();
       expect(wl).toHaveLength(1);
       expect(wl[0].thesis).toBe("wait for dip");
     });
 
-    it("removes from watchlist", () => {
-      db.addWatchlist("TSLA", "wait for dip");
-      expect(db.removeWatchlist("TSLA")).toBe(true);
-      expect(db.getWatchlist()).toHaveLength(0);
+    it("removes from watchlist", async () => {
+      await db.addWatchlist("TSLA", "wait for dip");
+      expect(await db.removeWatchlist("TSLA")).toBe(true);
+      expect(await db.getWatchlist()).toHaveLength(0);
     });
 
-    it("removeWatchlist returns false for non-existent", () => {
-      expect(db.removeWatchlist("AAPL")).toBe(false);
+    it("removeWatchlist returns false for non-existent", async () => {
+      expect(await db.removeWatchlist("AAPL")).toBe(false);
     });
   });
 
   // ── Quotes ────────────────────────────────────────────────────────────────
 
   describe("quotes", () => {
-    beforeEach(() => {
-      db.addTicker("NVDA", "NVIDIA", "PUBLIC");
+    beforeEach(async () => {
+      await db.addTicker("NVDA", "NVIDIA", "PUBLIC");
     });
 
-    it("adds a quote", () => {
+    it("adds a quote", async () => {
       expect(
-        db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000, 65, 900, 850)
+        await db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000, 65, 900, 850)
       ).toBe(true);
     });
 
-    it("gets latest quote", () => {
-      db.addQuote("NVDA", "2024-01-14", 890, 900, 885, 895, 40000000);
-      db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000, 65, 900, 850);
-      const q = db.getLatestQuote("NVDA");
+    it("gets latest quote", async () => {
+      await db.addQuote("NVDA", "2024-01-14", 890, 900, 885, 895, 40000000);
+      await db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000, 65, 900, 850);
+      const q = await db.getLatestQuote("NVDA");
       expect(q?.close).toBe(905);
       expect(q?.rsi).toBe(65);
     });
 
-    it("returns undefined for missing quote", () => {
-      expect(db.getLatestQuote("AAPL")).toBeUndefined();
+    it("returns undefined for missing quote", async () => {
+      expect(await db.getLatestQuote("AAPL")).toBeUndefined();
     });
 
-    it("getQuotes returns ordered by date desc", () => {
-      db.addQuote("NVDA", "2024-01-13", 880, 890, 875, 885, 30000000);
-      db.addQuote("NVDA", "2024-01-14", 890, 900, 885, 895, 40000000);
-      db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000);
-      const quotes = db.getQuotes("NVDA");
+    it("getQuotes returns ordered by date desc", async () => {
+      await db.addQuote("NVDA", "2024-01-13", 880, 890, 875, 885, 30000000);
+      await db.addQuote("NVDA", "2024-01-14", 890, 900, 885, 895, 40000000);
+      await db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000);
+      const quotes = await db.getQuotes("NVDA");
       expect(quotes[0].date).toBe("2024-01-15");
       expect(quotes[2].date).toBe("2024-01-13");
     });
 
-    it("stores null indicators", () => {
-      db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000);
-      const q = db.getLatestQuote("NVDA");
+    it("stores null indicators", async () => {
+      await db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000);
+      const q = await db.getLatestQuote("NVDA");
       expect(q?.rsi).toBeNull();
       expect(q?.ma_50).toBeNull();
     });
 
-    it("defaults fetched_at to now when not specified", () => {
+    it("defaults fetched_at to now when not specified", async () => {
       const before = Date.now();
-      db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000);
-      const q = db.getLatestQuote("NVDA");
+      await db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000);
+      const q = await db.getLatestQuote("NVDA");
       expect(q?.fetched_at).not.toBeNull();
       expect(Date.parse(q!.fetched_at!)).toBeGreaterThanOrEqual(before);
     });
 
-    it("accepts an explicit fetched_at", () => {
-      db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000, null, null, null, "2024-01-15T09:30:00Z");
-      expect(db.getLatestQuote("NVDA")?.fetched_at).toBe("2024-01-15T09:30:00Z");
+    it("accepts an explicit fetched_at", async () => {
+      await db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000, null, null, null, "2024-01-15T09:30:00Z");
+      expect((await db.getLatestQuote("NVDA"))?.fetched_at).toBe("2024-01-15T09:30:00Z");
     });
 
     describe("getQuoteIfFresh", () => {
-      it("returns the row within maxAgeMs", () => {
-        db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000, null, null, null, new Date().toISOString());
-        expect(db.getQuoteIfFresh("NVDA", 60_000)?.close).toBe(905);
+      it("returns the row within maxAgeMs", async () => {
+        await db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000, null, null, null, new Date().toISOString());
+        expect((await db.getQuoteIfFresh("NVDA", 60_000))?.close).toBe(905);
       });
 
-      it("returns undefined past maxAgeMs", () => {
+      it("returns undefined past maxAgeMs", async () => {
         const stale = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-        db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000, null, null, null, stale);
-        expect(db.getQuoteIfFresh("NVDA", 60 * 60 * 1000)).toBeUndefined();
+        await db.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000, null, null, null, stale);
+        expect(await db.getQuoteIfFresh("NVDA", 60 * 60 * 1000)).toBeUndefined();
       });
 
-      it("returns undefined when no quote exists", () => {
-        expect(db.getQuoteIfFresh("AAPL", 60_000)).toBeUndefined();
+      it("returns undefined when no quote exists", async () => {
+        expect(await db.getQuoteIfFresh("AAPL", 60_000)).toBeUndefined();
       });
     });
   });
@@ -213,13 +206,13 @@ describe("Db", () => {
   // ── Fundamentals ──────────────────────────────────────────────────────────
 
   describe("fundamentals", () => {
-    beforeEach(() => {
-      db.addTicker("NVDA", "NVIDIA", "PUBLIC");
+    beforeEach(async () => {
+      await db.addTicker("NVDA", "NVIDIA", "PUBLIC");
     });
 
-    it("adds and reads back a finnhub row", () => {
+    it("adds and reads back a finnhub row", async () => {
       expect(
-        db.addFundamentals({
+        await db.addFundamentals({
           ticker: "NVDA",
           as_of_date: "2024-01-15",
           source: "finnhub",
@@ -243,12 +236,12 @@ describe("Db", () => {
           red_flags: null,
         })
       ).toBe(true);
-      const row = db.getLatestFundamentals("NVDA", "finnhub");
+      const row = await db.getLatestFundamentals("NVDA", "finnhub");
       expect(row?.pe_ratio).toBe(65.2);
       expect(row?.fcf_positive).toBe(1);
     });
 
-    it("keeps finnhub and morningstar rows separate for the same ticker+date", () => {
+    it("keeps finnhub and morningstar rows separate for the same ticker+date", async () => {
       const base = {
         ticker: "NVDA",
         as_of_date: "2024-01-15",
@@ -271,13 +264,13 @@ describe("Db", () => {
         capital_allocation: null,
         red_flags: null,
       };
-      db.addFundamentals({ ...base, source: "finnhub", pe_ratio: 65.2 });
-      db.addFundamentals({ ...base, source: "morningstar", pe_ratio: 64.8 });
-      expect(db.getLatestFundamentals("NVDA", "finnhub")?.pe_ratio).toBe(65.2);
-      expect(db.getLatestFundamentals("NVDA", "morningstar")?.pe_ratio).toBe(64.8);
+      await db.addFundamentals({ ...base, source: "finnhub", pe_ratio: 65.2 });
+      await db.addFundamentals({ ...base, source: "morningstar", pe_ratio: 64.8 });
+      expect((await db.getLatestFundamentals("NVDA", "finnhub"))?.pe_ratio).toBe(65.2);
+      expect((await db.getLatestFundamentals("NVDA", "morningstar"))?.pe_ratio).toBe(64.8);
     });
 
-    it("upserts on (ticker, as_of_date, source)", () => {
+    it("upserts on (ticker, as_of_date, source)", async () => {
       const base = {
         ticker: "NVDA",
         as_of_date: "2024-01-15",
@@ -301,13 +294,13 @@ describe("Db", () => {
         capital_allocation: null,
         red_flags: null,
       };
-      db.addFundamentals(base);
-      db.addFundamentals({ ...base, pe_ratio: 70.1 });
-      expect(db.getLatestFundamentals("NVDA", "finnhub")?.pe_ratio).toBe(70.1);
+      await db.addFundamentals(base);
+      await db.addFundamentals({ ...base, pe_ratio: 70.1 });
+      expect((await db.getLatestFundamentals("NVDA", "finnhub"))?.pe_ratio).toBe(70.1);
     });
 
-    it("getLatestFundamentals returns undefined when missing", () => {
-      expect(db.getLatestFundamentals("AAPL", "finnhub")).toBeUndefined();
+    it("getLatestFundamentals returns undefined when missing", async () => {
+      expect(await db.getLatestFundamentals("AAPL", "finnhub")).toBeUndefined();
     });
 
     describe("getFundamentalsIfFresh", () => {
@@ -335,19 +328,19 @@ describe("Db", () => {
         red_flags: null,
       };
 
-      it("returns the row within maxAgeMs", () => {
-        db.addFundamentals({ ...base, fetched_at: new Date().toISOString() });
-        expect(db.getFundamentalsIfFresh("NVDA", "morningstar", 60_000)).toBeDefined();
+      it("returns the row within maxAgeMs", async () => {
+        await db.addFundamentals({ ...base, fetched_at: new Date().toISOString() });
+        expect(await db.getFundamentalsIfFresh("NVDA", "morningstar", 60_000)).toBeDefined();
       });
 
-      it("returns undefined past maxAgeMs", () => {
+      it("returns undefined past maxAgeMs", async () => {
         const stale = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
-        db.addFundamentals({ ...base, fetched_at: stale });
-        expect(db.getFundamentalsIfFresh("NVDA", "morningstar", 14 * 24 * 60 * 60 * 1000)).toBeUndefined();
+        await db.addFundamentals({ ...base, fetched_at: stale });
+        expect(await db.getFundamentalsIfFresh("NVDA", "morningstar", 14 * 24 * 60 * 60 * 1000)).toBeUndefined();
       });
 
-      it("returns undefined when no row exists", () => {
-        expect(db.getFundamentalsIfFresh("AAPL", "morningstar", 60_000)).toBeUndefined();
+      it("returns undefined when no row exists", async () => {
+        expect(await db.getFundamentalsIfFresh("AAPL", "morningstar", 60_000)).toBeUndefined();
       });
     });
   });
@@ -355,67 +348,90 @@ describe("Db", () => {
   // ── Signals ───────────────────────────────────────────────────────────────
 
   describe("signals", () => {
-    beforeEach(() => {
-      db.addTicker("NVDA", "NVIDIA", "PUBLIC");
+    beforeEach(async () => {
+      await db.addTicker("NVDA", "NVIDIA", "PUBLIC");
     });
 
-    it("adds a signal and returns ID", () => {
-      const id = db.addSignal("NVDA", new Date().toISOString(), "BUY", 0.85, "Strong buy", false);
+    it("adds a signal and returns ID", async () => {
+      const id = await db.addSignal("NVDA", new Date().toISOString(), "BUY", 0.85, "Strong buy", false);
       expect(typeof id).toBe("number");
       expect(id).toBeGreaterThan(0);
     });
 
-    it("gets signal by ID", () => {
-      const id = db.addSignal("NVDA", new Date().toISOString(), "HOLD", 0.5, "Neutral", false);
-      const sig = db.getSignalById(id);
+    it("gets signal by ID", async () => {
+      const id = await db.addSignal("NVDA", new Date().toISOString(), "HOLD", 0.5, "Neutral", false);
+      const sig = await db.getSignalById(id);
       expect(sig?.recommendation).toBe("HOLD");
       expect(sig?.confidence).toBe(0.5);
     });
 
-    it("getAllSignals returns all", () => {
-      db.addSignal("NVDA", new Date().toISOString(), "BUY", 0.8, "Good", false);
-      db.addSignal("NVDA", new Date().toISOString(), "SELL", 0.7, "Overvalued", false);
-      expect(db.getAllSignals()).toHaveLength(2);
+    it("getAllSignals returns all", async () => {
+      await db.addSignal("NVDA", new Date().toISOString(), "BUY", 0.8, "Good", false);
+      await db.addSignal("NVDA", new Date().toISOString(), "SELL", 0.7, "Overvalued", false);
+      expect(await db.getAllSignals()).toHaveLength(2);
     });
   });
 
   // ── Edge cases ────────────────────────────────────────────────────────────
 
   describe("edge cases", () => {
-    it("getAllPositions returns empty array when none", () => {
-      expect(db.getAllPositions()).toEqual([]);
+    it("getAllPositions returns empty array when none", async () => {
+      expect(await db.getAllPositions()).toEqual([]);
     });
 
-    it("getWatchlist returns empty array when none", () => {
-      expect(db.getWatchlist()).toEqual([]);
-    });
-
-    it("raw() returns the underlying db", () => {
-      expect(db.raw()).toBeDefined();
+    it("getWatchlist returns empty array when none", async () => {
+      expect(await db.getWatchlist()).toEqual([]);
     });
   });
 
-  // ── Migrations ────────────────────────────────────────────────────────────
+  // ── Opening ───────────────────────────────────────────────────────────────
 
-  describe("migrations", () => {
-    it("is idempotent — reopening the same file twice does not error or duplicate columns", () => {
-      const p = path.join(os.tmpdir(), `snestack-test-migrate-${Date.now()}-${Math.random()}.db`);
-      const first = new Db(p);
-      first.addTicker("NVDA", "NVIDIA", "PUBLIC");
-      first.close();
+  describe("open", () => {
+    it("creates its schema idempotently (every CREATE is IF NOT EXISTS, so re-opening is safe)", async () => {
+      // pg-mem can't re-run CREATE TABLE IF NOT EXISTS over existing tables, so assert on the SQL sent instead.
+      const sent: string[] = [];
+      const pool = {
+        query: jest.fn(async (text: string) => {
+          sent.push(text);
+          return { rows: [], rowCount: 0 };
+        }),
+        end: jest.fn().mockResolvedValue(undefined),
+      };
+      await Db.open(undefined, { pool, enableRls: false });
+      const creates = sent.join("\n").match(/CREATE (TABLE|INDEX)[^(]*/g) ?? [];
+      expect(creates.length).toBeGreaterThanOrEqual(10);
+      for (const c of creates) expect(c).toContain("IF NOT EXISTS");
+    });
 
-      expect(() => {
-        const second = new Db(p);
-        second.addQuote("NVDA", "2024-01-15", 900, 910, 895, 905, 45000000);
-        const cols = second
-          .raw()
-          .prepare("PRAGMA table_info(quotes)")
-          .all() as unknown as Array<{ name: string }>;
-        expect(cols.filter((c) => c.name === "fetched_at")).toHaveLength(1);
-        second.close();
-      }).not.toThrow();
+    it("enables row level security on every table for real connections", async () => {
+      const sent: string[] = [];
+      const pool = {
+        query: jest.fn(async (text: string) => {
+          sent.push(text);
+          return { rows: [], rowCount: 0 };
+        }),
+        end: jest.fn().mockResolvedValue(undefined),
+      };
+      await Db.open(undefined, { pool, enableRls: true });
+      for (const t of ["tickers", "positions", "watchlist", "quotes", "fundamentals", "signals"]) {
+        expect(sent).toContain(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`);
+      }
+    });
 
-      fs.unlinkSync(p);
+    it("fails fast with a DatabaseError (and no connection string in the message) when the database is unreachable", async () => {
+      const pool = {
+        query: jest.fn().mockRejectedValue(new Error("connect ECONNREFUSED postgres://snestack:hunter2@db.example.supabase.co:5432/postgres")),
+        end: jest.fn().mockResolvedValue(undefined),
+      };
+      const err = await Db.open(undefined, { pool }).catch((e) => e);
+      expect(err.name).toBe("DatabaseError");
+      expect(err.message).toContain("Failed to open database");
+      expect(err.message).not.toContain("hunter2");
+      expect(pool.end).toHaveBeenCalled();
+    });
+
+    it("requires SNESTACK_DATABASE_URL when no pool is injected", async () => {
+      await expect(Db.open(undefined)).rejects.toThrow(/SNESTACK_DATABASE_URL/);
     });
   });
 });

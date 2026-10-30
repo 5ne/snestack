@@ -56,7 +56,7 @@ export class EquityAgent extends ThrottledAPIAgent<EquityData> {
       };
 
       if (this.db) {
-        this.db.addFundamentals({
+        await this.db.addFundamentals({
           ticker,
           as_of_date: new Date().toISOString().split("T")[0],
           source: "morningstar",

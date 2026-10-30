@@ -30,20 +30,20 @@ function mtime(file: string): number {
  * data-dump wrote the latest quote and RSI into the DB, and past results are
  * the signals table — so deciding costs no API calls.
  */
-export function computeGateFacts(
+export async function computeGateFacts(
   db: Db,
   skillName: string,
   ticker: string,
   opts: { reportsDir: string; brainFile: string; now?: Date }
-): GateFacts {
+): Promise<GateFacts> {
   const now = opts.now ?? new Date();
   const T = ticker.toUpperCase();
 
-  const latest = db.getLatestQuote(T);
+  const latest = await db.getLatestQuote(T);
   const quoteFresh = latest && now.getTime() - Date.parse(`${latest.date}T12:00:00Z`) <= MAX_QUOTE_AGE_DAYS * DAY_MS;
 
   const prefix = SKILL_PREFIX[skillName];
-  const lastSignal = prefix ? db.getLastSignalWithPrefix(T, prefix) : undefined;
+  const lastSignal = prefix ? await db.getLastSignalWithPrefix(T, prefix) : undefined;
   const lastRunAt = lastSignal ? new Date(lastSignal.date) : null;
 
   let lastRunPrice: number | null = null;
@@ -51,7 +51,7 @@ export function computeGateFacts(
   if (lastRunAt) {
     const lastDay = lastRunAt.getTime();
     let best = Infinity;
-    for (const q of db.getQuotes(T, 250)) {
+    for (const q of await db.getQuotes(T, 250)) {
       const gap = Math.abs(Date.parse(`${q.date}T12:00:00Z`) - lastDay);
       if (gap < best && gap <= 3 * DAY_MS) {
         best = gap;
@@ -102,9 +102,9 @@ export async function gateFacts(skillName: string, subject: string): Promise<Gat
   if (skillName === "improve-self") return improveSelfGateFacts();
 
   const config = getConfig();
-  const db = new Db(config.getDatabasePath());
+  const db = await Db.open(config.getDatabaseUrl());
   try {
-    return computeGateFacts(db, skillName, subject, {
+    return await computeGateFacts(db, skillName, subject, {
       reportsDir: defaultReportsDir(),
       brainFile: path.join(
         config.getBrainRoot(),
@@ -117,6 +117,6 @@ export async function gateFacts(skillName: string, subject: string): Promise<Gat
       ),
     });
   } finally {
-    db.close();
+    await db.close();
   }
 }

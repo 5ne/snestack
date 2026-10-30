@@ -44,7 +44,7 @@ export interface Finding {
   severity: Severity;
   domain: string;
   date: string;
-  code: "missing_run" | "incomplete_run" | "failed" | "degraded" | "model_errors" | "cost_anomaly" | "cache_stale";
+  code: "missing_run" | "incomplete_run" | "failed" | "degraded" | "model_errors" | "cost_anomaly" | "cache_stale" | "database_unreachable";
   message: string;
 }
 

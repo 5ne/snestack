@@ -1,6 +1,7 @@
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs";
+import { openTestDb, shareDb } from "../../helpers/testDb";
 import { Db } from "../../../src/core/db";
 import { resetConfig } from "../../../src/core/config";
 import { writeProposals } from "../../../src/core/featureRequests";
@@ -24,8 +25,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 describe("financial contextTools (cache-read behavior)", () => {
   let brainRoot: string;
+  let shared: Db;
+  let releaseShared: () => Promise<void>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.clearAllMocks();
     quoteSafeAnalyze.mockResolvedValue({ ticker: "NVDA", price: 999, timestamp: new Date() });
     equitySafeAnalyze.mockResolvedValue({ ticker: "NVDA", redFlags: [], timestamp: new Date() });
@@ -33,19 +36,20 @@ describe("financial contextTools (cache-read behavior)", () => {
     brainRoot = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-contexttools-"));
     process.env.SNESTACK_BRAIN_ROOT = brainRoot;
     process.env.SNESTACK_FINNHUB_API_KEY = "fake-finnhub-key-0123456789";
+    process.env.SNESTACK_DATABASE_URL = "postgres://unused-in-tests";
     resetConfig();
+    shared = await openTestDb();
+    releaseShared = shareDb(shared);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await releaseShared();
+    delete process.env.SNESTACK_DATABASE_URL;
     fs.rmSync(brainRoot, { recursive: true, force: true });
     delete process.env.SNESTACK_BRAIN_ROOT;
     delete process.env.SNESTACK_FINNHUB_API_KEY;
     resetConfig();
   });
-
-  function dbPath(): string {
-    return path.join(brainRoot, "financial", "snestack.db");
-  }
 
   const emptyFundamentalsFields = {
     pe_ratio: null,
@@ -70,17 +74,17 @@ describe("financial contextTools (cache-read behavior)", () => {
 
   describe("quote", () => {
     it("returns the cached shape without constructing QuoteAgent when quote + finnhub fundamentals are both fresh", async () => {
-      const db = new Db(dbPath());
-      db.addTicker("NVDA", "NVIDIA", "PUBLIC");
-      db.addQuote("NVDA", new Date().toISOString().split("T")[0], 900, 910, 895, 905, 1000, 55, 890, 870, new Date().toISOString());
-      db.addFundamentals({
+      const db = shared;
+      await db.addTicker("NVDA", "NVIDIA", "PUBLIC");
+      await db.addQuote("NVDA", new Date().toISOString().split("T")[0], 900, 910, 895, 905, 1000, 55, 890, 870, new Date().toISOString());
+      await db.addFundamentals({
         ...emptyFundamentalsFields,
         ticker: "NVDA",
         as_of_date: new Date().toISOString().split("T")[0],
         source: "finnhub",
         pe_ratio: 65.2,
       });
-      db.close();
+      await db.close();
 
       const result = await contextTools.quote("nvda");
 
@@ -89,18 +93,18 @@ describe("financial contextTools (cache-read behavior)", () => {
     });
 
     it("falls back to a live fetch when the quote row is stale", async () => {
-      const db = new Db(dbPath());
-      db.addTicker("NVDA", "NVIDIA", "PUBLIC");
+      const db = shared;
+      await db.addTicker("NVDA", "NVIDIA", "PUBLIC");
       const stale = new Date(Date.now() - 3 * DAY_MS).toISOString();
-      db.addQuote("NVDA", "2020-01-01", 900, 910, 895, 905, 1000, 55, 890, 870, stale);
-      db.addFundamentals({
+      await db.addQuote("NVDA", "2020-01-01", 900, 910, 895, 905, 1000, 55, 890, 870, stale);
+      await db.addFundamentals({
         ...emptyFundamentalsFields,
         ticker: "NVDA",
         as_of_date: "2020-01-01",
         source: "finnhub",
         fetched_at: new Date().toISOString(),
       });
-      db.close();
+      await db.close();
 
       await contextTools.quote("nvda");
 
@@ -115,10 +119,10 @@ describe("financial contextTools (cache-read behavior)", () => {
     });
 
     it("falls back when the quote row is fresh but the finnhub fundamentals row is missing", async () => {
-      const db = new Db(dbPath());
-      db.addTicker("NVDA", "NVIDIA", "PUBLIC");
-      db.addQuote("NVDA", new Date().toISOString().split("T")[0], 900, 910, 895, 905, 1000, 55, 890, 870, new Date().toISOString());
-      db.close();
+      const db = shared;
+      await db.addTicker("NVDA", "NVIDIA", "PUBLIC");
+      await db.addQuote("NVDA", new Date().toISOString().split("T")[0], 900, 910, 895, 905, 1000, 55, 890, 870, new Date().toISOString());
+      await db.close();
 
       await contextTools.quote("nvda");
 
@@ -128,9 +132,9 @@ describe("financial contextTools (cache-read behavior)", () => {
 
   describe("fundamentals", () => {
     it("returns the cached shape without constructing EquityAgent when the morningstar row is fresh", async () => {
-      const db = new Db(dbPath());
-      db.addTicker("NVDA", "NVIDIA", "PUBLIC");
-      db.addFundamentals({
+      const db = shared;
+      await db.addTicker("NVDA", "NVIDIA", "PUBLIC");
+      await db.addFundamentals({
         ...emptyFundamentalsFields,
         ticker: "NVDA",
         as_of_date: new Date().toISOString().split("T")[0],
@@ -138,7 +142,7 @@ describe("financial contextTools (cache-read behavior)", () => {
         pe_ratio: 28.4,
         red_flags: JSON.stringify(["High P/E ratio: 28.4"]),
       });
-      db.close();
+      await db.close();
 
       const result = await contextTools.fundamentals("nvda");
 
@@ -147,16 +151,16 @@ describe("financial contextTools (cache-read behavior)", () => {
     });
 
     it("falls back to a live fetch when the morningstar row is older than 14 days", async () => {
-      const db = new Db(dbPath());
-      db.addTicker("NVDA", "NVIDIA", "PUBLIC");
-      db.addFundamentals({
+      const db = shared;
+      await db.addTicker("NVDA", "NVIDIA", "PUBLIC");
+      await db.addFundamentals({
         ...emptyFundamentalsFields,
         ticker: "NVDA",
         as_of_date: "2020-01-01",
         source: "morningstar",
         fetched_at: new Date(Date.now() - 20 * DAY_MS).toISOString(),
       });
-      db.close();
+      await db.close();
 
       await contextTools.fundamentals("nvda");
 

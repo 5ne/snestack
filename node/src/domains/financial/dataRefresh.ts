@@ -20,7 +20,7 @@ export async function runDataRefresh(
   deps: { config: Config; db: Db }
 ): Promise<{ tickers: string[]; failed: string[] }> {
   const { config, db } = deps;
-  const tickers = resolveTickerUniverse(db, tickersFlag);
+  const tickers = await resolveTickerUniverse(db, tickersFlag);
   if (tickers.length === 0) return { tickers, failed: [] };
 
   let results: Record<string, unknown>;

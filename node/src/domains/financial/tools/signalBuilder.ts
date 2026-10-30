@@ -31,16 +31,16 @@ const KNOWN_PREFIXES = ["[Long-term]", "[Swing]"];
  * signal with no recognized strategy prefix, or no prior recorded signal, always passes
  * through unchanged (fails open, same philosophy as core/gate.ts).
  */
-export function filterUnchangedSignals(
+export async function filterUnchangedSignals(
   db: Db,
   signals: BuiltSignal[],
   confidenceMoveThreshold = 0.1
-): { changed: BuiltSignal[]; unchanged: BuiltSignal[] } {
+): Promise<{ changed: BuiltSignal[]; unchanged: BuiltSignal[] }> {
   const changed: BuiltSignal[] = [];
   const unchanged: BuiltSignal[] = [];
   for (const s of signals) {
     const prefix = KNOWN_PREFIXES.find((p) => s.reasoning.startsWith(p));
-    const last = prefix ? db.getLastSignalWithPrefix(s.ticker, prefix) : undefined;
+    const last = prefix ? await db.getLastSignalWithPrefix(s.ticker, prefix) : undefined;
     const sameLabel = last && last.recommendation === s.recommendation;
     const confidenceMoved = last != null && Math.abs(s.confidence - last.confidence) >= confidenceMoveThreshold;
     if (sameLabel && !confidenceMoved) {

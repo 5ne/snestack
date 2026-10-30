@@ -20,7 +20,8 @@ import { evaluateRuns, checkCacheStaleness, dayString, type RunExpectation } fro
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
-import { resolveTickerUniverse } from "./domains/financial/cliHelpers";
+import { migrateSqliteToPostgres, formatMigrationReport } from "./core/dbMigrate";
+import { resolveTickerUniverse, loadCacheAgeGetters } from "./domains/financial/cliHelpers";
 import { financialRunExpectations, financialRunStatsTargets } from "./domains/financial/runExpectations";
 import { computeRunStats, formatRunStats } from "./core/runStats";
 import { runDataRefresh, DATA_REFRESH_TIERS, type DataRefreshTier } from "./domains/financial/dataRefresh";
@@ -91,14 +92,14 @@ position
     "Strategy this position is held under: long-term, swing, or both (default: long-term, or whatever it already was on update)"
   )
   .action(
-    (
+    async (
       ticker: string,
       sharesStr: string,
       costBasisStr: string,
       opts: { notes?: string; strategy?: string }
     ) => {
       const config = getConfig();
-      const db = new Db(config.getDatabasePath());
+      const db = await Db.open(config.getDatabaseUrl());
       const shares = parseFloat(sharesStr);
       const costBasis = parseFloat(costBasisStr);
       if (isNaN(shares) || isNaN(costBasis)) {
@@ -110,46 +111,46 @@ position
         process.exit(1);
       }
       // Ensure ticker exists in tickers table
-      db.addTicker(ticker.toUpperCase(), ticker.toUpperCase(), "PUBLIC");
-      const ok = db.addPosition(ticker.toUpperCase(), shares, costBasis, opts.notes, opts.strategy);
+      await db.addTicker(ticker.toUpperCase(), ticker.toUpperCase(), "PUBLIC");
+      const ok = await db.addPosition(ticker.toUpperCase(), shares, costBasis, opts.notes, opts.strategy);
       console.log(ok ? `Position added: ${ticker.toUpperCase()}` : "Failed to add position");
-      db.close();
+      await db.close();
     }
   );
 
 position
   .command("strategy <ticker> <strategy>")
   .description("Set the strategy tag on an existing position without touching shares/cost basis (long-term, swing, or both)")
-  .action((ticker: string, strategy: string) => {
+  .action(async (ticker: string, strategy: string) => {
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
+    const db = await Db.open(config.getDatabaseUrl());
     if (!["long-term", "swing", "both"].includes(strategy)) {
       console.error("strategy must be one of: long-term, swing, both");
       process.exit(1);
     }
-    const ok = db.updatePositionStrategy(ticker.toUpperCase(), strategy);
+    const ok = await db.updatePositionStrategy(ticker.toUpperCase(), strategy);
     console.log(ok ? `Strategy set: ${ticker.toUpperCase()} -> ${strategy}` : "Position not found");
-    db.close();
+    await db.close();
   });
 
 position
   .command("remove <ticker>")
   .description("Remove a portfolio position")
-  .action((ticker: string) => {
+  .action(async (ticker: string) => {
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
-    const ok = db.removePosition(ticker.toUpperCase());
+    const db = await Db.open(config.getDatabaseUrl());
+    const ok = await db.removePosition(ticker.toUpperCase());
     console.log(ok ? `Position removed: ${ticker.toUpperCase()}` : "Position not found");
-    db.close();
+    await db.close();
   });
 
 position
   .command("list")
   .description("List all positions")
-  .action(() => {
+  .action(async () => {
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
-    const positions = db.getAllPositions();
+    const db = await Db.open(config.getDatabaseUrl());
+    const positions = await db.getAllPositions();
     if (positions.length === 0) {
       console.log("No positions");
     } else {
@@ -162,7 +163,7 @@ position
         if (p.notes) console.log(`           ${p.notes}`);
       });
     }
-    db.close();
+    await db.close();
   });
 
 // ── Watchlist management ───────────────────────────────────────────────────
@@ -173,33 +174,33 @@ watchlist
   .command("add <ticker> <thesis>")
   .description("Add ticker to watchlist")
   .option("-n, --notes <notes>", "Additional notes")
-  .action((ticker: string, thesis: string, opts: { notes?: string }) => {
+  .action(async (ticker: string, thesis: string, opts: { notes?: string }) => {
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
-    db.addTicker(ticker.toUpperCase(), ticker.toUpperCase(), "PUBLIC");
-    const ok = db.addWatchlist(ticker.toUpperCase(), thesis, opts.notes);
+    const db = await Db.open(config.getDatabaseUrl());
+    await db.addTicker(ticker.toUpperCase(), ticker.toUpperCase(), "PUBLIC");
+    const ok = await db.addWatchlist(ticker.toUpperCase(), thesis, opts.notes);
     console.log(ok ? `Watchlist added: ${ticker.toUpperCase()}` : "Failed to add watchlist item");
-    db.close();
+    await db.close();
   });
 
 watchlist
   .command("remove <ticker>")
   .description("Remove from watchlist")
-  .action((ticker: string) => {
+  .action(async (ticker: string) => {
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
-    const ok = db.removeWatchlist(ticker.toUpperCase());
+    const db = await Db.open(config.getDatabaseUrl());
+    const ok = await db.removeWatchlist(ticker.toUpperCase());
     console.log(ok ? `Removed: ${ticker.toUpperCase()}` : "Not found on watchlist");
-    db.close();
+    await db.close();
   });
 
 watchlist
   .command("list")
   .description("List watchlist")
-  .action(() => {
+  .action(async () => {
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
-    const items = db.getWatchlist();
+    const db = await Db.open(config.getDatabaseUrl());
+    const items = await db.getWatchlist();
     if (items.length === 0) {
       console.log("Watchlist is empty");
     } else {
@@ -210,7 +211,7 @@ watchlist
         if (w.notes) console.log(`           ${w.notes}`);
       });
     }
-    db.close();
+    await db.close();
   });
 
 // ── Report organization ─────────────────────────────────────────────────────
@@ -243,13 +244,13 @@ program
   .command("signals [ticker]")
   .description("Show recent signals (optionally filtered by ticker)")
   .option("-d, --days <days>", "Number of days to look back", "30")
-  .action((ticker: string | undefined, opts: { days: string }) => {
+  .action(async (ticker: string | undefined, opts: { days: string }) => {
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
+    const db = await Db.open(config.getDatabaseUrl());
     const days = parseInt(opts.days, 10);
     const signals = ticker
-      ? db.getSignals(ticker.toUpperCase(), days)
-      : db.getAllSignals(50);
+      ? await db.getSignals(ticker.toUpperCase(), days)
+      : await db.getAllSignals(50);
     if (signals.length === 0) {
       console.log("No signals found");
     } else {
@@ -262,7 +263,7 @@ program
         );
       });
     }
-    db.close();
+    await db.close();
   });
 
 // ── Data dump for a Claude-driven analysis (deterministic only, no model call) ─
@@ -282,23 +283,23 @@ program
   )
   .action(async () => {
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
+    const db = await Db.open(config.getDatabaseUrl());
     try {
-      const positions = db.getAllPositions();
-      const watchlist = db.getWatchlist();
+      const positions = await db.getAllPositions();
+      const watchlist = await db.getWatchlist();
       const positionsByTicker = Object.fromEntries(positions.map((p) => [p.ticker, p]));
       const watchlistByTicker = Object.fromEntries(watchlist.map((w) => [w.ticker, w]));
-      const allTickers = resolveTickerUniverse(db);
+      const allTickers = await resolveTickerUniverse(db);
 
       if (allTickers.length === 0) {
         console.log(JSON.stringify([]));
         return;
       }
 
-      const output = allTickers.map((ticker) => {
+      const output = await Promise.all(allTickers.map(async (ticker) => {
         const pos = positionsByTicker[ticker];
         const watch = watchlistByTicker[ticker];
-        const fundRow = db.getLatestFundamentals(ticker, "morningstar");
+        const fundRow = await db.getLatestFundamentals(ticker, "morningstar");
         return {
           ticker,
           isPosition: !!pos,
@@ -307,14 +308,14 @@ program
           shares: pos?.shares ?? null,
           costBasis: pos?.cost_basis ?? null,
           watchlistThesis: watch?.thesis ?? null,
-          quote: db.getLatestQuote(ticker) ?? null,
+          quote: (await db.getLatestQuote(ticker)) ?? null,
           equity: fundRow ? equityDataFromCache(fundRow) : null,
         };
-      });
+      }));
 
       console.log(JSON.stringify(output, null, 2));
     } finally {
-      db.close();
+      await db.close();
     }
   });
 
@@ -342,7 +343,7 @@ program
       return;
     }
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
+    const db = await Db.open(config.getDatabaseUrl());
     try {
       const { tickers, failed } = await runDataRefresh(opts.tier as DataRefreshTier, opts.tickers, { config, db });
       if (failed.length > 0) {
@@ -354,7 +355,7 @@ program
       }
       console.log(`Refreshed ${opts.tier} tier for ${tickers.length} ticker(s): ${tickers.join(", ")}`);
     } finally {
-      db.close();
+      await db.close();
     }
   });
 
@@ -683,14 +684,14 @@ program
       return;
     }
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
+    const db = await Db.open(config.getDatabaseUrl());
     try {
       const trader = new TraderAgent(db, config.getGmailAddress(), config.getGmailAppPassword(), config.getNotificationEmail());
       const ok = await trader.sendRunSummaryEmail(report);
       console.log(ok ? "Run summary email sent" : "Run summary email failed");
       if (!ok) process.exitCode = 1;
     } finally {
-      db.close();
+      await db.close();
     }
   });
 
@@ -713,7 +714,7 @@ program
     "With --only-changed: still treat a same-recommendation signal as changed if confidence moved at least this much (0-1)",
     "0.1"
   )
-  .action((opts: { dir: string; onlyChanged?: boolean; confidenceMove: string }) => {
+  .action(async (opts: { dir: string; onlyChanged?: boolean; confidenceMove: string }) => {
     if (!fs.existsSync(opts.dir)) {
       console.error(`Directory not found: ${opts.dir}`);
       process.exitCode = 1;
@@ -724,13 +725,13 @@ program
     let unchangedCount = 0;
     if (opts.onlyChanged) {
       const config = getConfig();
-      const db = new Db(config.getDatabasePath());
+      const db = await Db.open(config.getDatabaseUrl());
       try {
-        const filtered = filterUnchangedSignals(db, result.signals, parseFloat(opts.confidenceMove));
+        const filtered = await filterUnchangedSignals(db, result.signals, parseFloat(opts.confidenceMove));
         signals = filtered.changed;
         unchangedCount = filtered.unchanged.length;
       } finally {
-        db.close();
+        await db.close();
       }
     }
     console.log(JSON.stringify(signals, null, 2));
@@ -766,7 +767,7 @@ program
       return;
     }
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
+    const db = await Db.open(config.getDatabaseUrl());
     try {
       const raw = opts.file ? fs.readFileSync(opts.file, "utf8") : fs.readFileSync(0, "utf8");
       const parsed = JSON.parse(raw) as Array<{
@@ -797,7 +798,7 @@ program
       console.log(ok ? `Email sent: ${signals.length} signals` : "Email failed (signals not recorded)");
       if (!ok) process.exitCode = 1;
     } finally {
-      db.close();
+      await db.close();
     }
   });
 
@@ -858,7 +859,7 @@ runLog
   .description("Fold the run's events into run.json and print a one-line summary; exits 1 if the run failed")
   .option("--dir <dir>", "Run directory (default: $SNESTACK_RUN_DIR)")
   .option("--exit-code <n>", "The automation script's own exit code")
-  .action((opts: { dir?: string; exitCode?: string }) => {
+  .action(async (opts: { dir?: string; exitCode?: string }) => {
     const dir = opts.dir ?? currentRunDir();
     if (!dir) {
       console.error("run-log finalize: no run directory (set SNESTACK_RUN_DIR or pass --dir)");
@@ -889,7 +890,7 @@ program
     "Instead of health findings, print a read-only cost rollup per script and per domain over 7 and 30 days: " +
       "estimated cost, model calls, gate skip ratio, and the share of model calls that repeated the previous verdict for the same subject"
   )
-  .action((opts: { days: string; json?: boolean; cost?: boolean }) => {
+  .action(async (opts: { days: string; json?: boolean; cost?: boolean }) => {
     const brainRoot = getConfig().getBrainRoot();
     if (opts.cost) {
       const stats = computeRunStats(financialRunStatsTargets(brainRoot), new Date());
@@ -903,20 +904,23 @@ program
     const findings = evaluateRuns({ now: new Date(), days: Math.max(1, parseInt(opts.days, 10) || 3), expectations });
 
     const config = getConfig();
-    const db = new Db(config.getDatabasePath());
     try {
-      const tickers = resolveTickerUniverse(db);
-      const ageMs = (fetchedAt: string | null): number | null => (fetchedAt ? Date.now() - Date.parse(fetchedAt) : null);
-      findings.push(
-        ...checkCacheStaleness({
-          now: new Date(),
-          tickers,
-          getLatestQuoteAge: (ticker) => ageMs(db.getLatestQuote(ticker)?.fetched_at ?? null),
-          getLatestFundamentalsAge: (ticker, source) => ageMs(db.getLatestFundamentals(ticker, source)?.fetched_at ?? null),
-        })
-      );
-    } finally {
-      db.close();
+      const db = await Db.open(config.getDatabaseUrl());
+      try {
+        const tickers = await resolveTickerUniverse(db);
+        findings.push(...checkCacheStaleness({ now: new Date(), tickers, ...(await loadCacheAgeGetters(db, tickers)) }));
+      } finally {
+        await db.close();
+      }
+    } catch (e) {
+      // Supabase unreachable (or SNESTACK_DATABASE_URL unset): say so plainly instead of reporting a clean bill of health.
+      findings.push({
+        severity: "error",
+        domain: "financial",
+        date: dayString(new Date()),
+        code: "database_unreachable",
+        message: `Cannot read the database, so cache staleness was not checked: ${e instanceof Error ? e.message : String(e)}`,
+      });
     }
 
     if (opts.json) {
@@ -935,7 +939,7 @@ travel
     `Print the next year the nightly backfill should catalog (${BACKFILL_START_YEAR} down to ${BACKFILL_END_YEAR}), ` +
       "or nothing once every year is done"
   )
-  .action(() => {
+  .action(async () => {
     const year = nextBackfillYear(path.join(getConfig().getBrainRoot(), "travel"));
     if (year !== null) console.log(year);
   });
@@ -1066,7 +1070,7 @@ feature
   .description("List feature-request proposals")
   .option("--domain <d>", "Only this domain (default: every registered domain)")
   .option("--status <s>", "Only this status: proposed | approved | in-progress | done")
-  .action((opts: { domain?: string; status?: string }) => {
+  .action(async (opts: { domain?: string; status?: string }) => {
     const brainRoot = getConfig().getBrainRoot();
     const domains = opts.domain ? [opts.domain] : FEATURE_DOMAINS;
     const rows = domains.flatMap((d) => listProposals(brainRoot, d));
@@ -1132,19 +1136,39 @@ feature
   .command("approve <id>")
   .description("Mark a proposal approved (a human decision; nothing has started) — <id> is its filename without the .md extension (see `feature list`)")
   .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
-  .action((id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "approved", "approve"));
+  .action(async (id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "approved", "approve"));
 
 feature
   .command("start <id>")
   .description("Mark an approved proposal in-progress (run by whoever picks the work up, e.g. the eng skill) — refuses anything not currently approved")
   .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
-  .action((id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "in-progress", "start", "approved"));
+  .action(async (id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "in-progress", "start", "approved"));
 
 feature
   .command("done <id>")
   .description("Mark a proposal done — <id> is its filename without the .md extension (see `feature list`)")
   .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
-  .action((id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "done", "done"));
+  .action(async (id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "done", "done"));
+
+program
+  .command("db-migrate")
+  .description(
+    "One-time: copy the legacy SQLite snestack.db into the Postgres database (SNESTACK_DATABASE_URL) and verify per-table row counts. " +
+      "Never modifies the SQLite file — keep it as the backup. Safe to re-run (existing rows are skipped)."
+  )
+  .option("--sqlite <path>", "Path to the legacy SQLite file (default: <brain>/financial/snestack.db)")
+  .option("--dry-run", "Only compare row counts; write nothing")
+  .action(async (opts: { sqlite?: string; dryRun?: boolean }) => {
+    const config = getConfig();
+    const db = await Db.open(config.getDatabaseUrl());
+    try {
+      const reports = await migrateSqliteToPostgres(opts.sqlite ?? config.getDatabasePath(), db, { dryRun: opts.dryRun });
+      console.log(formatMigrationReport(reports, !!opts.dryRun));
+      if (!reports.every((r) => r.ok)) process.exitCode = 1;
+    } finally {
+      await db.close();
+    }
+  });
 
 program.parseAsync(process.argv).catch((e) => {
   console.error(e);

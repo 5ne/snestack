@@ -26,6 +26,7 @@
     "js-yaml": "^5.4.2",
     "nodemailer": "^6.9.14",
     "pdf-parse": "^1.1.1",
+    "pg": "^8.23.1",
     "prompts": "^2.4.2",
     "winston": "^3.13.0",
     "zod": "^3.23.8"
@@ -35,8 +36,10 @@
     "@types/node": "^22.19.20",
     "@types/nodemailer": "^6.4.15",
     "@types/pdf-parse": "^1.1.4",
+    "@types/pg": "^8.23.1",
     "@types/prompts": "^2.4.9",
     "jest": "^29.7.0",
+    "pg-mem": "^3.0.14",
     "ts-jest": "^29.2.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.3"

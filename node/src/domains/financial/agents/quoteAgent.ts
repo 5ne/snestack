@@ -50,7 +50,7 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
         // shouldn't pay for another historical-closes fetch just to get the
         // same numbers back.
         const today = new Date().toISOString().split("T")[0];
-        const cached = this.db?.getLatestQuote(ticker);
+        const cached = await this.db?.getLatestQuote(ticker);
         const useCachedTechnicals = cached?.date === today && cached.rsi != null;
 
         let rsi: number | null;
@@ -109,7 +109,7 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
         // are either freshly computed or the reused cached values, so this re-write is a no-op
         // for those fields on a cache hit, not a regression.
         if (this.db && quote.open && quote.high && quote.low && quote.price) {
-          this.db.addQuote(
+          await this.db.addQuote(
             ticker,
             today,
             quote.open,
@@ -129,7 +129,7 @@ export class QuoteAgent extends ThrottledAPIAgent<QuoteData> {
         // fresh (see the comment on `fundamentals` above), so there's always
         // something new to persist here even on a cache-hit day.
         if (this.db && fundamentals) {
-          this.db.addFundamentals({
+          await this.db.addFundamentals({
             ticker,
             as_of_date: today,
             source: "finnhub",
