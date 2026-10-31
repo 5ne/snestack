@@ -44,7 +44,7 @@ export interface Finding {
   severity: Severity;
   domain: string;
   date: string;
-  code: "missing_run" | "incomplete_run" | "failed" | "degraded" | "model_errors" | "cost_anomaly" | "cache_stale" | "database_unreachable" | "host_outage";
+  code: "missing_run" | "incomplete_run" | "failed" | "degraded" | "model_errors" | "usage_limit" | "api_fallback" | "api_credit_exhausted" | "cost_anomaly" | "cache_stale" | "database_unreachable" | "host_outage";
   message: string;
 }
 
@@ -121,13 +121,44 @@ function findingsForSummary(
       }.`,
     });
   }
-  if (summary.model_calls.errors > 0) {
+  const usageLimit = summary.model_calls.usage_limit ?? 0;
+  if (usageLimit > 0) {
+    findings.push({
+      severity: "error",
+      domain: exp.name,
+      date,
+      code: "usage_limit",
+      message: `${labelSuffix}${usageLimit} model call(s) hit the subscription usage limit; the run stopped (no API fallback). Re-run later or on the next scheduled firing.`,
+    });
+  }
+  const fallbacks = summary.model_calls.api_fallbacks ?? 0;
+  if (fallbacks > 0) {
+    findings.push({
+      severity: "warn",
+      domain: exp.name,
+      date,
+      code: "api_fallback",
+      message: `${labelSuffix}${fallbacks} model call(s) fell back from the Claude subscription to the metered API (real spend).`,
+    });
+  }
+  const exhausted = summary.model_calls.api_credit_exhausted ?? 0;
+  if (exhausted > 0) {
+    findings.push({
+      severity: "error",
+      domain: exp.name,
+      date,
+      code: "api_credit_exhausted",
+      message: `${labelSuffix}The Anthropic API account is out of credit; the run stopped. Add credit; the next run picks the work up.`,
+    });
+  }
+  const otherErrors = summary.model_calls.errors - usageLimit - exhausted;
+  if (otherErrors > 0) {
     findings.push({
       severity: "warn",
       domain: exp.name,
       date,
       code: "model_errors",
-      message: `${labelSuffix}${summary.model_calls.errors} model call(s) errored.`,
+      message: `${labelSuffix}${otherErrors} model call(s) errored.`,
     });
   }
 

@@ -2,7 +2,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Command } from "commander";
-import { getConfig } from "./core/config";
+import { getConfig, type ModelTier } from "./core/config";
+import { ExecutorError } from "./core/errors";
 import { setupInteractive, validateEnv } from "./core/setup";
 import { organizeStagedReports } from "./domains/financial/tools/reportOrganizer";
 import { Db } from "./core/db";
@@ -641,7 +642,7 @@ program
       sections,
     ].join("\n");
 
-    const { output } = await runPrompt(config.getClaudeApiKey(), systemPrompt, userPrompt, {
+    const { output } = await runPrompt(config.getExecutorApiKey(), systemPrompt, userPrompt, {
       tier: "cheap",
       maxTokens: 8000,
       label: "financial/distill-signals",
@@ -870,9 +871,37 @@ runLog
     console.error(
       `Run ${summary.status}: ${summary.steps.ok}/${summary.steps.total} steps ok, ${summary.steps.failed} failed, ` +
         `${summary.steps.truncated} truncated; ${m.count} model calls (${m.input_tokens} in / ${m.output_tokens} out tokens, ` +
-        `~${m.est_cost_usd == null ? "unknown cost" : "$" + m.est_cost_usd.toFixed(2)}). Summary: ${path.join(dir, "run.json")}`
+        `~${m.est_cost_usd == null ? "unknown cost" : "$" + m.est_cost_usd.toFixed(2)}` +
+        `${m.api_equivalent_usd ? `, subscription calls ~$${m.api_equivalent_usd.toFixed(2)} at API prices` : ""}` +
+        `${m.api_fallbacks ? `; WARNING ${m.api_fallbacks} call(s) fell back to the metered API` : ""}). Summary: ${path.join(dir, "run.json")}`
     );
     if (summary.status === "failed") process.exitCode = 1;
+  });
+
+program
+  .command("executor-check")
+  .description("Smoke test: send one tiny prompt through the selected backend (SNESTACK_EXECUTOR) and print backend, model, tokens, latency")
+  .option("--tier <t>", "cheap | normal | expensive", "cheap")
+  .action(async (opts: { tier: string }) => {
+    const config = getConfig();
+    try {
+      const tier = opts.tier as ModelTier;
+      const backend = config.getExecutorBackend();
+      const keyStripped = backend === "claude-cli" && Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+      const r = await runPrompt(config.getExecutorApiKey(), "You are a smoke test. Reply with exactly: OK", "ping", {
+        tier,
+        maxTokens: 50,
+        label: "executor-check",
+      });
+      console.log(`backend: ${backend}`);
+      console.log(`model: ${r.model}`);
+      console.log(`reply: ${r.output.trim().slice(0, 80)}`);
+      console.log(`tokens: ${r.inputTokensUsed ?? "?"} in / ${r.outputTokensUsed ?? "?"} out; latency ${r.latencyMs}ms; stop ${r.stopReason ?? "?"}`);
+      if (backend === "claude-cli") console.log(`API key env stripped from child: ${keyStripped ? "yes (was set in this shell)" : "n/a (was not set)"}`);
+    } catch (e) {
+      console.error(`executor-check failed: ${e instanceof ExecutorError ? `[${e.code}] ` : ""}${e instanceof Error ? e.message : e}`);
+      process.exitCode = 1;
+    }
   });
 
 program

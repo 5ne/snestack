@@ -49,7 +49,16 @@ export interface RunSummary {
     input_tokens: number;
     output_tokens: number;
     max_latency_ms: number;
+    /** Real metered spend. claude-cli (subscription) calls contribute 0 here; see api_equivalent_usd. */
     est_cost_usd: number | null;
+    /** What the subscription calls would have cost at API list prices (usage trend, not a charge); null if a model is unpriced. */
+    api_equivalent_usd?: number | null;
+    /** Calls that failed on a subscription usage limit (stop and retry later; never auto-falls back to the API). */
+    usage_limit?: number;
+    /** Calls that failed on claude-cli and were retried on the metered API (real spend; always surfaced). */
+    api_fallbacks?: number;
+    /** Calls that failed because the API account is out of credit (the run stops; retry on the next run). */
+    api_credit_exhausted?: number;
     by_model: Record<string, { calls: number; input_tokens: number; output_tokens: number }>;
   };
 }
@@ -154,6 +163,10 @@ export function summarizeRun(events: RunEvent[], scriptExitCode: number | null =
     output_tokens: 0,
     max_latency_ms: 0,
     est_cost_usd: 0,
+    api_equivalent_usd: 0,
+    usage_limit: 0,
+    api_fallbacks: 0,
+    api_credit_exhausted: 0,
     by_model: {},
   };
   for (const e of mine.filter((e) => e.event === "model_call")) {
@@ -170,11 +183,22 @@ export function summarizeRun(events: RunEvent[], scriptExitCode: number | null =
     slot.calls++;
     slot.input_tokens += input;
     slot.output_tokens += output;
+    if (e.error_code === "usage_limit") model_calls.usage_limit = (model_calls.usage_limit ?? 0) + 1;
+    if (e.fallback_from) model_calls.api_fallbacks = (model_calls.api_fallbacks ?? 0) + 1;
+    if (e.error_code === "api_credit_exhausted") model_calls.api_credit_exhausted = (model_calls.api_credit_exhausted ?? 0) + 1;
+    if (e.billing === "subscription") {
+      // Flat-rate: no real charge, but keep the API-equivalent so usage trends stay visible.
+      const eq = typeof e.api_equivalent_usd === "number" ? e.api_equivalent_usd : null;
+      if (eq == null && (input || output)) model_calls.api_equivalent_usd = null;
+      else if (model_calls.api_equivalent_usd != null) model_calls.api_equivalent_usd += eq ?? 0;
+      continue;
+    }
     const cost = estimateCostUsd(model, input, output);
     if (cost == null) model_calls.est_cost_usd = null;
     else if (model_calls.est_cost_usd != null) model_calls.est_cost_usd += cost;
   }
   if (model_calls.est_cost_usd != null) model_calls.est_cost_usd = Math.round(model_calls.est_cost_usd * 10000) / 10000;
+  if (model_calls.api_equivalent_usd != null) model_calls.api_equivalent_usd = Math.round(model_calls.api_equivalent_usd * 10000) / 10000;
 
   // Prefer the explicit code; otherwise use the one the script itself logged at run_end.
   const exitCode = scriptExitCode ?? (typeof end?.script_exit_code === "number" ? end.script_exit_code : null);
