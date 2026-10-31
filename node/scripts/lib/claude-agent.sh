@@ -18,6 +18,10 @@ AGENT_DENY='Bash(git push*),Bash(git merge*),Bash(git reset --hard*),Bash(git cl
 run_claude_agent() {
   local prompt_file="$1" report="$2" max_turns="$3" allowed="$4"
   shift 4
+  # The session runs from the repo root, so resolve relative paths against node/ (the callers' cwd) first.
+  case "$prompt_file" in /*) ;; *) prompt_file="$NODE_DIR/$prompt_file" ;; esac
+  case "$report" in /*) ;; *) report="$NODE_DIR/$report" ;; esac
+  [ -f "$prompt_file" ] || { echo "prompt file not found: $prompt_file" >&2; return 2; }
   command -v claude >/dev/null 2>&1 || { echo "claude CLI not found on PATH ($PATH)" >&2; return 3; }
   if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -f "$NODE_DIR/.env" ]; then
     CLAUDE_CODE_OAUTH_TOKEN="$(grep -m1 '^CLAUDE_CODE_OAUTH_TOKEN=' "$NODE_DIR/.env" | cut -d= -f2- || true)"
