@@ -114,6 +114,14 @@ RL_ERR_FILE="$RUN_DIR/report.md.err" rl_step eng-session all \
   run_claude_agent scripts/prompts/eng-daily.md "$RUN_DIR/report.md" 120 "$ALLOWED" || rc=$?
 cat "$RUN_DIR/report.md" 2>/dev/null || true
 
+# Leave the shared working tree on main: tomorrow's cron jobs run the scripts in this checkout, so they
+# must never find it parked on an eng/ branch. Uncommitted leftovers are never discarded; they are reported.
+if [ -z "$(git_r status --porcelain)" ]; then
+  git_r checkout -q main 2>/dev/null || true
+else
+  printf '\n**Warning:** the eng session left uncommitted changes on branch `%s`; the working tree was NOT switched back to main. Commit or discard them before the next cron run.\n' "$(git_r branch --show-current)" >> "$RUN_DIR/report.md"
+fi
+
 if [ "$rc" -eq 0 ]; then
   rl_step eng-merge all auto_merge_ready || true
   cat "$RUN_DIR/merge.txt" 2>/dev/null || true
