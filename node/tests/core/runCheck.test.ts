@@ -59,6 +59,53 @@ describe("evaluateRuns", () => {
     expect(findings[0]).toMatchObject({ severity: "error", code: "missing_run", date: "2026-10-06" });
   });
 
+  it("collapses simultaneous missing_run findings across automations into one host_outage finding", () => {
+    const rootB = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-runcheck-b-"));
+    try {
+      const writeB = (date: string, s: RunSummary) => {
+        const dir = path.join(rootB, date);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, "run.json"), JSON.stringify(s));
+      };
+      writeRun("2026-10-02", summary({ started_at: "2026-10-02T15:30:00Z" }));
+      writeB("2026-10-02", summary({ started_at: "2026-10-02T15:40:00Z" }));
+      // 10-05 and 10-06 missing for both; 10-07 resumed
+      writeRun("2026-10-07", summary({ started_at: "2026-10-07T15:30:00Z" }));
+      writeB("2026-10-07", summary({ started_at: "2026-10-07T15:40:00Z" }));
+      const findings = evaluateRuns({
+        now,
+        days: 6,
+        expectations: [expectation(), expectation({ name: "financial-daily-refresh", runsRoot: rootB })],
+      });
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({ code: "host_outage", severity: "error", date: "2026-10-06" });
+      expect(findings[0].message).toContain("2026-10-05 to 2026-10-06");
+      expect(findings[0].message).toContain("2026-10-02T15:40:00.000Z");
+      expect(findings[0].message).toContain("2026-10-07T15:30:00.000Z");
+    } finally {
+      fs.rmSync(rootB, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a plain missing_run when only some automations are missing", () => {
+    const rootB = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-runcheck-b-"));
+    try {
+      writeRun("2026-10-07", summary());
+      writeRun("2026-10-06", summary());
+      fs.mkdirSync(path.join(rootB, "2026-10-07"), { recursive: true });
+      fs.writeFileSync(path.join(rootB, "2026-10-07", "run.json"), JSON.stringify(summary()));
+      const findings = evaluateRuns({
+        now,
+        days: 2,
+        expectations: [expectation(), expectation({ name: "other", runsRoot: rootB })],
+      });
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({ code: "missing_run", domain: "other", date: "2026-10-06" });
+    } finally {
+      fs.rmSync(rootB, { recursive: true, force: true });
+    }
+  });
+
   it("does not expect a run on a weekend, or today before the grace hour", () => {
     const earlyMonday = new Date(2026, 9, 5, 9, 0, 0); // Mon Oct 5, 9am, before 10am grace
     expect(evaluateRuns({ now: earlyMonday, days: 3, expectations: [expectation()] })).toEqual([]);
