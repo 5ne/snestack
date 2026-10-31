@@ -44,7 +44,7 @@ export interface Finding {
   severity: Severity;
   domain: string;
   date: string;
-  code: "missing_run" | "incomplete_run" | "failed" | "degraded" | "model_errors" | "cost_anomaly" | "cache_stale" | "database_unreachable";
+  code: "missing_run" | "incomplete_run" | "failed" | "degraded" | "model_errors" | "cost_anomaly" | "cache_stale" | "database_unreachable" | "host_outage";
   message: string;
 }
 
@@ -152,7 +152,7 @@ function findingsForSummary(
   return findings;
 }
 
-export function evaluateRuns(opts: { now: Date; days: number; expectations: RunExpectation[] }): Finding[] {
+function evaluatePerAutomation(opts: { now: Date; days: number; expectations: RunExpectation[] }): Finding[] {
   const findings: Finding[] = [];
   const { now, days } = opts;
   const today = dayString(now);
@@ -232,6 +232,89 @@ export function evaluateRuns(opts: { now: Date; days: number; expectations: RunE
     }
   }
   return findings;
+}
+
+/** Every recorded run start time (epoch ms) under a runs root, covering both one-run-per-day and runs-per-day layouts. */
+function recordedStartTimes(runsRoot: string): number[] {
+  const times: number[] = [];
+  if (!fs.existsSync(runsRoot)) return times;
+  for (const day of fs.readdirSync(runsRoot)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+    const dayDir = path.join(runsRoot, day);
+    const dirs = [dayDir, ...fs.readdirSync(dayDir).map((n) => path.join(dayDir, n))];
+    for (const d of dirs) {
+      const t = Date.parse(readSummary(d)?.started_at ?? "");
+      if (!Number.isNaN(t)) times.push(t);
+    }
+  }
+  return times;
+}
+
+const MAX_OUTAGE_GAP_DAYS = 3; // a weekend between two expected days must not split one outage
+
+/**
+ * Runs the per-automation checks, then collapses days on which EVERY automation
+ * expected that day logged missing_run (two or more of them) into one
+ * "host_outage" finding per contiguous window. Several automations going silent
+ * and coming back together points at one cause (the machine asleep or off), not
+ * N independent failures. Days where only some automations are missing stay as
+ * ordinary per-automation findings.
+ */
+export function evaluateRuns(opts: { now: Date; days: number; expectations: RunExpectation[] }): Finding[] {
+  const findings = evaluatePerAutomation(opts);
+  const { now, days, expectations } = opts;
+  const today = dayString(now);
+
+  const outageDates: string[] = [];
+  for (let offset = 0; offset < days; offset++) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset);
+    const date = dayString(day);
+    const expected = expectations.filter(
+      (e) => (!e.since || date >= e.since) && e.expectedOn(day) && !(date === today && now.getHours() < e.graceHour)
+    );
+    if (expected.length < 2) continue;
+    const allMissing = expected.every((e) =>
+      findings.some((f) => f.domain === e.name && f.date === date && f.code === "missing_run" && f.severity === "error")
+    );
+    if (allMissing) outageDates.push(date);
+  }
+  if (outageDates.length === 0) return findings;
+
+  outageDates.sort();
+  const groups: string[][] = [];
+  for (const d of outageDates) {
+    const last = groups[groups.length - 1];
+    const gapDays = last ? (Date.parse(d) - Date.parse(last[last.length - 1])) / 86400000 : Infinity;
+    if (last && gapDays <= MAX_OUTAGE_GAP_DAYS) last.push(d);
+    else groups.push([d]);
+  }
+
+  const covered = new Set(outageDates);
+  const remaining = findings.filter(
+    (f) => !(covered.has(f.date) && f.code === "missing_run" && expectations.some((e) => e.name === f.domain))
+  );
+  const allTimes = expectations.flatMap((e) => recordedStartTimes(e.runsRoot));
+  const fmt = (t: number | undefined) => (t == null ? "unknown" : new Date(t).toISOString());
+  const names = expectations.map((e) => e.name).join(", ");
+
+  for (const g of groups) {
+    const startOfWindow = Date.parse(`${g[0]}T00:00:00`);
+    const endOfWindow = Date.parse(`${g[g.length - 1]}T23:59:59`);
+    const before = Math.max(...allTimes.filter((t) => t < startOfWindow), -Infinity);
+    const after = Math.min(...allTimes.filter((t) => t > endOfWindow), Infinity);
+    remaining.push({
+      severity: "error",
+      domain: "_host",
+      date: g[g.length - 1],
+      code: "host_outage",
+      message:
+        `Likely host outage: every automation expected on ${g.length === 1 ? g[0] : `${g[0]} to ${g[g.length - 1]}`} ` +
+        `(${names}) recorded no run — one cause (machine asleep/off or cron down), not separate failures. ` +
+        `Last recorded run before: ${fmt(Number.isFinite(before) ? before : undefined)}; ` +
+        `first run after: ${fmt(Number.isFinite(after) ? after : undefined)}.`,
+    });
+  }
+  return remaining;
 }
 
 /**
