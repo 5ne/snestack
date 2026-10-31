@@ -123,3 +123,61 @@ describe("CLI: role-gate / role-notify (no model calls, no email)", () => {
     expect(run(`role-notify --role pm --before ${before} --dry-run`)).toMatch(/nothing new/i);
   });
 });
+
+describe("CLI: feature auto-approve / merge-check (no model calls)", () => {
+  let brainRoot: string;
+  const run = (args: string) =>
+    execSync(`npx ts-node --project tsconfig.json ${CLI} ${args}`, {
+      cwd: path.resolve(__dirname, ".."),
+      encoding: "utf8",
+      stdio: "pipe",
+      env: { ...process.env, SNESTACK_BRAIN_ROOT: brainRoot },
+    });
+  const write = (name: string, fields: string, body: string) => {
+    const dir = path.join(brainRoot, "financial", "feature-requests");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `2026-10-31-${name}.md`);
+    fs.writeFileSync(file, `---\nstatus: proposed\ndomain: financial\n${fields}created: 2026-10-31\nsource: pm\n---\n# ${name}\n\n${body}\n`);
+    return file;
+  };
+  beforeEach(() => {
+    brainRoot = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-cli-auto-"));
+  });
+  afterEach(() => fs.rmSync(brainRoot, { recursive: true, force: true }));
+
+  it("approves only the low-risk proposal and tags it auto-approved", () => {
+    const safe = write("safe-one", "impact: low\neffort: small\n", "Add a run-check finding and test.");
+    const risky = write("risky-one", "impact: low\neffort: small\n", "Edit skills/long-term-quality.md.");
+    const big = write("big-one", "impact: low\neffort: large\n", "Add a test.");
+    const dry = run("feature auto-approve --dry-run");
+    expect(dry).toContain("would auto-approve: 2026-10-31-safe-one");
+    expect(fs.readFileSync(safe, "utf8")).toContain("status: proposed");
+    const out = run("feature auto-approve");
+    expect(out).toContain("auto-approved: 2026-10-31-safe-one");
+    expect(out).toContain("needs owner: 2026-10-31-risky-one");
+    expect(out).toContain("needs owner: 2026-10-31-big-one");
+    expect(fs.readFileSync(safe, "utf8")).toMatch(/status: approved/);
+    expect(fs.readFileSync(risky, "utf8")).toMatch(/status: proposed/);
+    expect(fs.readFileSync(big, "utf8")).toMatch(/status: proposed/);
+    expect(run("feature list --status approved")).toContain("(auto-approved)");
+  });
+
+  it("caps auto-approvals per run at 2", () => {
+    ["a", "b", "c"].forEach((n) => write(`cap-${n}`, "impact: low\neffort: small\n", "Add a test."));
+    const out = run("feature auto-approve");
+    expect((out.match(/^auto-approved:/gm) ?? []).length).toBe(2);
+    expect(out).toContain("per-run cap");
+  });
+
+  it("merge-check passes allowlisted paths and fails others or a leaked secret", () => {
+    const ok = path.join(brainRoot, "ok.txt");
+    fs.writeFileSync(ok, "node/tests/core/x.test.ts\nnode/README.md\n");
+    expect(run(`feature merge-check --paths ${ok}`)).toContain("auto-mergeable");
+    const bad = path.join(brainRoot, "bad.txt");
+    fs.writeFileSync(bad, "node/tests/x.test.ts\nnode/src/core/executor.ts\n");
+    expect(() => run(`feature merge-check --paths ${bad}`)).toThrow();
+    const diff = path.join(brainRoot, "d.diff");
+    fs.writeFileSync(diff, "+TOKEN=sk-ant-oat01-abcdefghijklmnopqrstuv\n");
+    expect(() => run(`feature merge-check --paths ${ok} --diff ${diff}`)).toThrow();
+  });
+});

@@ -32,10 +32,12 @@ import {
   listProposals,
   findProposalBySlug,
   setProposalStatus,
+  setProposalField,
   readProposalFile,
   type ProposalStatus,
 } from "./core/featureRequests";
 import { sendEmail } from "./core/email";
+import { eligibleForAutoApprove, changedPathViolations, diffLooksSecret, MAX_AUTO_APPROVALS_PER_RUN } from "./core/autoMerge";
 import { buildRoleEmail, type Role } from "./core/roleNotify";
 import { decideRoleGate, recordRoleRun } from "./core/roleGate";
 import domainsConfig from "./config/domains.json";
@@ -987,7 +989,7 @@ feature
       return;
     }
     for (const p of filtered) {
-      console.log(`${p.slug}  [${p.status}]  ${p.domain}  impact=${p.impact ?? "?"} effort=${p.effort ?? "?"}  ${p.title}`);
+      console.log(`${p.slug}  [${p.status}]  ${p.domain}  impact=${p.impact ?? "?"} effort=${p.effort ?? "?"}  ${p.title}${p.autoApproved ? "  (auto-approved)" : ""}`);
     }
   });
 
@@ -1057,6 +1059,56 @@ feature
   .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
   .action(async (id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "done", "done"));
 
+feature
+  .command("auto-approve")
+  .description(
+    "Approve proposed, PM-written proposals that pass the low-risk policy (core/autoMerge.ts): small effort, low/medium impact, " +
+      `nothing on the risk list. At most ${MAX_AUTO_APPROVALS_PER_RUN} per run. Marks them auto_approved so eng may auto-merge them.`
+  )
+  .option("--dry-run", "Print what would be approved without changing anything")
+  .action(async (opts: { dryRun?: boolean }) => {
+    const brainRoot = getConfig().getBrainRoot();
+    const proposed = FEATURE_DOMAINS.flatMap((d) => listProposals(brainRoot, d)).filter((p) => p.status === "proposed");
+    let approved = 0;
+    for (const p of proposed) {
+      const d = eligibleForAutoApprove(p);
+      if (!d.ok) {
+        console.log(`needs owner: ${p.slug} (${d.reasons.join("; ")})`);
+        continue;
+      }
+      if (approved >= MAX_AUTO_APPROVALS_PER_RUN) {
+        console.log(`needs owner: ${p.slug} (eligible, but the per-run cap of ${MAX_AUTO_APPROVALS_PER_RUN} is reached)`);
+        continue;
+      }
+      if (!opts.dryRun) {
+        setProposalField(p.file, "auto_approved", "true");
+        setProposalStatus(p.file, "approved");
+      }
+      approved++;
+      console.log(`${opts.dryRun ? "would auto-approve" : "auto-approved"}: ${p.slug} [${p.domain}] ${p.title}`);
+    }
+    if (proposed.length === 0) console.log("No proposed requests.");
+  });
+
+feature
+  .command("merge-check")
+  .description(
+    "Exit 0 only if an eng branch is safe to auto-merge: every changed path is on the allowlist and the diff has no credentials. " +
+      "Prints each violation otherwise (exit 1)."
+  )
+  .requiredOption("--paths <file>", "File with one changed path per line (git diff --name-only main...branch)")
+  .option("--diff <file>", "Unified diff of the branch to scan for secrets")
+  .action(async (opts: { paths: string; diff?: string }) => {
+    const paths = fs.readFileSync(opts.paths, "utf8").split("\n");
+    const bad = changedPathViolations(paths);
+    for (const b of bad) console.log(`not auto-mergeable path: ${b}`);
+    const secret = opts.diff ? diffLooksSecret(fs.readFileSync(opts.diff, "utf8")) : false;
+    if (secret) console.log("diff contains something that looks like a credential");
+    if (paths.filter((p) => p.trim()).length === 0) console.log("empty change set");
+    if (bad.length || secret || paths.filter((p) => p.trim()).length === 0) process.exitCode = 1;
+    else console.log("auto-mergeable");
+  });
+
 program
   .command("role-notify")
   .description(
@@ -1066,10 +1118,12 @@ program
   .requiredOption("--role <r>", "pm | eng")
   .option("--report <path>", "The session's final message (report.md)")
   .option("--before <path>", "PM: file listing proposal slugs that existed before the session (first column of `feature list`)")
+  .option("--merge-file <path>", "eng: the auto-merge log (merge.txt)")
   .option("--failed", "The session failed")
   .option("--error-file <path>", "Stderr/error text to include when --failed")
+  .option("--html-out <file>", "Also write the HTML body to this file (to preview it)")
   .option("--dry-run", "Build the email but print it instead of sending")
-  .action(async (opts: { role: string; report?: string; before?: string; failed?: boolean; errorFile?: string; dryRun?: boolean }) => {
+  .action(async (opts: { role: string; report?: string; before?: string; mergeFile?: string; failed?: boolean; errorFile?: string; htmlOut?: string; dryRun?: boolean }) => {
     if (opts.role !== "pm" && opts.role !== "eng") {
       console.error("role-notify: --role must be pm or eng");
       process.exitCode = 1;
@@ -1097,11 +1151,13 @@ program
       failureReason: readIf(opts.errorFile),
       report: readIf(opts.report),
       newProposals,
+      mergeLog: readIf(opts.mergeFile),
     });
     if (!email) {
       console.log("Nothing new — no email sent.");
       return;
     }
+    if (opts.htmlOut) fs.writeFileSync(opts.htmlOut, email.html);
     if (opts.dryRun) {
       console.log(`Subject: ${email.subject}\n\n${email.text}`);
       return;
@@ -1110,7 +1166,7 @@ program
       process.exitCode = 1;
       return;
     }
-    const ok = await sendEmail(email.subject, email.text);
+    const ok = await sendEmail(email.subject, email.text, email.html);
     console.log(ok ? "Email sent." : "Email failed to send.");
     if (!ok) process.exitCode = 1;
   });
