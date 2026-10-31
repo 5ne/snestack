@@ -43,7 +43,7 @@ npm run dev -- organize-reports
 ./scripts/daily-analysis.sh
 ```
 
-Five cron jobs together make up the split-cadence pipeline (`npm run build` first against each — all five scripts run the built CLI, not `npm run dev`). The market trades on US/Eastern hours regardless of where the cron daemon runs, so the times below are given as Pacific-time wall-clock values, converted to still land within 9:30am-4pm ET market hours — **cron interprets its time fields in the machine's own local timezone** (macOS's built-in cron has no `CRON_TZ` support; check `/etc/localtime` to confirm yours), so adjust the hour numbers below if your machine isn't on Pacific time:
+Six cron jobs together make up the split-cadence pipeline (`npm run build` first against each — all six scripts run the built CLI, not `npm run dev`). The market trades on US/Eastern hours regardless of where the cron daemon runs, so the times below are given as Pacific-time wall-clock values, converted to still land within 9:30am-4pm ET market hours — **cron interprets its time fields in the machine's own local timezone** (macOS's built-in cron has no `CRON_TZ` support; check `/etc/localtime` to confirm yours), so adjust the hour numbers below if your machine isn't on Pacific time:
 
 | Script | Cadence (Pacific) | What it does |
 | --- | --- | --- |
@@ -51,8 +51,7 @@ Five cron jobs together make up the split-cadence pipeline (`npm run build` firs
 | `scripts/data-refresh-daily.sh` | 2pm PT, nightly | Quote + RSI/MA + Finnhub fundamentals; Morningstar re-parse on Mondays only |
 | `scripts/daily-analysis.sh` | 2:30pm PT, nightly, after `data-refresh-daily.sh` | `long-term-quality` skill for every ticker, email + signal history |
 | `scripts/swing-check.sh` | hourly, 7am-1pm PT (market hours) | `swing-trading-large-cap` skill for every ticker, its own email + signal history |
-| `scripts/reflect-check.sh` | 11pm PT, nightly, well after market hours | `improve-self` skill per registered domain (gated), writes/emails new feature-request proposals |
-| `scripts/pm-daily.sh` | 4pm PT, nightly | PM role: an agentic `claude -p` session writes new `status: proposed` feature requests into the brain (replaces the PM scheduled task) |
+| `scripts/pm-daily.sh` | 4pm PT, nightly | PM role: an agentic `claude -p` session writes new `status: proposed` feature requests into the brain (replaces the PM scheduled task and the removed `improve-self` loop) |
 | `scripts/eng-daily.sh` | 5pm PT, nightly, after the PM run | eng role: implements `approved` requests on an `eng/<slug>` branch with tests (replaces the eng scheduled task); no model call if nothing is approved |
 
 ```cron
@@ -61,10 +60,9 @@ Five cron jobs together make up the split-cadence pipeline (`npm run build` firs
 0 14 * * 1-5 cd <repo>/node && ./scripts/data-refresh-daily.sh >> logs/data-refresh-daily.cron.log 2>&1
 30 14 * * 1-5 cd <repo>/node && ./scripts/daily-analysis.sh >> logs/daily-analysis.cron.log 2>&1
 0 7-13 * * 1-5 cd <repo>/node && ./scripts/swing-check.sh >> logs/swing-check.cron.log 2>&1
-0 23 * * 1-5 cd <repo>/node && ./scripts/reflect-check.sh >> logs/reflect-check.cron.log 2>&1
 ```
 
-Each script supports `--dry-run` (runs everything but emails/records nothing, output goes to a `-dryrun` directory) and `--tickers A,B,C` (overrides the positions+watchlist default; `reflect-check.sh` has no tickers, just `--dry-run`). `snestack run-check` summarizes recent runs across the first four — see `node/src/core/runCheck.ts`; it doesn't yet have an expectation for `reflect-check.sh` itself (a reasonable follow-up, not required for the initial build).
+Each script supports `--dry-run` (runs everything but emails/records nothing, output goes to a `-dryrun` directory) and `--tickers A,B,C` (overrides the positions+watchlist default). `snestack run-check` summarizes recent runs across the first four — see `node/src/core/runCheck.ts`; it doesn't yet have an expectation for `reflect-check.sh` itself (a reasonable follow-up, not required for the initial build).
 
 **What each job actually does:**
 
@@ -72,9 +70,8 @@ Each script supports `--dry-run` (runs everything but emails/records nothing, ou
 - **`data-refresh-daily.sh`** — two steps: `data-refresh --tier daily` (quote + RSI/MA + Finnhub live fundamentals for every ticker), then `data-refresh --tier weekly` (re-parses whatever Morningstar PDF currently sits in `reports/`) — but only on Mondays, since re-parsing the same on-disk PDF every night would be pure waste. This is what's expected to populate the cache before `daily-analysis.sh` runs. One run directory per day under `<brain>/financial/runs/data-refresh-daily/<date>/`.
 - **`daily-analysis.sh`** — four steps: (1) `data-dump` to snapshot the cache (populated by `data-refresh-daily.sh` earlier) and get the ticker list; (2) run the `long-term-quality` skill against every ticker with `--gated --out`, one Claude call each *if* the skill's own `gate:` triggers fire (RSI, price-move, age, or a changed Morningstar/brain file — see `core/gate.ts`), writing `<ticker>-long-term-quality.md`; (3) `build-signals` to read each write-up's trailing `VERDICT:` line into one structured signals array, deterministically, no model call; (4) `notify` to email that batch and record it in the financial database's `signals` table — or, if every call was gated off (nothing worth a fresh look happened), `notify-summary` instead, emailing a "no changes today" heartbeat rather than staying silent. No longer touches `swing-trading-large-cap` — that moved to its own script. Output lands in `<brain>/financial/signals/<date>/`.
 - **`swing-check.sh`** — the same four-step shape as `daily-analysis.sh`, but for `swing-trading-large-cap` only, and run several times a day instead of once overnight: (1) `data-dump` for the ticker list, (2) the skill per ticker (also gated — RSI outside 30-70 is "no action" and skips the call), (3) `build-signals`, (4) `notify` if there's something to report. Unlike `daily-analysis.sh`, a quiet run here does **not** email a summary — several "nothing happened" emails a day would defeat the point of gating — it's just recorded in `run.json` for `run-check` to see. Each run gets its own timestamped directory under `<brain>/financial/runs/swing-check/<date>/<time>/`, so distill/notify are automatically scoped to that run's own tickers.
-- **`reflect-check.sh`** — two steps, and the only one of the five that isn't financial-specific: (1) `reflect --json`, which runs every domain registered in `config/domains.json` through its own `improve-self` skill (gated — a quiet day for a domain costs no model call, just digest assembly) and writes any resulting proposals under `<brain>/<domain>/feature-requests/`; (2) `reflect-notify`, which emails one combined summary — each new proposal's domain, title, impact/effort, and its `snestack feature approve <id>` command — if anything new landed anywhere, and sends nothing on a quiet run. This system never edits its own source code, skills, or config; it only ever writes new proposal files (see `core/featureRequests.ts`), and turning a proposal into actual work stays a separate, deliberate, human-initiated step (`snestack feature approve <id>`, then pointing a normal session at the file). Spans every domain, not just financial, so its run record is staged under `<brain>/_system/runs/reflect/<date>/` rather than `<brain>/financial/...` like the other four.
 
-All five record step-by-step outcomes to `run.jsonl`/`run.json` (see `core/runLog.ts`, staged locally under `~/Library/Logs/snestack/runs/` and published to the paths above when each run finishes), which `snestack run-check` reads (for the first four) to flag missing/failed/degraded runs and stale cached data.
+All six record step-by-step outcomes to `run.jsonl`/`run.json` (see `core/runLog.ts`, staged locally under `~/Library/Logs/snestack/runs/` and published to the paths above when each run finishes), which `snestack run-check` reads (for the first four) to flag missing/failed/degraded runs and stale cached data.
 
 `setup` is fully interactive — it prompts for each API key, validates the
 format, and writes `.env` for you, mirroring `snestack setup` in the Python
@@ -109,8 +106,8 @@ node/
 ├── src/
 │   ├── core/                    # domain-agnostic harness: db, config, setup, models,
 │   │                            # errors, logger, skillLoader, domainRegistry,
-│   │                            # executor, runSkill, reflect, featureRequests,
-│   │                            # reflectNotify, email, runCheck, runLog
+│   │                            # executor, runSkill, featureRequests,
+│   │                            # email, runCheck, runLog
 │   ├── config/
 │   │   └── domains.json         # registers each domain's skillsDir + contextToolsModule
 │   ├── domains/
@@ -139,25 +136,18 @@ snestack data-refresh --tier intraday --tickers NVDA,TSLA   # live price only, s
 snestack data-refresh --tier weekly           # re-parse the current Morningstar PDF per ticker
 ```
 
-### Reflection: improve-self
+### Feature requests (PM and eng roles)
 
-`snestack reflect [--domain <d>] [--force] [--json]` is a harness-level job, not a financial one: it loops every domain registered in `config/domains.json` (or just the one named with `--domain`) and, for each one that has an `improve-self.md` skill (financial only, for now — see `src/domains/financial/skills/improve-self.md`), checks the skill's own `gate:` first (same `--gated` machinery as `run-skill`) and runs it if due. The skill reads a `reflectionDigest` of recent `run-check` findings, recent run summaries, and every existing feature-request proposal (so it doesn't duplicate one), and writes its judgment as zero or more `## Feature Request: <title>` sections. `core/featureRequests.ts` parses those deterministically and writes each as its own file under `<brain>/<domain>/feature-requests/<date>-<slug>.md`, skipping (and reporting) anything that looks like a near-duplicate of an existing `proposed`/`in-progress` proposal.
+Self-improvement is done by two agentic roles, not by a skill inside the harness (the old `improve-self` skill, `snestack reflect`, `reflect-notify` and `reflect-check.sh` were removed). `scripts/pm-daily.sh` (the PM role) reads recent run records, dedups against `snestack feature list`, and writes new `status: proposed` files under `<brain>/<domain>/feature-requests/` (cross-domain ones under `<brain>/_system/feature-requests/`). You review them and approve; `scripts/eng-daily.sh` (the eng role) then implements `approved` ones on an `eng/<slug>` branch. See "PM and eng role scripts" below.
 
-**The hard safety line:** this never edits source code, skills, or config — it only ever writes new files under `feature-requests/`. Turning a proposal into actual work is a separate, deliberate, human-initiated step.
+**The hard safety line:** the PM role only writes proposal files; the eng role never pushes or merges; turning anything into running code stays a human step.
 
 ```bash
-snestack reflect                        # every registered domain with an improve-self skill
-snestack reflect --domain financial     # just financial
-snestack reflect --domain financial --force   # bypass the gate, run it right now regardless of last-run/inputs
 snestack feature list                   # every proposal, any domain/status
 snestack feature list --domain financial --status proposed
 snestack feature approve 2026-10-13-add-retry-backoff-to-data-refresh   # proposed -> approved (then `feature start <id>` -> in-progress)
 snestack feature done 2026-10-13-add-retry-backoff-to-data-refresh      # -> done
 ```
-
-`snestack reflect --json` prints a per-domain summary (ran/skipped, files written, duplicates skipped, parse errors) that `snestack reflect-notify --file <that json>` turns into one combined email — each new proposal with its `feature approve` command — sending nothing when there's nothing new. `scripts/reflect-check.sh --force` (cron table above) chains the two, forced; `reflect-check.sh` alone respects the gate as usual.
-
-`--force` skips the gate check but not the "does this domain have an `improve-self.md` skill" check — it still reports `skipped (no improve-self skill for this domain yet)` for calendar/travel until those are built. A quiet result (zero proposals) right after a forced run is expected and fine — it means the skill looked and genuinely found nothing worth proposing, not that the force didn't work; check the model's own write-up (`snestack run-skill financial improve-self financial`, no gate at all) if you want to see its reasoning directly.
 
 ### Calendar domain setup (Google Calendar, read-only)
 
@@ -214,7 +204,9 @@ Every model call goes through `runPrompt()` in `src/core/executor.ts`. `api` (de
 
 ## PM and eng role scripts (`pm-daily.sh`, `eng-daily.sh`)
 
-Times are Pacific wall-clock; macOS cron uses the machine's local timezone, so adjust the hours if it is not on Pacific. Both run an agentic `claude -p` session on the Claude subscription from the repo root (so `CLAUDE.md` loads), with the prompts in `scripts/prompts/` and the shared runner in `scripts/lib/claude-agent.sh`. Unlike the executor, these sessions have tools, restricted by an allow list; `git push`, `git merge`, `rm`, `curl` and any read or write of `.env` are always denied. There is no API fallback (an agent session isn't a single stateless call): a usage-limit or login failure fails the run and the next day's run tries again. `ANTHROPIC_API_KEY` is stripped from the child env. Runs are recorded under `<brain>/_system/runs/pm|eng/<date>/` (`report.md` is the session's final message). `eng-daily.sh --dry-run` only lists approved items. Crontab:
+Times are Pacific wall-clock; macOS cron uses the machine's local timezone, so adjust the hours if it is not on Pacific. Both run an agentic `claude -p` session on the Claude subscription from the repo root (so `CLAUDE.md` loads), with the prompts in `scripts/prompts/` and the shared runner in `scripts/lib/claude-agent.sh`. Unlike the executor, these sessions have tools, restricted by an allow list; `git push`, `git merge`, `rm`, `curl` and any read or write of `.env` are always denied. There is no API fallback (an agent session isn't a single stateless call): a usage-limit or login failure fails the run and the next day's run tries again. `ANTHROPIC_API_KEY` is stripped from the child env. **Notifications and gating:** after each run, `role-notify` emails you (via the existing Gmail settings): the PM run sends one email listing any *new* proposals with their `feature approve` commands (silence if there are none); the eng run sends its report; any failed run (including a subscription usage limit) emails the failure. The PM run is also gated: `role-gate --role pm` skips the session, with no model call, unless a new `run.json` has appeared under any domain's `signals/` or `runs/` since the last successful PM run, or that run is 7+ days old (`pm-daily.sh --force` bypasses it). The marker is `<brain>/_system/runs/pm/.last-run.json`. Both commands can be tried without side effects: `node dist/cli.js role-gate --role pm`, `node dist/cli.js role-notify --role pm --before <slugs file> --dry-run`.
+
+Runs are recorded under `<brain>/_system/runs/pm|eng/<date>/` (`report.md` is the session's final message). `eng-daily.sh --dry-run` only lists approved items. Crontab:
 
 ```cron
 0 16 * * * cd <repo>/node && ./scripts/pm-daily.sh >> logs/pm-daily.cron.log 2>&1

@@ -10,9 +10,7 @@ const SPLIT_CADENCE_SINCE = "2026-10-09";
 /**
  * The financial domain's registered automations, as `run-check`-style
  * expectations (graceHour values assume this runs on the same machine/timezone
- * as cron — America/Los_Angeles). Shared by the `run-check` CLI command and the
- * `improve-self` skill's `reflectionDigest` context tool so the two definitions
- * of "what financial automations exist" never drift apart.
+ * as cron — America/Los_Angeles). Used by the `run-check` CLI command.
  */
 export function financialRunExpectations(brainRoot: string): RunExpectation[] {
   return [
@@ -54,7 +52,7 @@ export function financialRunRoots(brainRoot: string): string[] {
   return financialRunExpectations(brainRoot).map((e) => e.runsRoot);
 }
 
-/** The same automations as financialRunExpectations, shaped for the cost / redundancy rollup (`run-check --cost`, the reflection digest). */
+/** The same automations as financialRunExpectations, shaped for the cost / redundancy rollup (`run-check --cost`). */
 export function financialRunStatsTargets(brainRoot: string): RunStatsTarget[] {
   return financialRunExpectations(brainRoot).map((e) => ({ domain: "financial", script: e.name, runsRoot: e.runsRoot }));
 }

@@ -31,7 +31,7 @@ as any other contribution (see `CONTRIBUTING.md`).
    see "Domain-specific work" below.
 2. Follow the existing module boundaries (`skillLoader`, `domainRegistry`,
    `runSkill`, `executor`, `gate`, `verdict`, `runLog`/`runCheck`,
-   `reflect`/`featureRequests`, `safeWrite`) — extend the one that owns the
+   `featureRequests`, `safeWrite`) — extend the one that owns the
    concern, don't blur two together.
 3. Keep `core/` ignorant of any specific domain. If you're tempted to
    write `if (domain === "financial")` inside `core/`, stop — that belongs

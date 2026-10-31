@@ -3,9 +3,8 @@ import * as os from "os";
 import * as path from "path";
 import { openTestDb } from "../../helpers/testDb";
 import { Db } from "../../../src/core/db";
-import { computeGateFacts, improveSelfGateFacts, gateFacts } from "../../../src/domains/financial/gate";
+import { computeGateFacts, gateFacts } from "../../../src/domains/financial/gate";
 import { resetConfig } from "../../../src/core/config";
-import { recordReflectRun } from "../../../src/core/reflect";
 import { financialRunRoots } from "../../../src/domains/financial/runExpectations";
 
 describe("computeGateFacts", () => {
@@ -69,54 +68,5 @@ describe("computeGateFacts", () => {
 
   it("knows nothing about an unrecognized skill", async () => {
     expect((await computeGateFacts(db, "some-other-skill", "INTU", opts())).lastRunAt).toBeNull();
-  });
-});
-
-describe("improveSelfGateFacts / gateFacts dispatch", () => {
-  let brainRoot: string;
-  const now = new Date("2026-10-13T12:00:00Z");
-
-  beforeEach(async () => {
-    brainRoot = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-gate-improveself-"));
-    process.env.SNESTACK_BRAIN_ROOT = brainRoot;
-    resetConfig();
-  });
-  afterEach(async () => {
-    fs.rmSync(brainRoot, { recursive: true, force: true });
-    delete process.env.SNESTACK_BRAIN_ROOT;
-    resetConfig();
-  });
-
-  it("has no previous run and no price/RSI facts when improve-self has never run", async () => {
-    const f = improveSelfGateFacts(now);
-    expect(f.lastRunAt).toBeNull();
-    expect(f.rsi).toBeNull();
-    expect(f.price).toBeNull();
-    expect(f.inputsUpdatedAfterLastRun).toBe(true);
-  });
-
-  it("reads the last reflect-run marker once recorded", async () => {
-    const lastRun = new Date("2026-10-10T08:00:00Z");
-    recordReflectRun(brainRoot, "financial", lastRun);
-    expect(improveSelfGateFacts(now).lastRunAt?.toISOString()).toBe(lastRun.toISOString());
-  });
-
-  it("flags inputsUpdatedAfterLastRun when a run.json newer than the marker appears in a known run root", async () => {
-    const lastRun = new Date("2026-10-10T08:00:00Z");
-    recordReflectRun(brainRoot, "financial", lastRun);
-    expect(improveSelfGateFacts(now).inputsUpdatedAfterLastRun).toBe(false);
-
-    const root = financialRunRoots(brainRoot)[0];
-    const dayDir = path.join(root, "2026-10-11");
-    fs.mkdirSync(dayDir, { recursive: true });
-    fs.writeFileSync(path.join(dayDir, "run.json"), "{}");
-
-    expect(improveSelfGateFacts(now).inputsUpdatedAfterLastRun).toBe(true);
-  });
-
-  it("gateFacts dispatches to improveSelfGateFacts for the improve-self skill", async () => {
-    const f = await gateFacts("improve-self", "financial");
-    expect(f.lastRunAt).toBeNull();
-    expect(f.rsi).toBeNull();
   });
 });

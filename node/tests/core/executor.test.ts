@@ -17,9 +17,11 @@ describe("runPrompt run logging", () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-exec-"));
     process.env.SNESTACK_RUN_DIR = dir;
     process.env.SNESTACK_RUN_ID = "run-x";
+    process.env.SNESTACK_EXECUTOR = "api"; // hermetic: node/.env may select claude-cli
     create.mockReset();
   });
   afterEach(() => {
+    delete process.env.SNESTACK_EXECUTOR;
     fs.rmSync(dir, { recursive: true, force: true });
     delete process.env.SNESTACK_RUN_DIR;
     delete process.env.SNESTACK_RUN_ID;

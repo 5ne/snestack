@@ -13,8 +13,8 @@ vision day to day, not a restatement of it.
 
 ## What the job actually is
 
-Triage `<brain>/financial/feature-requests/` (written by `improve-self.md`
-or filed manually) and decide, per proposal, whether it's worth doing now.
+Triage `<brain>/financial/feature-requests/` (written by the PM script
+`scripts/pm-daily.sh` or filed manually) and decide, per proposal, whether it's worth doing now.
 
 ## How to decide
 

@@ -3,9 +3,7 @@ import * as path from "path";
 import { getConfig } from "../../core/config";
 import { Db } from "../../core/db";
 import type { GateFacts } from "../../core/gate";
-import { readLastReflectRun, hasNewRunsSince } from "../../core/reflect";
 import { defaultReportsDir } from "./agents/equityAgent";
-import { financialRunRoots } from "./runExpectations";
 
 /** Signal-reasoning prefix each skill's results are recorded under (set by build-signals). */
 const SKILL_PREFIX: Record<string, string> = {
@@ -76,31 +74,7 @@ export async function computeGateFacts(
   };
 }
 
-/**
- * `improve-self` reflects on the whole domain, not one ticker, so it has no
- * per-ticker signal row to read a last-run timestamp from — it gets its own
- * marker file (`core/reflect.ts`'s `readLastReflectRun`/`recordReflectRun`)
- * instead, and `inputsUpdated` means "has any automation produced a new
- * run.json since the last reflect run" rather than "did a report/brain file
- * change".
- */
-export function improveSelfGateFacts(now: Date = new Date()): GateFacts {
-  const brainRoot = getConfig().getBrainRoot();
-  const lastRunAt = readLastReflectRun(brainRoot, "financial");
-  return {
-    now,
-    rsi: null,
-    price: null,
-    lastRunAt,
-    lastRunPrice: null,
-    lastRunRsi: null,
-    inputsUpdatedAfterLastRun: hasNewRunsSince(financialRunRoots(brainRoot), lastRunAt),
-  };
-}
-
 export async function gateFacts(skillName: string, subject: string): Promise<GateFacts> {
-  if (skillName === "improve-self") return improveSelfGateFacts();
-
   const config = getConfig();
   const db = await Db.open(config.getDatabaseUrl());
   try {

@@ -8,7 +8,7 @@ type: vision
 
 **Purpose of this file:** context for whoever — human or agent — is deciding
 what to build next *in the harness itself* (`core/`, `cli.ts`,
-`config/domains.json`, the cross-domain automation around `reflect` and
+`config/domains.json`, the cross-domain automation around the PM/eng roles and
 `feature-requests`). Not a skill that's ever run through `run-skill` — there's
 no domain called "harness" in `config/domains.json`, and there shouldn't be.
 Read this before triaging a feature request, writing a spec for one, or
@@ -72,7 +72,7 @@ these needs to change shape, not get waived through)
 5. **Nothing here executes anything consequential on its own.** No domain's
    automation places a trade, sends an irreversible message, merges a PR, or
    deletes data without a human-initiated step in between. The financial
-   domain never auto-trades (see its own `vision.md`); `reflect` never edits
+   domain never auto-trades (see its own `vision.md`); the PM role never edits
    source code, only ever writes a new file under `feature-requests/` for a
    human to read and decide on (`core/featureRequests.ts`'s own docstring
    calls this "the hard safety line" — treat that phrase literally,
@@ -179,14 +179,11 @@ not the skill actually ran.
   under `~/Library/Logs/snestack/runs/` and published into
   `<brain>/<domain>/...` when the run finishes; `runCheck.ts` reads those
   back across domains to flag missing/failed/degraded runs and stale
-  cache, which `reflect.ts` folds into each domain's reflection digest.
-- `reflect.ts` / `featureRequests.ts` / `reflectNotify.ts` — the
-  cross-domain self-improvement loop itself (see "Current state" below):
-  `reflect.ts` assembles the digest an `improve-self.md` skill reads (every
-  `DigestSource` it builds from is domain-agnostic — a domain supplies
-  *data*, via its own `contextTools.reflectionDigest`, not a new digest
-  shape), `featureRequests.ts` deterministically parses that skill's output
-  into files, `reflectNotify.ts` emails what landed.
+  cache, which the PM role reads when looking for improvements.
+- `featureRequests.ts` — reads feature-request proposal files and
+  rewrites their `status` for `feature approve|start|done`. Proposals
+  themselves are authored by the PM role (`scripts/pm-daily.sh`), not by a
+  skill inside the harness.
 - `safeWrite.ts` — the one sanctioned way any automation writes a file
   under `<brain>/`, atomically. A domain script should use it rather than
   `fs.writeFileSync` directly, so a crash mid-write can't corrupt a
@@ -228,18 +225,13 @@ provide:
      Promise<GateFacts>`, supplying whatever a skill's `gate:` config needs
      to evaluate (RSI, last-run timestamp, etc.). Only needed if any skill
      in the domain declares a `gate:`.
-   - A domain wanting into the `reflect`/`improve-self` loop also exposes a
-     `reflectionDigest` context tool (see financial's, which composes
-     `core/reflect.ts`'s exported `DigestSource` builders with its own
-     run-expectations and cache-staleness checks) and its own
-     `skills/improve-self.md`.
 4. **Scheduled automation — and this is a real gap, not a convention.**
    There is no `domains/<domain>/scripts/` directory, no registration for
    it in `config/domains.json`, and nothing in `domainRegistry.ts` that
    knows a script exists. Every cron-run shell script
    (`data-refresh-daily.sh`, `data-refresh-intraday.sh`,
    `daily-analysis.sh`, `swing-check.sh`, `travel-catalog-nightly.sh`,
-   `travel-catalog-backfill.sh`, plus the cross-domain `reflect-check.sh`)
+   `travel-catalog-backfill.sh`, plus the cross-domain `pm-daily.sh` and `eng-daily.sh`)
    sits flat in one top-level `node/scripts/`, grouped only by filename
    prefix — financial's and travel's scripts live side by side with each
    other and with the one script that's legitimately cross-domain. The
@@ -281,7 +273,7 @@ only financial uses it today).
 
 Three domains are registered in `config/domains.json`: `financial` (the
 original use case — portfolio/watchlist investment judgment, the only
-domain with its own `vision.md`, its own `improve-self.md`, and the richest
+domain with its own `vision.md`, its own PM and eng skills, and the richest
 `contextTools.ts`), `calendar` (read-only Google Calendar, one skill,
 built specifically to prove the harness generalizes beyond investing —
 still too thin for a domain-scoped vision to say anything a sentence in
@@ -293,23 +285,21 @@ now for its own vision doc to be worth maintaining). Write a `vision.md`
 for calendar or travel once real feature-request pressure or real
 domain-specific judgment calls show up for either — not preemptively.
 
-The self-improvement loop that this vision document is meant to plug into
-already exists in a first form: `snestack reflect` runs each domain's own
-`improve-self.md` skill (financial only, today) against a digest of recent
-automation health (`core/reflect.ts`'s `gatherReflectionDigest`) and writes
-zero or more `## Feature Request:` sections, which `core/featureRequests.ts`
-parses deterministically into files under
-`<brain>/<domain>/feature-requests/<date>-<slug>.md`. A human reviews those
-with `snestack feature list` and moves one `proposed` → `approved` → `in-progress` (via `feature start`, run by whoever picks it up) →
-`done` by hand. That loop only ever *proposes*; it has no opinion on
-priority against a broader plan, and nothing today turns an approved
-proposal into actual code.
+Self-improvement runs through two scheduled roles. The PM role
+(`scripts/pm-daily.sh`) reads recent run records and writes zero or more
+`status: proposed` files under `<brain>/<domain>/feature-requests/<date>-<slug>.md`
+(an earlier `improve-self` skill and `snestack reflect` did this inside the
+harness and were removed as redundant). A human reviews them with
+`snestack feature list` and moves one `proposed` → `approved` (the human
+step). The eng role (`scripts/eng-daily.sh`) picks up `approved` ones and
+moves them `in-progress` (via `feature start`); `done` is marked by hand
+after the PR merges. Neither role pushes or merges.
 
 ## What this vision unlocks: the next layer
 
 The concrete reason this file exists is to be the shared context a **PM
 agent** and a **SWE agent** read before touching anything upstream of
-`reflect`'s own proposals:
+the PM role's own proposals:
 
 - A **PM agent**, triaging the growing pile of files under
   `<brain>/*/feature-requests/`, should read this file plus the relevant

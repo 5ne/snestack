@@ -15,7 +15,6 @@ Entry point for Claude (or whatever thin harness is running snestack) when analy
 - `swing-trading-large-cap.md` — tactical RSI-swing trading, restricted to large-cap/highly-profitable names only. Can run alongside `long-term-quality.md` on the same ticker — they're independent judgments, not merged into one call.
 - `private-company-eval.md` — placeholder for private/pre-IPO holdings. Nothing exists to apply it to yet.
 - `references/quality-bar.md` — shared numeric defaults (profitability bar, RSI thresholds, market-cap cutoff) both trading skills read from. Tune the numbers here rather than duplicating them per-skill.
-- `improve-self.md` — domain-level reflection on the pipeline's own automation health (not a ticker judgment): reads recent `run-check` findings/run summaries via the `reflectionDigest` context tool and proposes concrete, evidence-backed improvements as `## Feature Request:` sections, parsed deterministically by `core/featureRequests.ts` into files under `<brain>/financial/feature-requests/`. Never writes source code or a BUY/SELL/HOLD verdict; `build-signals` never reads its output.
 
 ## Which skill(s) apply to a given ticker
 

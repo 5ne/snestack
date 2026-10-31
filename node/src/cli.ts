@@ -28,25 +28,23 @@ import { runDataRefresh, DATA_REFRESH_TIERS, type DataRefreshTier } from "./doma
 import { equityDataFromCache } from "./domains/financial/fundamentalsCache";
 import type { Signal } from "./core/models";
 import { getDomainConfig } from "./core/domainRegistry";
-import { recordReflectRun } from "./core/reflect";
 import {
-  parseProposals,
-  writeProposals,
   listProposals,
   findProposalBySlug,
   setProposalStatus,
   readProposalFile,
   type ProposalStatus,
 } from "./core/featureRequests";
-import { buildReflectEmail, type DomainReflectResult } from "./core/reflectNotify";
 import { sendEmail } from "./core/email";
+import { buildRoleEmail, type Role } from "./core/roleNotify";
+import { decideRoleGate, recordRoleRun } from "./core/roleGate";
 import domainsConfig from "./config/domains.json";
 
 const program = new Command();
 
 const REGISTERED_DOMAINS = Object.keys(domainsConfig);
 // Cross-domain (harness-level) proposals live under <brain>/_system/feature-requests/ (see core/skills/pm.md).
-// `_system` isn't a runnable domain, so `reflect` keeps using REGISTERED_DOMAINS; only `feature` commands see it.
+// `_system` isn't a runnable domain; only `feature` commands see it.
 const FEATURE_DOMAINS = [...REGISTERED_DOMAINS, "_system"];
 
 program
@@ -972,126 +970,7 @@ travel
     if (year !== null) console.log(year);
   });
 
-// ── Reflection: improve-self ────────────────────────────────────────────────
-// `snestack reflect` is the harness-level job that runs each registered
-// domain's `improve-self` skill (gated, same machinery as `run-skill --gated`)
-// and writes any resulting proposals under <brain>/<domain>/feature-requests/.
-// It never touches source code, skills, or config — see core/featureRequests.ts.
-// `snestack feature ...` manages those proposals' lifecycle afterward.
-
-program
-  .command("reflect")
-  .description(
-    "Run each registered domain's improve-self skill (gated — see core/gate.ts — unless --force) to look at how " +
-      "the harness itself is running, and write any new proposals under <brain>/<domain>/feature-requests/."
-  )
-  .option("--domain <d>", "Only reflect on this domain (default: every registered domain with an improve-self skill)")
-  .option("--force", "Bypass each domain's gate and run improve-self unconditionally, same as `run-skill` without --gated")
-  .option("--json", "Print the summary as JSON")
-  .action(async (opts: { domain?: string; force?: boolean; json?: boolean }) => {
-    if (!validateEnv()) {
-      process.exitCode = 1;
-      return;
-    }
-    const brainRoot = getConfig().getBrainRoot();
-    const domains = opts.domain ? [opts.domain] : REGISTERED_DOMAINS;
-    const now = new Date();
-    const results: DomainReflectResult[] = [];
-
-    for (const domain of domains) {
-      const skillPath = path.join(process.cwd(), "src", getDomainConfig(domain).skillsDir, "improve-self.md");
-      if (!fs.existsSync(skillPath)) {
-        results.push({ domain, ran: false, reason: "no improve-self skill for this domain yet", written: [], skippedDuplicates: [], parseErrors: [] });
-        continue;
-      }
-
-      const decision = opts.force ? { run: true, reasons: ["--force"] } : await evaluateSkillGate(domain, "improve-self", domain);
-      if (!decision.run) {
-        results.push({ domain, ran: false, reason: decision.reasons.join("; "), written: [], skippedDuplicates: [], parseErrors: [] });
-        continue;
-      }
-
-      const result = await runSkill(domain, "improve-self", domain);
-      recordReflectRun(brainRoot, domain, now);
-
-      if (!result.output.trim()) {
-        results.push({
-          domain,
-          ran: true,
-          reason: `model returned no text (stop_reason: ${result.stopReason})`,
-          written: [],
-          skippedDuplicates: [],
-          parseErrors: [],
-        });
-        continue;
-      }
-
-      const { proposals, errors } = parseProposals(result.output);
-      const written = writeProposals(brainRoot, domain, proposals, { now });
-      results.push({
-        domain,
-        ran: true,
-        reason: decision.reasons.join("; "),
-        written: written.filter((w) => w.file != null).map((w) => w.file!),
-        skippedDuplicates: written.filter((w) => w.skippedAsDuplicateOf).map((w) => w.skippedAsDuplicateOf!),
-        parseErrors: errors.map((e) => `"${e.title}": ${e.reason}`),
-      });
-    }
-
-    if (opts.json) {
-      console.log(JSON.stringify(results, null, 2));
-    } else {
-      for (const r of results) {
-        if (!r.ran) {
-          console.log(`${r.domain}: skipped (${r.reason})`);
-          continue;
-        }
-        console.log(`${r.domain}: ran (${r.reason})`);
-        r.written.forEach((f) => console.log(`  + ${f}`));
-        r.skippedDuplicates.forEach((f) => console.log(`  = looked like a duplicate of ${f}, skipped`));
-        r.parseErrors.forEach((e) => console.log(`  ! parse error: ${e}`));
-      }
-    }
-    if (results.some((r) => r.parseErrors.length)) process.exitCode = 1;
-  });
-
-program
-  .command("reflect-notify")
-  .description(
-    "Send one combined email summarizing new feature-request proposals from a `snestack reflect --json` " +
-      "result, each with its `feature approve` command. Sends nothing (exit 0) when there's nothing new."
-  )
-  .requiredOption("--file <path>", "JSON file produced by `snestack reflect --json`")
-  .option("--dry-run", "Build the email but print it instead of sending")
-  .action(async (opts: { file: string; dryRun?: boolean }) => {
-    let results: DomainReflectResult[];
-    try {
-      results = JSON.parse(fs.readFileSync(opts.file, "utf8")) as DomainReflectResult[];
-    } catch (e) {
-      console.error(`reflect-notify: could not read/parse ${opts.file}: ${e}`);
-      process.exitCode = 1;
-      return;
-    }
-
-    const email = buildReflectEmail(results);
-    if (!email) {
-      console.log("No new proposals (and no parse errors) — nothing to send.");
-      return;
-    }
-    if (opts.dryRun) {
-      console.log(`Subject: ${email.subject}\n\n${email.text}`);
-      return;
-    }
-    if (!validateEnv()) {
-      process.exitCode = 1;
-      return;
-    }
-    const ok = await sendEmail(email.subject, email.text);
-    console.log(ok ? "Email sent." : "Email failed to send.");
-    if (!ok) process.exitCode = 1;
-  });
-
-const feature = program.command("feature").description("Manage improve-self feature-request proposals (proposed -> approved -> in-progress -> done)");
+const feature = program.command("feature").description("Manage feature-request proposals (written by the PM role) (proposed -> approved -> in-progress -> done)");
 
 feature
   .command("list")
@@ -1177,6 +1056,90 @@ feature
   .description("Mark a proposal done — <id> is its filename without the .md extension (see `feature list`)")
   .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
   .action(async (id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "done", "done"));
+
+program
+  .command("role-notify")
+  .description(
+    "Email the owner about a finished PM or eng run (new proposals with their approve commands, the eng report, or a failure). " +
+      "Sends nothing (exit 0) for a quiet PM run."
+  )
+  .requiredOption("--role <r>", "pm | eng")
+  .option("--report <path>", "The session's final message (report.md)")
+  .option("--before <path>", "PM: file listing proposal slugs that existed before the session (first column of `feature list`)")
+  .option("--failed", "The session failed")
+  .option("--error-file <path>", "Stderr/error text to include when --failed")
+  .option("--dry-run", "Build the email but print it instead of sending")
+  .action(async (opts: { role: string; report?: string; before?: string; failed?: boolean; errorFile?: string; dryRun?: boolean }) => {
+    if (opts.role !== "pm" && opts.role !== "eng") {
+      console.error("role-notify: --role must be pm or eng");
+      process.exitCode = 1;
+      return;
+    }
+    const readIf = (f?: string): string => {
+      try {
+        return f ? fs.readFileSync(f, "utf8") : "";
+      } catch {
+        return "";
+      }
+    };
+    const before = new Set(
+      readIf(opts.before)
+        .split("\n")
+        .map((l) => l.trim().split(/\s+/)[0])
+        .filter(Boolean)
+    );
+    const brainRoot = getConfig().getBrainRoot();
+    const newProposals =
+      opts.role === "pm" && !opts.failed ? FEATURE_DOMAINS.flatMap((d) => listProposals(brainRoot, d)).filter((p) => !before.has(p.slug)) : [];
+    const email = buildRoleEmail({
+      role: opts.role as Role,
+      failed: Boolean(opts.failed),
+      failureReason: readIf(opts.errorFile),
+      report: readIf(opts.report),
+      newProposals,
+    });
+    if (!email) {
+      console.log("Nothing new — no email sent.");
+      return;
+    }
+    if (opts.dryRun) {
+      console.log(`Subject: ${email.subject}\n\n${email.text}`);
+      return;
+    }
+    if (!validateEnv()) {
+      process.exitCode = 1;
+      return;
+    }
+    const ok = await sendEmail(email.subject, email.text);
+    console.log(ok ? "Email sent." : "Email failed to send.");
+    if (!ok) process.exitCode = 1;
+  });
+
+program
+  .command("role-gate")
+  .description(
+    "Deterministic gate for the PM role: exit 0 = run it, exit 4 = skip (no new run records and the last run is recent). " +
+      "With --record, stamp a successful run instead."
+  )
+  .requiredOption("--role <r>", "pm | eng")
+  .option("--force", "Always run")
+  .option("--record", "Record that the role just ran successfully")
+  .action(async (opts: { role: string; force?: boolean; record?: boolean }) => {
+    if (opts.role !== "pm" && opts.role !== "eng") {
+      console.error("role-gate: --role must be pm or eng");
+      process.exitCode = 1;
+      return;
+    }
+    const brainRoot = getConfig().getBrainRoot();
+    if (opts.record) {
+      recordRoleRun(brainRoot, opts.role as Role, new Date());
+      console.log(`Recorded ${opts.role} run.`);
+      return;
+    }
+    const d = decideRoleGate(brainRoot, opts.role as Role, { force: opts.force });
+    console.log(`${d.run ? "RUN" : "SKIP"}: ${d.reasons.join("; ")}`);
+    if (!d.run) process.exitCode = 4;
+  });
 
 program.parseAsync(process.argv).catch((e) => {
   console.error(e);
