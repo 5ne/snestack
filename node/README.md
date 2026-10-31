@@ -52,8 +52,8 @@ Five cron jobs together make up the split-cadence pipeline (`npm run build` firs
 | `scripts/daily-analysis.sh` | 2:30pm PT, nightly, after `data-refresh-daily.sh` | `long-term-quality` skill for every ticker, email + signal history |
 | `scripts/swing-check.sh` | hourly, 7am-1pm PT (market hours) | `swing-trading-large-cap` skill for every ticker, its own email + signal history |
 | `scripts/reflect-check.sh` | 11pm PT, nightly, well after market hours | `improve-self` skill per registered domain (gated), writes/emails new feature-request proposals |
-| `scripts/pm-daily.sh` | 7:34am PT, daily | PM role: an agentic `claude -p` session writes new `status: proposed` feature requests into the brain (replaces the PM scheduled task) |
-| `scripts/eng-daily.sh` | 9:45am PT, daily, after the PM run | eng role: implements `approved` requests on an `eng/<slug>` branch with tests (replaces the eng scheduled task); no model call if nothing is approved |
+| `scripts/pm-daily.sh` | 4pm PT, nightly | PM role: an agentic `claude -p` session writes new `status: proposed` feature requests into the brain (replaces the PM scheduled task) |
+| `scripts/eng-daily.sh` | 5pm PT, nightly, after the PM run | eng role: implements `approved` requests on an `eng/<slug>` branch with tests (replaces the eng scheduled task); no model call if nothing is approved |
 
 ```cron
 # crontab -e  (adjust the <repo> path; times are Pacific/local as described above)
@@ -214,9 +214,9 @@ Every model call goes through `runPrompt()` in `src/core/executor.ts`. `api` (de
 
 ## PM and eng role scripts (`pm-daily.sh`, `eng-daily.sh`)
 
-Both run an agentic `claude -p` session on the Claude subscription from the repo root (so `CLAUDE.md` loads), with the prompts in `scripts/prompts/` and the shared runner in `scripts/lib/claude-agent.sh`. Unlike the executor, these sessions have tools, restricted by an allow list; `git push`, `git merge`, `rm`, `curl` and any read or write of `.env` are always denied. There is no API fallback (an agent session isn't a single stateless call): a usage-limit or login failure fails the run and the next day's run tries again. `ANTHROPIC_API_KEY` is stripped from the child env. Runs are recorded under `<brain>/_system/runs/pm|eng/<date>/` (`report.md` is the session's final message). `eng-daily.sh --dry-run` only lists approved items. Crontab:
+Times are Pacific wall-clock; macOS cron uses the machine's local timezone, so adjust the hours if it is not on Pacific. Both run an agentic `claude -p` session on the Claude subscription from the repo root (so `CLAUDE.md` loads), with the prompts in `scripts/prompts/` and the shared runner in `scripts/lib/claude-agent.sh`. Unlike the executor, these sessions have tools, restricted by an allow list; `git push`, `git merge`, `rm`, `curl` and any read or write of `.env` are always denied. There is no API fallback (an agent session isn't a single stateless call): a usage-limit or login failure fails the run and the next day's run tries again. `ANTHROPIC_API_KEY` is stripped from the child env. Runs are recorded under `<brain>/_system/runs/pm|eng/<date>/` (`report.md` is the session's final message). `eng-daily.sh --dry-run` only lists approved items. Crontab:
 
 ```cron
-34 7 * * * cd <repo>/node && ./scripts/pm-daily.sh >> logs/pm-daily.cron.log 2>&1
-45 9 * * * cd <repo>/node && ./scripts/eng-daily.sh >> logs/eng-daily.cron.log 2>&1
+0 16 * * * cd <repo>/node && ./scripts/pm-daily.sh >> logs/pm-daily.cron.log 2>&1
+0 17 * * * cd <repo>/node && ./scripts/eng-daily.sh >> logs/eng-daily.cron.log 2>&1
 ```
