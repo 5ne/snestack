@@ -90,7 +90,7 @@ By marking them as `@pytest.mark.optional`, you can:
 
 ## Test Fixtures
 
-- `test_db`: Provides a fresh SQLite test database with full schema
+- `test_db`: Provides a fresh test database with full schema
 
 ## Markers
 

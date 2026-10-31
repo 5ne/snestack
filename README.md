@@ -32,7 +32,7 @@ snestack run-skill calendar daily-agenda today
 
 ## Database
 
-The financial domain's single source of truth — positions, watchlist, historical quotes/technicals, fundamentals, and signal history — is a hosted Postgres (Supabase) reached via `SNESTACK_DATABASE_URL` in `node/.env`. See [`node/README.md`](node/README.md)'s Database section (it also covers importing the old `snestack.db`).
+The financial domain's single source of truth — positions, watchlist, historical quotes/technicals, fundamentals, and signal history — is a hosted Postgres (Supabase) reached via `SNESTACK_DATABASE_URL` in `node/.env`. See [`node/README.md`](node/README.md)'s Database section.
 
 ## Morningstar Reports
 

@@ -129,7 +129,7 @@ done <<< "$TICKERS"
 RL_ERR_FILE="$RUN_DIR/build-signals.log" rl_step build-signals all \
   node dist/cli.js build-signals --dir "$RUN_DIR" > "$RUN_DIR/signals.json" 2> "$RUN_DIR/build-signals.log" || true
 
-# Step 4: send the batch email and record signals in snestack.db (dry run: preview only).
+# Step 4: send the batch email and record signals in the financial database (dry run: preview only).
 # On a quiet day (every call gated off, or nothing to report) there is nothing to send.
 SIGNAL_COUNT="$(node -e 'try{console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).length)}catch{console.log(0)}' "$RUN_DIR/signals.json")"
 NOTIFY_FLAGS=""

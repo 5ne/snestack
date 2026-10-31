@@ -107,7 +107,7 @@ done <<< "$TICKERS"
 RL_ERR_FILE="$RUN_DIR/build-signals.log" rl_step build-signals all \
   node dist/cli.js build-signals --dir "$RUN_DIR" --only-changed > "$RUN_DIR/signals.json" 2> "$RUN_DIR/build-signals.log" || true
 
-# Step 4: send the batch email and record signals in snestack.db (dry run: preview only).
+# Step 4: send the batch email and record signals in the financial database (dry run: preview only).
 # Unlike daily-analysis.sh (once a night, so a "no changes" summary is a useful heartbeat),
 # this runs several times a day and the gate is specifically there to make most of those
 # runs quiet (RSI in the 30-70 band is "no action", every hour, most hours) — emailing a

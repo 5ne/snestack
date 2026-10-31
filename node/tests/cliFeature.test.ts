@@ -10,7 +10,7 @@ describe("CLI: feature (no model calls — safe to smoke-test)", () => {
   let brainRoot: string;
 
   const run = (args: string) =>
-    execSync(`NODE_OPTIONS=--experimental-sqlite npx ts-node --project tsconfig.json ${CLI} ${args}`, {
+    execSync(`npx ts-node --project tsconfig.json ${CLI} ${args}`, {
       cwd: path.resolve(__dirname, ".."),
       encoding: "utf8",
       stdio: "pipe",
@@ -96,7 +96,7 @@ describe("CLI: reflect --force (no model call for a domain with no improve-self 
   let brainRoot: string;
 
   const run = (args: string) =>
-    execSync(`NODE_OPTIONS=--experimental-sqlite npx ts-node --project tsconfig.json ${CLI} ${args}`, {
+    execSync(`npx ts-node --project tsconfig.json ${CLI} ${args}`, {
       cwd: path.resolve(__dirname, ".."),
       encoding: "utf8",
       stdio: "pipe",
@@ -133,7 +133,7 @@ describe("CLI: reflect-notify --dry-run (no email send — safe to smoke-test)",
   let brainRoot: string;
 
   const run = (args: string) =>
-    execSync(`NODE_OPTIONS=--experimental-sqlite npx ts-node --project tsconfig.json ${CLI} ${args}`, {
+    execSync(`npx ts-node --project tsconfig.json ${CLI} ${args}`, {
       cwd: path.resolve(__dirname, ".."),
       encoding: "utf8",
       stdio: "pipe",

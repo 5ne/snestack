@@ -6,7 +6,7 @@ const CLI = path.resolve(__dirname, "../src/cli.ts");
 // (dotenv does not override variables already set in the environment).
 const run = (args: string) =>
   execSync(
-    `NODE_OPTIONS=--experimental-sqlite npx ts-node --project tsconfig.json ${CLI} ${args}`,
+    `npx ts-node --project tsconfig.json ${CLI} ${args}`,
     {
       cwd: path.resolve(__dirname, ".."),
       encoding: "utf8",
@@ -34,7 +34,7 @@ describe("CLI smoke tests", () => {
     expect(out).toMatch(/Usage/i);
   });
 
-  it("lists the db-migrate command", async () => {
-    expect(run("--help")).toMatch(/db-migrate/);
+  it("no longer lists the retired db-migrate command", async () => {
+    expect(run("--help")).not.toMatch(/db-migrate/);
   });
 });

@@ -1,4 +1,3 @@
-import * as os from "os";
 import * as path from "path";
 import { Config, getConfig, resetConfig } from "../../src/core/config";
 import { ConfigError, ValidationError } from "../../src/core/errors";
@@ -46,21 +45,6 @@ describe("Config.require", () => {
 
   it("throws ConfigError when missing", () => {
     expect(() => Config.require("SNESTACK_MISSING_KEY")).toThrow(ConfigError);
-  });
-});
-
-describe("getDatabasePath", () => {
-  it("derives from the default brain root when SNESTACK_BRAIN_ROOT is not set", () => {
-    const config = new Config(NO_ENV);
-    expect(config.getDatabasePath()).toBe(
-      path.join(os.homedir(), "Documents", "personal-brain", "financial", "snestack.db")
-    );
-  });
-
-  it("derives from SNESTACK_BRAIN_ROOT when set", () => {
-    process.env.SNESTACK_BRAIN_ROOT = "/tmp/my-brain";
-    const config = new Config(NO_ENV);
-    expect(config.getDatabasePath()).toBe(path.join("/tmp/my-brain", "financial", "snestack.db"));
   });
 });
 

@@ -1,6 +1,6 @@
 # snestack — Node.js / TypeScript Implementation
 
-The active implementation of snestack. Uses Node.js 22 with TypeScript, Postgres (Supabase, via `pg`), and the Anthropic SDK. `node:sqlite` is only used by the one-time `db-migrate` import.
+The active implementation of snestack. Uses Node.js 22 with TypeScript, Postgres (Supabase, via `pg`), and the Anthropic SDK.
 
 ## Prerequisites
 
@@ -19,8 +19,6 @@ cp .env.example .env
 ## Running the CLI
 
 ```bash
-# Set the experimental sqlite flag (required for Node 22)
-export NODE_OPTIONS=--experimental-sqlite
 
 # First-time setup
 npm run dev -- setup
@@ -70,7 +68,7 @@ Each script supports `--dry-run` (runs everything but emails/records nothing, ou
 
 - **`data-refresh-intraday.sh`** — one step: `data-refresh --tier intraday` for every position/watchlist ticker. Refreshes live quote price only; Finnhub fundamentals are skipped entirely (that's the daily tier's job), and RSI/50MA/200MA are left alone too — they're gated to update at most once a day inside `data-refresh`, so running this every 30 min mostly just keeps the live price current. Writes its own timestamped run directory under `<brain>/financial/runs/intraday/<date>/<time>/`, since it fires multiple times a day.
 - **`data-refresh-daily.sh`** — two steps: `data-refresh --tier daily` (quote + RSI/MA + Finnhub live fundamentals for every ticker), then `data-refresh --tier weekly` (re-parses whatever Morningstar PDF currently sits in `reports/`) — but only on Mondays, since re-parsing the same on-disk PDF every night would be pure waste. This is what's expected to populate the cache before `daily-analysis.sh` runs. One run directory per day under `<brain>/financial/runs/data-refresh-daily/<date>/`.
-- **`daily-analysis.sh`** — four steps: (1) `data-dump` to snapshot the cache (populated by `data-refresh-daily.sh` earlier) and get the ticker list; (2) run the `long-term-quality` skill against every ticker with `--gated --out`, one Claude call each *if* the skill's own `gate:` triggers fire (RSI, price-move, age, or a changed Morningstar/brain file — see `core/gate.ts`), writing `<ticker>-long-term-quality.md`; (3) `build-signals` to read each write-up's trailing `VERDICT:` line into one structured signals array, deterministically, no model call; (4) `notify` to email that batch and record it in `snestack.db`'s `signals` table — or, if every call was gated off (nothing worth a fresh look happened), `notify-summary` instead, emailing a "no changes today" heartbeat rather than staying silent. No longer touches `swing-trading-large-cap` — that moved to its own script. Output lands in `<brain>/financial/signals/<date>/`.
+- **`daily-analysis.sh`** — four steps: (1) `data-dump` to snapshot the cache (populated by `data-refresh-daily.sh` earlier) and get the ticker list; (2) run the `long-term-quality` skill against every ticker with `--gated --out`, one Claude call each *if* the skill's own `gate:` triggers fire (RSI, price-move, age, or a changed Morningstar/brain file — see `core/gate.ts`), writing `<ticker>-long-term-quality.md`; (3) `build-signals` to read each write-up's trailing `VERDICT:` line into one structured signals array, deterministically, no model call; (4) `notify` to email that batch and record it in the financial database's `signals` table — or, if every call was gated off (nothing worth a fresh look happened), `notify-summary` instead, emailing a "no changes today" heartbeat rather than staying silent. No longer touches `swing-trading-large-cap` — that moved to its own script. Output lands in `<brain>/financial/signals/<date>/`.
 - **`swing-check.sh`** — the same four-step shape as `daily-analysis.sh`, but for `swing-trading-large-cap` only, and run several times a day instead of once overnight: (1) `data-dump` for the ticker list, (2) the skill per ticker (also gated — RSI outside 30-70 is "no action" and skips the call), (3) `build-signals`, (4) `notify` if there's something to report. Unlike `daily-analysis.sh`, a quiet run here does **not** email a summary — several "nothing happened" emails a day would defeat the point of gating — it's just recorded in `run.json` for `run-check` to see. Each run gets its own timestamped directory under `<brain>/financial/runs/swing-check/<date>/<time>/`, so distill/notify are automatically scoped to that run's own tickers.
 - **`reflect-check.sh`** — two steps, and the only one of the five that isn't financial-specific: (1) `reflect --json`, which runs every domain registered in `config/domains.json` through its own `improve-self` skill (gated — a quiet day for a domain costs no model call, just digest assembly) and writes any resulting proposals under `<brain>/<domain>/feature-requests/`; (2) `reflect-notify`, which emails one combined summary — each new proposal's domain, title, impact/effort, and its `snestack feature approve <id>` command — if anything new landed anywhere, and sends nothing on a quiet run. This system never edits its own source code, skills, or config; it only ever writes new proposal files (see `core/featureRequests.ts`), and turning a proposal into actual work stays a separate, deliberate, human-initiated step (`snestack feature approve <id>`, then pointing a normal session at the file). Spans every domain, not just financial, so its run record is staged under `<brain>/_system/runs/reflect/<date>/` rather than `<brain>/financial/...` like the other four.
 
@@ -85,19 +83,19 @@ only email notifications are wired up.
 ## Tests
 
 ```bash
-NODE_OPTIONS=--experimental-sqlite npm test
-NODE_OPTIONS=--experimental-sqlite npm run test:coverage
+npm test
+npm run test:coverage
 ```
 
 174 tests across 13 suites, all passing.
 
 ## Database
 
-A hosted Postgres (Supabase), reached with plain `pg` through the connection string in `SNESTACK_DATABASE_URL` (gitignored `node/.env` only — never committed, never in the Drive-synced brain). It replaces the old `snestack.db` SQLite file, whose WAL side files in a Drive-synced folder and single-writer locking caused `database is locked` failures when the intraday refresh and swing check started in the same minute. Tables are created on first connect (`CREATE TABLE IF NOT EXISTS`, with row level security enabled so Supabase's public API exposes nothing). Everything else — brain, reports, signals, run logs, travel — stays in the Drive-synced `SNESTACK_BRAIN_ROOT` folder as before.
+A hosted Postgres (Supabase), reached with plain `pg` through the connection string in `SNESTACK_DATABASE_URL` (gitignored `node/.env` only — never committed, never in the Drive-synced brain). It replaced an earlier local SQLite file, whose WAL side files in a Drive-synced folder and single-writer locking caused `database is locked` failures when the intraday refresh and swing check started in the same minute. Tables are created on first connect (`CREATE TABLE IF NOT EXISTS`, with row level security enabled so Supabase's public API exposes nothing). Everything else — brain, reports, signals, run logs, travel — stays in the Drive-synced `SNESTACK_BRAIN_ROOT` folder as before.
 
 - **Unreachable database fails fast.** Every command opens the db up front; if Supabase can't be reached it exits with a `DatabaseError`, and `snestack run-check` reports a `database_unreachable` error finding. Nothing silently falls back to stale data.
 - **Direct host is IPv6-only.** `db.<ref>.supabase.co:5432` only resolves over IPv6. If the machine running cron is IPv4-only, use the *pooler* connection string from the Supabase dashboard instead (Connect → Session pooler).
-- **One-time import of the old history:** `snestack db-migrate --dry-run`, then `snestack db-migrate`. It reads `<SNESTACK_BRAIN_ROOT>/financial/snestack.db` read-only, copies every table, and checks per-table row counts. It is safe to re-run. Keep the SQLite file as the backup afterward.
+- **Retired backup:** `<SNESTACK_BRAIN_ROOT>/financial/snestack-old.db` is the retired pre-Supabase SQLite backup (history was migrated into Postgres). Nothing reads it, and `*.db` is gitignored so it can never be committed.
 - **Free tier vs. cadence:** the intraday refresh runs every 30 minutes in market hours; each run opens a small pool (max 3 connections) and closes it. Free-tier projects pause after a week of inactivity and cap storage at 500 MB — neither should bite at this volume, but watch the first weeks.
 
 A `fundamentals` table holds one cached row per `(ticker, as_of_date, source)` — `source` is `finnhub` or `morningstar`, kept as two independent rows rather than merged, since the two providers' figures aren't reconciled against each other. `quotes` has a `fetched_at` column alongside it. `data-refresh` (see "Skill harness" below) is the only thing that writes either table; everything else (`run-skill`, `data-dump`) only reads from them.
@@ -131,7 +129,7 @@ snestack run-skill financial long-term-quality NVDA
 snestack run-skill calendar daily-agenda today
 ```
 
-For the financial domain, `run-skill`/`data-dump` never call Finnhub/Twelve Data/Morningstar themselves — they only read `snestack.db`'s cache (falling back to a live fetch, with a logged warning, only if the cache is missing or badly stale). `data-refresh --tier <intraday|daily|weekly>` is the one command that populates that cache:
+For the financial domain, `run-skill`/`data-dump` never call Finnhub/Twelve Data/Morningstar themselves — they only read the Postgres cache (falling back to a live fetch, with a logged warning, only if the cache is missing or badly stale). `data-refresh --tier <intraday|daily|weekly>` is the one command that populates that cache:
 
 ```bash
 snestack data-refresh --tier daily            # quote + RSI/MA + Finnhub fundamentals, all positions/watchlist

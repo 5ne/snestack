@@ -87,7 +87,7 @@ these needs to change shape, not get waived through)
    costs over time. A new automation that runs often should default toward
    `cheap`/gated rather than `expensive`/always-on.
 7. **The brain is durable, the code is disposable.** `brain/`, `reports/`,
-   and `snestack.db` (all outside the repo, under `SNESTACK_BRAIN_ROOT`) are
+   and the signal history (all outside the repo, under `SNESTACK_BRAIN_ROOT`, or in the hosted database) are
    the actual accumulated asset — years of stated thesis, signal history,
    trip records. The harness and skills exist to read and grow that asset
    faithfully. If a refactor would silently lose or reinterpret something
@@ -171,7 +171,7 @@ not the skill actually ran.
   `verdict.ts` deterministically parses structured meaning back out of one
   that already happened. Neither ever needs a test double for an API.
 - `config.ts` / `db.ts` — shared plumbing (env vars including
-  `SNESTACK_BRAIN_ROOT`, the model-tier table, the sqlite connection). A
+  `SNESTACK_BRAIN_ROOT`, the model-tier table, the database connection). A
   domain reads these; it doesn't reimplement them.
 - `runLog.ts` / `runCheck.ts` / `runReport.ts` — the automation-observability
   layer: every cron-run shell script (see "Scheduled automation" below)

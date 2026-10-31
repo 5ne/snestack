@@ -36,8 +36,8 @@ export class Config {
   // Root of the shared Google Drive-synced folder — the one directory setting
   // for all of a domain's shared data. Each domain's brain lives under
   // <root>/<domain>/brain/ (e.g. <root>/financial/brain/), and the financial
-  // domain's legacy SQLite db lived at <root>/financial/snestack.db (the live db is now Postgres, see SNESTACK_DATABASE_URL) — derived from
-  // this single root rather than configured separately.
+  // reports live at <root>/financial/reports/ — derived from
+  // this single root rather than configured separately. (The financial db is Postgres, see SNESTACK_DATABASE_URL.)
   static readonly DEFAULT_BRAIN_ROOT = path.join(os.homedir(), "Documents", "personal-brain");
 
   constructor(envFile?: string) {
@@ -60,11 +60,6 @@ export class Config {
   /** Set a configuration value in the current process environment. */
   static set(key: string, value: string): void {
     process.env[key] = value;
-  }
-
-  /** Legacy SQLite file, derived from getBrainRoot(). No longer the live db (see getDatabaseUrl) — kept only as the `db-migrate` source and backup. */
-  getDatabasePath(): string {
-    return path.join(this.getBrainRoot(), "financial", "snestack.db");
   }
 
   /**

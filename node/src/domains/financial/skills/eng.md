@@ -22,7 +22,7 @@ is how to *apply* those, scoped to this domain.
    skill for the shape); add it to `skills/INDEX.md`'s list.
 2. **Needs new context** — add a fetcher to `contextTools.ts`'s
    `contextTools` map, following the existing cache-first pattern (`quote`,
-   `fundamentals`): read `snestack.db`'s cache first, fall back to a
+   `fundamentals`): read the Postgres cache first, fall back to a
    logged live fetch only on a miss/stale read. Never make `run-skill`
    call Finnhub/Twelve Data/Morningstar directly — only `data-refresh`
    does that.

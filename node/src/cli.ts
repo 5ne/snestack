@@ -20,7 +20,6 @@ import { evaluateRuns, checkCacheStaleness, dayString, type RunExpectation } fro
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
-import { migrateSqliteToPostgres, formatMigrationReport } from "./core/dbMigrate";
 import { resolveTickerUniverse, loadCacheAgeGetters } from "./domains/financial/cliHelpers";
 import { financialRunExpectations, financialRunStatsTargets } from "./domains/financial/runExpectations";
 import { computeRunStats, formatRunStats } from "./core/runStats";
@@ -1149,26 +1148,6 @@ feature
   .description("Mark a proposal done — <id> is its filename without the .md extension (see `feature list`)")
   .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
   .action(async (id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "done", "done"));
-
-program
-  .command("db-migrate")
-  .description(
-    "One-time: copy the legacy SQLite snestack.db into the Postgres database (SNESTACK_DATABASE_URL) and verify per-table row counts. " +
-      "Never modifies the SQLite file — keep it as the backup. Safe to re-run (existing rows are skipped)."
-  )
-  .option("--sqlite <path>", "Path to the legacy SQLite file (default: <brain>/financial/snestack.db)")
-  .option("--dry-run", "Only compare row counts; write nothing")
-  .action(async (opts: { sqlite?: string; dryRun?: boolean }) => {
-    const config = getConfig();
-    const db = await Db.open(config.getDatabaseUrl());
-    try {
-      const reports = await migrateSqliteToPostgres(opts.sqlite ?? config.getDatabasePath(), db, { dryRun: opts.dryRun });
-      console.log(formatMigrationReport(reports, !!opts.dryRun));
-      if (!reports.every((r) => r.ok)) process.exitCode = 1;
-    } finally {
-      await db.close();
-    }
-  });
 
 program.parseAsync(process.argv).catch((e) => {
   console.error(e);

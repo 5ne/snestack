@@ -3,10 +3,6 @@ import type { Config } from "jest";
 const config: Config = {
   preset: "ts-jest",
   testEnvironment: "node",
-  // node:sqlite is experimental in Node 22 — flag needed until Node 23+
-  testEnvironmentOptions: {
-    nodeOptions: ["--experimental-sqlite"],
-  },
   roots: ["<rootDir>/tests"],
   testMatch: ["**/*.test.ts"],
   transform: {

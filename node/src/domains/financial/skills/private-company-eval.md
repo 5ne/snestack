@@ -8,7 +8,7 @@ status: draft
 
 # Skill: Private Company Evaluation (draft placeholder)
 
-No private-company positions or watchlist entries exist in `snestack.db` yet, even though the project's stated scope covers public and private companies. This file is a placeholder for when that changes.
+No private-company positions or watchlist entries exist in the financial database yet, even though the project's stated scope covers public and private companies. This file is a placeholder for when that changes.
 
 Likely differences from the public-market skills once there's real content to model against:
 - No ticker/quote/RSI data exists for a private holding, so `long-term-quality.md`'s technical add-on timing step doesn't apply at all.

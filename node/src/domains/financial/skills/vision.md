@@ -53,7 +53,7 @@ intraday|daily|weekly`), and its own reflection loop (`improve-self.md`).
    that reads them (a backtest, a new skill) to read that file at run time,
    not a copy.
 4. **Two independent fundamentals sources stay independent.** Finnhub and
-   Morningstar rows are kept apart in `snestack.db` (`source` column) on
+   Morningstar rows are kept apart in the financial database (`source` column) on
    purpose, because the two providers' figures aren't reconciled against
    each other. A proposal to "merge" or "resolve conflicts between" them
    needs real justification, not just schema tidiness.

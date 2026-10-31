@@ -165,11 +165,11 @@ describe("extractErrorSummary", () => {
   });
   it("drops stack frames so the error headline survives", () => {
     const log = [
-      "DatabaseError: Failed to open database at /x/snestack.db: Error: database is locked",
+      "DatabaseError: Failed to open database at /x/snestack-db: Error: connection refused",
       "    at new Db (/x/dist/core/db.js:57:19)",
       "    at Command._chainOrCall (/x/commander/lib/command.js:1386:12)",
     ].join("\n");
-    expect(extractErrorSummary(log)).toBe("DatabaseError: Failed to open database at /x/snestack.db: Error: database is locked");
+    expect(extractErrorSummary(log)).toBe("DatabaseError: Failed to open database at /x/snestack-db: Error: connection refused");
   });
   it("keeps only the last few meaningful lines", () => {
     expect(extractErrorSummary("a\nb\nc\nd\ne")).toBe("c | d | e");

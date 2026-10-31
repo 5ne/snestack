@@ -33,7 +33,6 @@ None of this lives in the repo — it's all in a Google Drive-synced folder, one
 
 ```bash
 cd node
-export NODE_OPTIONS=--experimental-sqlite
 
 # Run all tests
 npm test
