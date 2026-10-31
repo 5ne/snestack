@@ -116,9 +116,8 @@ cat "$RUN_DIR/report.md" 2>/dev/null || true
 
 if [ "$rc" -eq 0 ]; then
   rl_step eng-merge all auto_merge_ready || true
-  { cat "$RUN_DIR/report.md"; printf '\n\nAuto-merge results:\n'; cat "$RUN_DIR/merge.txt" 2>/dev/null; } > "$RUN_DIR/report-full.md"
   cat "$RUN_DIR/merge.txt" 2>/dev/null || true
-  node dist/cli.js role-notify --role eng --report "$RUN_DIR/report-full.md" || true
+  node dist/cli.js role-notify --role eng --report "$RUN_DIR/report.md" --merge-file "$RUN_DIR/merge.txt" --html-out "$RUN_DIR/email.html" || true
 else
   node dist/cli.js role-notify --role eng --failed --error-file "$RUN_DIR/report.md.err" || true
 fi

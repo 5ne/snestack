@@ -77,7 +77,7 @@ cat "$RUN_DIR/report.md" 2>/dev/null || true
 # Email: new proposals (or the failure). Never lets a mail problem fail the run.
 if [ "$rc" -eq 0 ]; then
   [ "$DRY_RUN" -eq 1 ] || node dist/cli.js role-gate --role pm --record || true
-  node dist/cli.js role-notify --role pm --report "$RUN_DIR/report.md" --before "$RUN_DIR/proposals-before.txt" $NOTIFY_FLAGS || true
+  node dist/cli.js role-notify --role pm --report "$RUN_DIR/report.md" --before "$RUN_DIR/proposals-before.txt" --html-out "$RUN_DIR/email.html" $NOTIFY_FLAGS || true
 else
   node dist/cli.js role-notify --role pm --failed --error-file "$RUN_DIR/report.md.err" $NOTIFY_FLAGS || true
 fi

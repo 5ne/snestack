@@ -1118,10 +1118,12 @@ program
   .requiredOption("--role <r>", "pm | eng")
   .option("--report <path>", "The session's final message (report.md)")
   .option("--before <path>", "PM: file listing proposal slugs that existed before the session (first column of `feature list`)")
+  .option("--merge-file <path>", "eng: the auto-merge log (merge.txt)")
   .option("--failed", "The session failed")
   .option("--error-file <path>", "Stderr/error text to include when --failed")
+  .option("--html-out <file>", "Also write the HTML body to this file (to preview it)")
   .option("--dry-run", "Build the email but print it instead of sending")
-  .action(async (opts: { role: string; report?: string; before?: string; failed?: boolean; errorFile?: string; dryRun?: boolean }) => {
+  .action(async (opts: { role: string; report?: string; before?: string; mergeFile?: string; failed?: boolean; errorFile?: string; htmlOut?: string; dryRun?: boolean }) => {
     if (opts.role !== "pm" && opts.role !== "eng") {
       console.error("role-notify: --role must be pm or eng");
       process.exitCode = 1;
@@ -1149,11 +1151,13 @@ program
       failureReason: readIf(opts.errorFile),
       report: readIf(opts.report),
       newProposals,
+      mergeLog: readIf(opts.mergeFile),
     });
     if (!email) {
       console.log("Nothing new — no email sent.");
       return;
     }
+    if (opts.htmlOut) fs.writeFileSync(opts.htmlOut, email.html);
     if (opts.dryRun) {
       console.log(`Subject: ${email.subject}\n\n${email.text}`);
       return;
@@ -1162,7 +1166,7 @@ program
       process.exitCode = 1;
       return;
     }
-    const ok = await sendEmail(email.subject, email.text);
+    const ok = await sendEmail(email.subject, email.text, email.html);
     console.log(ok ? "Email sent." : "Email failed to send.");
     if (!ok) process.exitCode = 1;
   });
