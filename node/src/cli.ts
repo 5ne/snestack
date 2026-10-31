@@ -36,6 +36,8 @@ import {
   type ProposalStatus,
 } from "./core/featureRequests";
 import { sendEmail } from "./core/email";
+import { buildRoleEmail, type Role } from "./core/roleNotify";
+import { decideRoleGate, recordRoleRun } from "./core/roleGate";
 import domainsConfig from "./config/domains.json";
 
 const program = new Command();
@@ -1054,6 +1056,90 @@ feature
   .description("Mark a proposal done — <id> is its filename without the .md extension (see `feature list`)")
   .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
   .action(async (id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "done", "done"));
+
+program
+  .command("role-notify")
+  .description(
+    "Email the owner about a finished PM or eng run (new proposals with their approve commands, the eng report, or a failure). " +
+      "Sends nothing (exit 0) for a quiet PM run."
+  )
+  .requiredOption("--role <r>", "pm | eng")
+  .option("--report <path>", "The session's final message (report.md)")
+  .option("--before <path>", "PM: file listing proposal slugs that existed before the session (first column of `feature list`)")
+  .option("--failed", "The session failed")
+  .option("--error-file <path>", "Stderr/error text to include when --failed")
+  .option("--dry-run", "Build the email but print it instead of sending")
+  .action(async (opts: { role: string; report?: string; before?: string; failed?: boolean; errorFile?: string; dryRun?: boolean }) => {
+    if (opts.role !== "pm" && opts.role !== "eng") {
+      console.error("role-notify: --role must be pm or eng");
+      process.exitCode = 1;
+      return;
+    }
+    const readIf = (f?: string): string => {
+      try {
+        return f ? fs.readFileSync(f, "utf8") : "";
+      } catch {
+        return "";
+      }
+    };
+    const before = new Set(
+      readIf(opts.before)
+        .split("\n")
+        .map((l) => l.trim().split(/\s+/)[0])
+        .filter(Boolean)
+    );
+    const brainRoot = getConfig().getBrainRoot();
+    const newProposals =
+      opts.role === "pm" && !opts.failed ? FEATURE_DOMAINS.flatMap((d) => listProposals(brainRoot, d)).filter((p) => !before.has(p.slug)) : [];
+    const email = buildRoleEmail({
+      role: opts.role as Role,
+      failed: Boolean(opts.failed),
+      failureReason: readIf(opts.errorFile),
+      report: readIf(opts.report),
+      newProposals,
+    });
+    if (!email) {
+      console.log("Nothing new — no email sent.");
+      return;
+    }
+    if (opts.dryRun) {
+      console.log(`Subject: ${email.subject}\n\n${email.text}`);
+      return;
+    }
+    if (!validateEnv()) {
+      process.exitCode = 1;
+      return;
+    }
+    const ok = await sendEmail(email.subject, email.text);
+    console.log(ok ? "Email sent." : "Email failed to send.");
+    if (!ok) process.exitCode = 1;
+  });
+
+program
+  .command("role-gate")
+  .description(
+    "Deterministic gate for the PM role: exit 0 = run it, exit 4 = skip (no new run records and the last run is recent). " +
+      "With --record, stamp a successful run instead."
+  )
+  .requiredOption("--role <r>", "pm | eng")
+  .option("--force", "Always run")
+  .option("--record", "Record that the role just ran successfully")
+  .action(async (opts: { role: string; force?: boolean; record?: boolean }) => {
+    if (opts.role !== "pm" && opts.role !== "eng") {
+      console.error("role-gate: --role must be pm or eng");
+      process.exitCode = 1;
+      return;
+    }
+    const brainRoot = getConfig().getBrainRoot();
+    if (opts.record) {
+      recordRoleRun(brainRoot, opts.role as Role, new Date());
+      console.log(`Recorded ${opts.role} run.`);
+      return;
+    }
+    const d = decideRoleGate(brainRoot, opts.role as Role, { force: opts.force });
+    console.log(`${d.run ? "RUN" : "SKIP"}: ${d.reasons.join("; ")}`);
+    if (!d.run) process.exitCode = 4;
+  });
 
 program.parseAsync(process.argv).catch((e) => {
   console.error(e);

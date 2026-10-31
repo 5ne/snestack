@@ -75,3 +75,51 @@ describe("CLI: feature (no model calls — safe to smoke-test)", () => {
     expect(() => run("feature approve does-not-exist")).toThrow(/no proposal found/);
   });
 });
+
+describe("CLI: role-gate / role-notify (no model calls, no email)", () => {
+  let brainRoot: string;
+  const run = (args: string) =>
+    execSync(`npx ts-node --project tsconfig.json ${CLI} ${args}`, {
+      cwd: path.resolve(__dirname, ".."),
+      encoding: "utf8",
+      stdio: "pipe",
+      env: { ...process.env, SNESTACK_BRAIN_ROOT: brainRoot },
+    });
+  beforeEach(() => {
+    brainRoot = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-cli-role-"));
+  });
+  afterEach(() => fs.rmSync(brainRoot, { recursive: true, force: true }));
+
+  it("role-gate runs the first time, skips (exit 4) when quiet after a recorded run, and --force overrides", () => {
+    expect(run("role-gate --role pm")).toMatch(/^RUN/);
+    run("role-gate --role pm --record");
+    let code = 0;
+    try {
+      run("role-gate --role pm");
+    } catch (e) {
+      code = (e as { status: number }).status;
+    }
+    expect(code).toBe(4);
+    expect(run("role-gate --role pm --force")).toMatch(/^RUN: --force/);
+  });
+
+  it("role-notify --dry-run lists only proposals that are new since the --before snapshot", () => {
+    const old = writeProposalFixture(brainRoot, "financial", "Old thing");
+    const fresh = writeProposalFixture(brainRoot, "financial", "Brand new thing");
+    const before = path.join(brainRoot, "before.txt");
+    fs.writeFileSync(before, `${path.basename(old, ".md")}  [proposed]  financial\n`);
+    const report = path.join(brainRoot, "report.md");
+    fs.writeFileSync(report, "wrote one request");
+    const out = run(`role-notify --role pm --report ${report} --before ${before} --dry-run`);
+    expect(out).toContain("Brand new thing");
+    expect(out).toContain(`feature approve ${path.basename(fresh, ".md")}`);
+    expect(out).not.toContain("Old thing");
+  });
+
+  it("role-notify sends nothing for a quiet PM run", () => {
+    const old = writeProposalFixture(brainRoot, "financial", "Old thing");
+    const before = path.join(brainRoot, "before.txt");
+    fs.writeFileSync(before, `${path.basename(old, ".md")}  [proposed]\n`);
+    expect(run(`role-notify --role pm --before ${before} --dry-run`)).toMatch(/nothing new/i);
+  });
+});

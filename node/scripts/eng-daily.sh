@@ -5,6 +5,7 @@
 # approved tasks" scheduled task. It may commit on the eng/ branch but can never push,
 # merge, or delete (denied in lib/claude-agent.sh); marking `done` stays a human step.
 # Prompt: scripts/prompts/eng-daily.md. If nothing is approved, no model call is made.
+# After the session one email carries the eng report (picked up / done / blockers); a failed run emails the failure.
 #
 # Usage: eng-daily.sh [--dry-run]
 #   --dry-run  only list what would be picked up (no model call, no changes).
@@ -61,5 +62,11 @@ rc=0
 RL_ERR_FILE="$RUN_DIR/report.md.err" rl_step eng-session all \
   run_claude_agent scripts/prompts/eng-daily.md "$RUN_DIR/report.md" 120 "$ALLOWED" || rc=$?
 cat "$RUN_DIR/report.md" 2>/dev/null || true
+
+if [ "$rc" -eq 0 ]; then
+  node dist/cli.js role-notify --role eng --report "$RUN_DIR/report.md" || true
+else
+  node dist/cli.js role-notify --role eng --failed --error-file "$RUN_DIR/report.md.err" || true
+fi
 echo "Done. Full run saved under: $PUBLISH_DIR"
 exit "$rc"
