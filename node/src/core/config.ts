@@ -15,6 +15,16 @@ export class Config {
   // blocks /stock/candle. Falls back to Finnhub-only (no RSI/MA) if unset.
   static readonly TWELVEDATA_API_KEY = "SNESTACK_TWELVEDATA_API_KEY";
   static readonly CLAUDE_API_KEY = "SNESTACK_CLAUDE_API_KEY";
+  /** Which backend runPrompt uses: "api" (default, pay-per-token) or "claude-cli" (`claude -p` on the owner's subscription). */
+  static readonly EXECUTOR = "SNESTACK_EXECUTOR";
+  /** claude-cli failures retry on the metered API by default (always reported); set to "none" to disable. */
+  static readonly EXECUTOR_FALLBACK = "SNESTACK_EXECUTOR_FALLBACK";
+  static readonly CLI_TIMEOUT_MS = "SNESTACK_CLI_TIMEOUT_MS";
+  static readonly CLI_MODEL_ENV: Record<ModelTier, string> = {
+    cheap: "SNESTACK_CLI_MODEL_CHEAP",
+    normal: "SNESTACK_CLI_MODEL_NORMAL",
+    expensive: "SNESTACK_CLI_MODEL_EXPENSIVE",
+  };
   static readonly MODEL_ENV: Record<ModelTier, string> = {
     cheap: "SNESTACK_MODEL_CHEAP",
     normal: "SNESTACK_MODEL_NORMAL",
@@ -91,6 +101,32 @@ export class Config {
       throw new ValidationError("Invalid Claude API key (must start with sk-)");
     }
     return key;
+  }
+
+  getExecutorBackend(): "api" | "claude-cli" {
+    const v = (Config.get(Config.EXECUTOR) ?? "api").trim().toLowerCase();
+    if (v === "api" || v === "") return "api";
+    if (v === "claude-cli") return "claude-cli";
+    throw new ValidationError(`Invalid ${Config.EXECUTOR} "${v}" (expected api or claude-cli)`);
+  }
+
+  /** Whether a failed claude-cli call retries on the metered API (default yes). */
+  isApiFallbackEnabled(): boolean {
+    return (Config.get(Config.EXECUTOR_FALLBACK) ?? "api").trim().toLowerCase() !== "none";
+  }
+
+  /** The API key runPrompt needs: required for the api backend; for claude-cli it is used only for the fallback, so "" if unset. */
+  getExecutorApiKey(): string {
+    if (this.getExecutorBackend() === "claude-cli") {
+      const key = Config.get(Config.CLAUDE_API_KEY);
+      return key && key.startsWith("sk-") ? key : "";
+    }
+    return this.getClaudeApiKey();
+  }
+
+  /** Model id passed to `claude --model`; defaults to the same model as the tier's API model. */
+  getCliModel(tier: ModelTier = "normal"): string {
+    return Config.get(Config.CLI_MODEL_ENV[tier]) ?? this.getModel(tier);
   }
 
   /** Resolve a tier keyword ("cheap" | "normal" | "expensive") to a concrete model ID; each tier is overridable via env. */

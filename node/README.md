@@ -179,7 +179,12 @@ Two ways to run `catalog-trip-year` — see `src/domains/travel/skills/catalog-t
 |---|---|---|
 | `SNESTACK_FINNHUB_API_KEY` | Yes | Finnhub quote data |
 | `SNESTACK_TWELVEDATA_API_KEY` | No | Historical closes for RSI/MA (Finnhub's free tier blocks `/stock/candle`) — falls back to Finnhub-only, no RSI/MA, if unset |
-| `SNESTACK_CLAUDE_API_KEY` | Yes | Claude API (skill execution, signal distillation) |
+| `SNESTACK_CLAUDE_API_KEY` | Yes (unless `SNESTACK_EXECUTOR=claude-cli`) | Claude API (skill execution, signal distillation) |
+| `SNESTACK_EXECUTOR` | No | `api` (default, metered) or `claude-cli` (runs `claude -p` on your Claude subscription; see "Model-call backend" below) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | claude-cli only | Subscription token from `claude setup-token` (valid one year; set a renewal reminder) |
+| `SNESTACK_EXECUTOR_FALLBACK` | No | Default: a failed claude-cli call (usage limit, expired login, timeout, ...) retries on the metered API, which needs `SNESTACK_CLAUDE_API_KEY`. The fallback is always reported. Set `none` to disable it |
+| `SNESTACK_CLI_MODEL_CHEAP` / `_NORMAL` / `_EXPENSIVE` | No | Escape hatch: model id passed to `claude --model` (default: same as the tier's API model) |
+| `SNESTACK_CLI_TIMEOUT_MS`, `SNESTACK_CLAUDE_BIN`, `SNESTACK_CLI_EXTRA_ARGS` | No | Per-call timeout (default 300000), path to the `claude` binary, extra CLI flags |
 | `SNESTACK_MODEL_CHEAP` / `_NORMAL` / `_EXPENSIVE` | No | Model behind each cost tier (defaults: `claude-haiku-4-5-20251001` / `claude-sonnet-5-5` / `claude-opus-5-5`). Skills select a tier with `model:` in frontmatter; default `normal`. |
 | `SNESTACK_GMAIL_ADDRESS` | Yes | Gmail sender address |
 | `SNESTACK_GMAIL_APP_PASSWORD` | Yes | Gmail app password |
@@ -192,3 +197,14 @@ Two ways to run `catalog-trip-year` — see `src/domains/travel/skills/catalog-t
 | `SNESTACK_GOOGLE_CLIENT_SECRET` | No | Calendar domain — Google OAuth client secret |
 | `SNESTACK_GOOGLE_REFRESH_TOKEN` | No | Calendar domain — written by `snestack calendar auth`, not set by hand |
 | `SNESTACK_GOOGLE_GMAIL_REFRESH_TOKEN` | No | Travel domain — written by `snestack travel auth`, not set by hand (separate token from the calendar one above; same `SNESTACK_GOOGLE_CLIENT_ID`/`_SECRET`, different scope) |
+
+
+## Model-call backend (`SNESTACK_EXECUTOR`)
+
+Every model call goes through `runPrompt()` in `src/core/executor.ts`. `api` (default) is unchanged. `claude-cli` shells out to `claude -p --output-format json --tools "" --system-prompt-file <tmp>` from an empty temp dir, so the CLI cannot read or edit files, and it never loads this repo's CLAUDE.md.
+
+- **Auth guard:** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the child environment (in `-p` mode an API key always wins and would silently bill the API). The call fails fast with `not_logged_in` if `CLAUDE_CODE_OAUTH_TOKEN` is unset. Never use `--bare`: it ignores subscription credentials.
+- **Run log:** `model_call` events carry `backend`; CLI calls log `billing: "subscription"`, `est_cost_usd: 0` and `api_equivalent_usd` (a usage trend, not a charge). `run.json` has `model_calls.api_equivalent_usd` and `model_calls.usage_limit`.
+- **Fallback:** if `claude -p` fails, the call retries once on the metered API and is never silent: a stderr warning, an `executor_fallback` run event, `fallback_from` on the API `model_call`, `model_calls.api_fallbacks` in `run.json`, a `WARNING` on the `run-log finalize` line and an `api_fallback` finding in `run-check`. The run only stops if the API account is out of credit (`api_credit_exhausted`, its own `run-check` error); the unfinished work is picked up by the next scheduled run. CLI error codes (`usage_limit` and others) are still logged on the failed CLI call. Codes: `login_expired`, `timeout`, `bad_output`, `cli_missing`, `cli_failed`. Calls run one at a time per process. `maxTokens` is not enforced by the CLI backend.
+- **Cron:** run the scripts from the Mac mini's own crontab (not inside a Claude desktop app VM) with `claude` on `PATH`. Minimum CLI version: one that supports `-p`, `--output-format json`, `--tools` and `--system-prompt-file` (confirm with `snestack executor-check`). launchd would catch up missed runs after sleep; revisit if cron skips recur.
+- **Smoke test:** `SNESTACK_EXECUTOR=claude-cli npx ts-node src/cli.ts executor-check`.

@@ -134,7 +134,7 @@ export async function runSkill(
   const { systemPrompt, userPrompt, tier, maxTokens, verdictRequired } = await assembleSkillPrompt(domain, skillName, subject);
   logger.debug(`Running skill "${domain}/${skillName}" for ${subject} (tier: ${tier})`);
   const { output, stopReason, outputTokensUsed } = await runPrompt(
-    getConfig().getClaudeApiKey(),
+    getConfig().getExecutorApiKey(),
     systemPrompt,
     userPrompt,
     { tier, maxTokens, label: `${domain}/${skillName} ${subject}` }
