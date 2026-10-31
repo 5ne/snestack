@@ -5,8 +5,7 @@ import { getLogger } from "./logger";
 const logger = getLogger("email");
 
 /**
- * Minimal, domain-agnostic email sender for harness-level jobs (e.g. `reflect`,
- * which spans every registered domain) that aren't tied to one domain's own
+ * Minimal, domain-agnostic email sender for harness-level jobs that span every registered domain that aren't tied to one domain's own
  * agent. `domains/financial/agents/traderAgent.ts` has its own copy of this
  * for financial-specific emails (batch signals, run summaries) — this one
  * exists so a cross-domain job doesn't have to go through a financial-only

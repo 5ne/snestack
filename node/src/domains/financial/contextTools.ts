@@ -4,12 +4,9 @@ import { getConfig } from "../../core/config";
 import { Db } from "../../core/db";
 import { getLogger } from "../../core/logger";
 import type { ContextToolMap } from "../../core/contextTools";
-import { gatherReflectionDigest, runCheckFindingsSource, runSummariesSource, runStatsSource, existingFeatureRequestsSource } from "../../core/reflect";
 import { QuoteAgent } from "./agents/quoteAgent";
 import { EquityAgent } from "./agents/equityAgent";
 import { quoteDataFromCache, equityDataFromCache } from "./fundamentalsCache";
-import { resolveTickerUniverse, loadCacheAgeGetters } from "./cliHelpers";
-import { financialRunExpectations, financialRunRoots, financialRunStatsTargets } from "./runExpectations";
 
 const logger = getLogger("financial/contextTools");
 
@@ -26,9 +23,6 @@ const logger = getLogger("financial/contextTools");
 const QUOTE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const FINNHUB_FUNDAMENTALS_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const MORNINGSTAR_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
-
-/** `improve-self`'s lookback window — matches its gate's `maxAgeDays` (roughly weekly). */
-const REFLECT_LOOKBACK_DAYS = 7;
 
 export { gateFacts } from "./gate";
 
@@ -98,38 +92,5 @@ export const contextTools: ContextToolMap = {
       `${subject.toUpperCase()}.md`
     );
     return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
-  },
-
-  /**
-   * `improve-self`'s only required context: recent automation health, recent
-   * run summaries, and every existing feature-request proposal (so it doesn't
-   * duplicate one). Domain-level, not per-ticker — the subject passed in is
-   * ignored.
-   */
-  reflectionDigest: async () => {
-    const config = getConfig();
-    const brainRoot = config.getBrainRoot();
-    const db = await Db.open(config.getDatabaseUrl());
-    try {
-      const tickers = await resolveTickerUniverse(db);
-      const ageGetters = await loadCacheAgeGetters(db, tickers);
-      const sources = [
-        runCheckFindingsSource(financialRunExpectations(brainRoot), {
-          tickers,
-          ...ageGetters,
-        }),
-        runSummariesSource(financialRunRoots(brainRoot)),
-        runStatsSource(financialRunStatsTargets(brainRoot)),
-        existingFeatureRequestsSource(),
-      ];
-      return gatherReflectionDigest(sources, {
-        domain: "financial",
-        brainRoot,
-        now: new Date(),
-        days: REFLECT_LOOKBACK_DAYS,
-      });
-    } finally {
-      await db.close();
-    }
   },
 };

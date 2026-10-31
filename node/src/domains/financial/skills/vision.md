@@ -31,7 +31,7 @@ from a conversation working out the actual investment philosophy — see
 judgment skills (`long-term-quality.md`, `swing-trading-large-cap.md`), a
 shared numeric reference both read from (`references/quality-bar.md`), a
 fully separated ingestion pipeline (`data-refresh --tier
-intraday|daily|weekly`), and its own reflection loop (`improve-self.md`).
+intraday|daily|weekly`), and proposals from the PM role (`pm.md`).
 
 ## Non-negotiables specific to this domain
 
@@ -72,8 +72,8 @@ intraday|daily|weekly`), and its own reflection loop (`improve-self.md`).
   eligibility filter.
 - `private-company-eval.md` — drafted, nothing to apply it to yet (no
   private/pre-IPO holdings exist today).
-- `improve-self.md` — reflects on the *pipeline's* health (missed runs,
-  stale cache, cost anomalies), not on any ticker; feeds
+- Pipeline-health proposals (missed runs, stale cache, cost anomalies)
+  come from the PM role (`scripts/pm-daily.sh`) into
   `<brain>/financial/feature-requests/`.
 - Four cron jobs (`data-refresh-intraday.sh`, `data-refresh-daily.sh`,
   `daily-analysis.sh`, `swing-check.sh`) carry this end to end without the

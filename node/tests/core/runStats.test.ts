@@ -2,7 +2,6 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { computeRunStats, formatRunStats, confidenceBand } from "../../src/core/runStats";
-import { runStatsSource } from "../../src/core/reflect";
 
 describe("runStats", () => {
   let root: string;
@@ -108,12 +107,5 @@ describe("runStats", () => {
     expect(confidenceBand(0.68)).toBe(6);
     expect(confidenceBand(0.7)).toBe(7);
     expect(confidenceBand(0.5)).toBe(5);
-  });
-
-  it("digest source stays empty with no targets and prints the rollup otherwise", () => {
-    const opts = { domain: "financial", brainRoot: root, now, days: 7 };
-    expect(runStatsSource([]).fetch(opts)).toBe("");
-    writeRun("2026-10-28", { cost: 0.25, calls: 8 });
-    expect(runStatsSource(target()).fetch(opts)).toContain("$0.25");
   });
 });
