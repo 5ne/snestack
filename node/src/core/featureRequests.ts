@@ -46,6 +46,10 @@ export interface ProposalFile {
   impact: Impact | null;
   effort: Effort | null;
   created: string | null;
+  /** Frontmatter `source:` (e.g. pm, owner, manual). */
+  source?: string | null;
+  /** True when the autonomy policy (core/autoMerge.ts) approved it instead of the owner. */
+  autoApproved?: boolean;
   /** Markdown body after the frontmatter. */
   body: string;
 }
@@ -67,6 +71,8 @@ export function readProposalFile(file: string): ProposalFile | null {
     impact: (fm.data.impact as Impact) ?? null,
     effort: (fm.data.effort as Effort) ?? null,
     created: fm.data.created ?? null,
+    source: fm.data.source ?? null,
+    autoApproved: fm.data.auto_approved === "true",
     body,
   };
 }
@@ -102,4 +108,18 @@ export function setProposalStatus(file: string, status: ProposalStatus): boolean
 export function findProposalBySlug(brainRoot: string, domain: string, slug: string): ProposalFile | null {
   const file = path.join(featureRequestsDir(brainRoot, domain), `${slug}.md`);
   return readProposalFile(file);
+}
+
+/** Sets (or adds, just before the closing `---`) one frontmatter field in place. Returns false if the file has no frontmatter. */
+export function setProposalField(file: string, key: string, value: string): boolean {
+  if (!fs.existsSync(file)) return false;
+  const text = fs.readFileSync(file, "utf8");
+  const fm = parseFrontmatter(text);
+  if (!fm) return false;
+  const closeIdx = text.indexOf("\n---", 3);
+  const lineRe = new RegExp(`^${key}:.*$`, "m");
+  const head = text.slice(0, closeIdx);
+  const rewritten = lineRe.test(head) ? head.replace(lineRe, `${key}: ${value}`) : `${head}\n${key}: ${value}`;
+  fs.writeFileSync(file, rewritten + text.slice(closeIdx), "utf8");
+  return true;
 }

@@ -71,6 +71,9 @@ RL_ERR_FILE="$RUN_DIR/report.md.err" rl_step pm-session all \
   run_claude_agent scripts/prompts/pm-daily.md "$RUN_DIR/report.md" 40 "$ALLOWED" || rc=$?
 cat "$RUN_DIR/report.md" 2>/dev/null || true
 
+# Autonomy policy (core/autoMerge.ts): approve low-risk proposals so the 5pm eng run builds them.
+[ "$rc" -ne 0 ] || node dist/cli.js feature auto-approve $NOTIFY_FLAGS | tee "$RUN_DIR/auto-approve.txt" || true
+
 # Email: new proposals (or the failure). Never lets a mail problem fail the run.
 if [ "$rc" -eq 0 ]; then
   [ "$DRY_RUN" -eq 1 ] || node dist/cli.js role-gate --role pm --record || true

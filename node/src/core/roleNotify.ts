@@ -43,7 +43,11 @@ export function buildRoleEmail(input: RoleEmailInput): { subject: string; text: 
     const lines: string[] = [];
     for (const p of proposals) {
       lines.push(`[${p.domain || "?"}] ${p.title} (impact=${p.impact ?? "?"}, effort=${p.effort ?? "?"})`);
-      lines.push(`  snestack feature approve ${p.slug}${p.domain === "_system" ? " --domain _system" : ""}`);
+      lines.push(
+        p.autoApproved
+          ? "  AUTO-APPROVED (low-risk policy): eng builds it next run and merges only if tests pass and it touches just tests/docs/run-check"
+          : `  snestack feature approve ${p.slug}${p.domain === "_system" ? " --domain _system" : ""}`
+      );
       lines.push("");
     }
     return {
