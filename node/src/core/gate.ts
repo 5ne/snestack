@@ -37,6 +37,12 @@ export interface GateFacts {
   /** The subject's RSI at that time, if known. */
   lastRunRsi: number | null;
   inputsUpdatedAfterLastRun: boolean;
+  /**
+   * Set by the domain when the subject has no usable context at all (nothing cached
+   * and nothing the skill could ingest), so a model call could only produce noise.
+   * The value is the human-readable reason. Skips the run regardless of other triggers.
+   */
+  noUsableContext?: string | null;
 }
 
 export interface GateDecision {
@@ -48,6 +54,7 @@ const DAY_MS = 86_400_000;
 
 export function evaluateGate(cfg: GateConfig | undefined, facts: GateFacts): GateDecision {
   if (!cfg) return { run: true, reasons: ["no gate configured"] };
+  if (facts.noUsableContext) return { run: false, reasons: [`no usable context: ${facts.noUsableContext}`] };
 
   const usesRsi = cfg.rsiBelow != null || cfg.rsiAbove != null;
   const stateful = cfg.priceMovePct != null || cfg.maxAgeDays != null || cfg.inputsUpdated === true;

@@ -4,6 +4,7 @@ import * as path from "path";
 import { openTestDb } from "../../helpers/testDb";
 import { Db } from "../../../src/core/db";
 import { computeGateFacts, gateFacts } from "../../../src/domains/financial/gate";
+import { evaluateGate } from "../../../src/core/gate";
 import { resetConfig } from "../../../src/core/config";
 import { financialRunRoots } from "../../../src/domains/financial/runExpectations";
 
@@ -64,6 +65,32 @@ describe("computeGateFacts", () => {
     fs.writeFileSync(path.join(reportsDir, "INTU-morningstar.pdf"), "x");
     fs.utimesSync(path.join(reportsDir, "INTU-morningstar.pdf"), new Date("2026-10-07T00:00:00Z"), new Date("2026-10-07T00:00:00Z"));
     expect((await computeGateFacts(db, "long-term-quality", "INTU", opts())).inputsUpdatedAfterLastRun).toBe(true);
+  });
+
+  it("flags long-term-quality as having no usable context when there is no Morningstar row or PDF", async () => {
+    const f = await computeGateFacts(db, "long-term-quality", "INTU", opts());
+    expect(f.noUsableContext).toContain("INTU");
+    expect(evaluateGate({ rsiBelow: 40 }, { ...f, rsi: 20 })).toEqual({
+      run: false,
+      reasons: [expect.stringContaining("no usable context")],
+    });
+  });
+
+  it("clears it once a report PDF or a cached Morningstar row exists, and never sets it for swing", async () => {
+    expect((await computeGateFacts(db, "swing-trading-large-cap", "INTU", opts())).noUsableContext).toBeNull();
+
+    fs.writeFileSync(path.join(reportsDir, "INTU-morningstar.pdf"), "x");
+    expect((await computeGateFacts(db, "long-term-quality", "INTU", opts())).noUsableContext).toBeNull();
+    fs.rmSync(path.join(reportsDir, "INTU-morningstar.pdf"));
+
+    await db.addFundamentals({
+      ticker: "INTU", as_of_date: "2026-10-01", source: "morningstar", pe_ratio: null, pb_ratio: null,
+      debt_to_equity: null, fcf: null, fcf_fiscal_year: null, fcf_yield: null, fcf_margin: null,
+      fcf_positive: null, dividend_yield: null, earnings_growth: null, revenue_growth: null, fair_value: null,
+      price_to_fair_value: null, economic_moat: null, morningstar_rating: null, uncertainty: null,
+      capital_allocation: null, red_flags: null,
+    } as never);
+    expect((await computeGateFacts(db, "long-term-quality", "INTU", opts())).noUsableContext).toBeNull();
   });
 
   it("knows nothing about an unrecognized skill", async () => {

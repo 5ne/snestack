@@ -11,6 +11,9 @@ const SKILL_PREFIX: Record<string, string> = {
   "swing-trading-large-cap": "[Swing]",
 };
 
+/** Skills whose judgment is meaningless without Morningstar fundamentals. */
+const NEEDS_FUNDAMENTALS = new Set(["long-term-quality"]);
+
 /** A stored quote older than this is too stale to gate on; the skill just runs. */
 const MAX_QUOTE_AGE_DAYS = 4;
 const DAY_MS = 86_400_000;
@@ -63,7 +66,18 @@ export async function computeGateFacts(
     lastRunAt != null &&
     Math.max(mtime(path.join(opts.reportsDir, `${T}-morningstar.pdf`)), mtime(opts.brainFile)) > lastRunAt.getTime();
 
+  // No cached Morningstar row of any age and no PDF to ingest: the live fallback can only
+  // come back empty. A PDF landing in reportsDir (parsed by data-refresh) clears this.
+  let noUsableContext: string | null = null;
+  if (NEEDS_FUNDAMENTALS.has(skillName)) {
+    const pdf = path.join(opts.reportsDir, `${T}-morningstar.pdf`);
+    if (!(await db.getLatestFundamentals(T, "morningstar")) && !fs.existsSync(pdf)) {
+      noUsableContext = `no Morningstar fundamentals cached and no report for ${T}`;
+    }
+  }
+
   return {
+    noUsableContext,
     now,
     rsi: quoteFresh ? (latest!.rsi ?? null) : null,
     price: quoteFresh ? latest!.close : null,
