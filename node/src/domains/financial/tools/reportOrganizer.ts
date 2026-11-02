@@ -7,17 +7,27 @@ const logger = getLogger("ReportOrganizer");
 
 const TICKER_EXCLUDED = new Set([
   "UTC", "USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD", "INR", "SGD", "HKD", "CNY",
+  // "MORN" is Morningstar's own ticker, which appears in every report's boilerplate
+  // disclaimer ("Morningstar, Inc. is a publicly traded company (Ticker Symbol: MORN)")
+  // and can be mistaken for the subject company's ticker when no other pattern matches first.
+  "MORN",
 ]);
 
 // Regex candidates for ticker extraction from Morningstar PDF text, in the
 // same order/priority as the Python OCR implementation.
+//
+// Every capture group is followed by (?![a-z]) so it can't stop partway
+// through a longer word (e.g. matching just "S" out of "Symbol") — without
+// that guard, the "Ticker Symbol: MORN" boilerplate that appears in every
+// report's disclaimer footer can be mistaken for the subject company's
+// ticker when no earlier pattern matches first.
 const TICKER_PATTERNS: RegExp[] = [
-  /[\s\n]([A-Z]{1,5})\s+Q{1,4}(?:\s|$|\n)/g, // "Company Name TICKER Q/QQQQ"
-  /\b([A-Z]{1,5})\s+\(/g, // "NVDA ("
-  /Ticker[:\s]+([A-Z]{1,5})/g, // "Ticker: NVDA"
-  /\(([A-Z]{1,5})\)/g, // "(NVDA)"
-  /Symbol[:\s]+([A-Z]{1,5})/g, // "Symbol: NVDA"
-  /\s([A-Z]{1,5})\s(?:Inc|Corp|LLC|Ltd|Ltd\.|Co|Co\.)/g, // "NVDA Corp"
+  /[\s\n]([A-Z]{1,5})(?![a-z])\s+Q{1,5}(?:\s|$|\n)/g, // "Company Name TICKER Q/QQQQQ" (1-5 star rating)
+  /\b([A-Z]{1,5})(?![a-z])\s+\(/g, // "NVDA ("
+  /Ticker[:\s]+([A-Z]{1,5})(?![a-z])/g, // "Ticker: NVDA"
+  /\(([A-Z]{1,5})(?![a-z])\)/g, // "(NVDA)"
+  /Symbol[:\s]+([A-Z]{1,5})(?![a-z])/g, // "Symbol: NVDA"
+  /\s([A-Z]{1,5})(?![a-z])\s(?:Inc|Corp|LLC|Ltd|Ltd\.|Co|Co\.)/g, // "NVDA Corp"
 ];
 
 /**
