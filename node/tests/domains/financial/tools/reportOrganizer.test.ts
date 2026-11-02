@@ -111,6 +111,18 @@ describe("extractTickerFromText", () => {
   it("excludes common currency codes", () => {
     expect(extractTickerFromText("Market Cap 5.42 USD (Tril)")).toBeNull();
   });
+
+  it("extracts a 5-star rating (QQQQQ) without stopping short", () => {
+    expect(extractTickerFromText("Alphabet Inc   Class    C  GOOG QQQQQ  29   Oct    2026")).toBe("GOOG");
+  });
+
+  it("ignores the 'Ticker Symbol: MORN' disclaimer boilerplate present in every report", () => {
+    expect(
+      extractTickerFromText(
+        "Morningstar, Inc. is a publicly traded company (Ticker \nSymbol: MORN) and thus a financial institution"
+      )
+    ).toBeNull();
+  });
 });
 
 describe("organizeReport", () => {
