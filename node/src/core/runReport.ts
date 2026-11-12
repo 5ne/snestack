@@ -69,7 +69,10 @@ export function buildRunReport(events: RunEvent[], now: Date = new Date()): RunR
         inputTokens: input,
         outputTokens: output,
         latencyMs: typeof e.latency_ms === "number" ? e.latency_ms : 0,
-        costUsd: estimateCostUsd(String(e.model ?? ""), input, output),
+        costUsd:
+          typeof e.est_cost_usd === "number"
+            ? e.est_cost_usd
+            : estimateCostUsd(String(e.model ?? ""), input, output),
         truncated: Boolean(e.truncated),
         error: e.error ? String(e.error) : null,
       };

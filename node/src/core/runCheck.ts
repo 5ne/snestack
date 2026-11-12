@@ -122,23 +122,26 @@ function findingsForSummary(
     });
   }
   const usageLimit = summary.model_calls.usage_limit ?? 0;
-  if (usageLimit > 0) {
+  const fallbacks = summary.model_calls.api_fallbacks ?? 0;
+  const subFallbacks = summary.model_calls.subscription_fallbacks ?? 0;
+  const rescuedFallbacks = fallbacks + subFallbacks;
+  const unrescuedUsageLimit = Math.max(0, usageLimit - rescuedFallbacks);
+  if (unrescuedUsageLimit > 0) {
     findings.push({
       severity: "error",
       domain: exp.name,
       date,
       code: "usage_limit",
-      message: `${labelSuffix}${usageLimit} model call(s) hit the subscription usage limit; the run stopped (no API fallback). Re-run later or on the next scheduled firing.`,
+      message: `${labelSuffix}${unrescuedUsageLimit} model call(s) hit the subscription usage limit; the run stopped (no fallback remained). Re-run later or on the next scheduled firing.`,
     });
   }
-  const fallbacks = summary.model_calls.api_fallbacks ?? 0;
   if (fallbacks > 0) {
     findings.push({
       severity: "warn",
       domain: exp.name,
       date,
       code: "api_fallback",
-      message: `${labelSuffix}${fallbacks} model call(s) fell back from the Claude subscription to the metered API (real spend).`,
+      message: `${labelSuffix}${fallbacks} model call(s) fell back from a subscription CLI to the metered API (real spend).`,
     });
   }
   const exhausted = summary.model_calls.api_credit_exhausted ?? 0;
@@ -151,7 +154,7 @@ function findingsForSummary(
       message: `${labelSuffix}The Anthropic API account is out of credit; the run stopped. Add credit; the next run picks the work up.`,
     });
   }
-  const otherErrors = summary.model_calls.errors - usageLimit - exhausted;
+  const otherErrors = Math.max(0, summary.model_calls.errors - usageLimit - exhausted - Math.max(0, rescuedFallbacks - usageLimit));
   if (otherErrors > 0) {
     findings.push({
       severity: "warn",

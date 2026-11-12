@@ -171,10 +171,12 @@ Two ways to run `catalog-trip-year` — see `src/domains/travel/skills/catalog-t
 |---|---|---|
 | `SNESTACK_FINNHUB_API_KEY` | Yes | Finnhub quote data |
 | `SNESTACK_TWELVEDATA_API_KEY` | No | Historical closes for RSI/MA (Finnhub's free tier blocks `/stock/candle`) — falls back to Finnhub-only, no RSI/MA, if unset |
-| `SNESTACK_CLAUDE_API_KEY` | Yes (unless `SNESTACK_EXECUTOR=claude-cli`) | Claude API (skill execution, signal distillation) |
-| `SNESTACK_EXECUTOR` | No | `api` (default, metered) or `claude-cli` (runs `claude -p` on your Claude subscription; see "Model-call backend" below) |
-| `CLAUDE_CODE_OAUTH_TOKEN` | claude-cli only | Subscription token from `claude setup-token` (valid one year; set a renewal reminder) |
-| `SNESTACK_EXECUTOR_FALLBACK` | No | Default: a failed claude-cli call (usage limit, expired login, timeout, ...) retries on the metered API, which needs `SNESTACK_CLAUDE_API_KEY`. The fallback is always reported. Set `none` to disable it |
+| `SNESTACK_CLAUDE_API_KEY` | Only when `claude-api` (`api`) is used | Claude API (metered backend or fallback) |
+| `SNESTACK_EXECUTOR` | No | Ordered `>`-delimited backend chain ending in `fail`, e.g. `agy-cli>fail`, `agy-cli>claude-cli>fail`, or `agy-cli>claude-cli>claude-api>fail` (default: `api`; see "Model-call backend" below) |
+| `SNESTACK_AGY_MODEL_CHEAP` / `_NORMAL` / `_EXPENSIVE` | No | Optional model id passed to `agy --model` per cost tier (see `agy models`; unset uses your Google AI Pro/Ultra session's active default model) |
+| `SNESTACK_AGY_BIN`, `SNESTACK_AGY_OUTPUT_FORMAT`, `SNESTACK_AGY_EXTRA_ARGS` | No | Path to the `agy` binary (default `agy`, auto-adds `~/.local/bin` to `PATH`), stdout mode (`json` default or `text`), extra CLI flags |
+| `CLAUDE_CODE_OAUTH_TOKEN` | When `claude-cli` is in the chain | Subscription token from `claude setup-token` (valid one year; set a renewal reminder) |
+| `SNESTACK_EXECUTOR_FALLBACK` | No | Legacy fallback setting for single-backend `SNESTACK_EXECUTOR` values without `>`; prefer explicit `>` chains instead |
 | `SNESTACK_CLI_MODEL_CHEAP` / `_NORMAL` / `_EXPENSIVE` | No | Escape hatch: model id passed to `claude --model` (default: same as the tier's API model) |
 | `SNESTACK_CLI_TIMEOUT_MS`, `SNESTACK_CLAUDE_BIN`, `SNESTACK_CLI_EXTRA_ARGS` | No | Per-call timeout (default 300000), path to the `claude` binary, extra CLI flags |
 | `SNESTACK_MODEL_CHEAP` / `_NORMAL` / `_EXPENSIVE` | No | Model behind each cost tier (defaults: `claude-haiku-4-5-20251001` / `claude-sonnet-5-5` / `claude-opus-5-5`). Skills select a tier with `model:` in frontmatter; default `normal`. |
@@ -193,13 +195,13 @@ Two ways to run `catalog-trip-year` — see `src/domains/travel/skills/catalog-t
 
 ## Model-call backend (`SNESTACK_EXECUTOR`)
 
-Every model call goes through `runPrompt()` in `src/core/executor.ts`. `api` (default) is unchanged. `claude-cli` shells out to `claude -p --output-format json --tools "" --system-prompt-file <tmp>` from an empty temp dir, so the CLI cannot read or edit files, and it never loads this repo's CLAUDE.md.
+Every model call goes through `runPrompt()` in `src/core/executor.ts`, which executes an ordered `>`-delimited chain of backends configured by `SNESTACK_EXECUTOR` (e.g. `agy-cli>fail`, `agy-cli>claude-cli>fail`, or `agy-cli>claude-cli>claude-api>fail`):
 
-- **Auth guard:** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the child environment (in `-p` mode an API key always wins and would silently bill the API). The call fails fast with `not_logged_in` if `CLAUDE_CODE_OAUTH_TOKEN` is unset. Never use `--bare`: it ignores subscription credentials.
-- **Run log:** `model_call` events carry `backend`; CLI calls log `billing: "subscription"`, `est_cost_usd: 0` and `api_equivalent_usd` (a usage trend, not a charge). `run.json` has `model_calls.api_equivalent_usd` and `model_calls.usage_limit`.
-- **Fallback:** if `claude -p` fails, the call retries once on the metered API and is never silent: a stderr warning, an `executor_fallback` run event, `fallback_from` on the API `model_call`, `model_calls.api_fallbacks` in `run.json`, a `WARNING` on the `run-log finalize` line and an `api_fallback` finding in `run-check`. The run only stops if the API account is out of credit (`api_credit_exhausted`, its own `run-check` error); the unfinished work is picked up by the next scheduled run. CLI error codes (`usage_limit` and others) are still logged on the failed CLI call. Codes: `login_expired`, `timeout`, `bad_output`, `cli_missing`, `cli_failed`. Calls run one at a time per process. `maxTokens` is not enforced by the CLI backend.
-- **Cron:** run the scripts from the Mac mini's own crontab (not inside a Claude desktop app VM) with `claude` on `PATH`. Minimum CLI version: one that supports `-p`, `--output-format json`, `--tools` and `--system-prompt-file` (confirm with `snestack executor-check`). launchd would catch up missed runs after sleep; revisit if cron skips recur.
-- **Smoke test:** `SNESTACK_EXECUTOR=claude-cli npx ts-node src/cli.ts executor-check`.
+- **`agy-cli`:** shells out to `agy -p --output-format json --disable-slash-commands --sandbox` from an empty temp dir using your cached Google AI Pro / Ultra OAuth login (initialized by running `agy` interactively once). `GEMINI_API_KEY` and `GOOGLE_API_KEY` are stripped from the child env, and `~/.gemini/antigravity-cli/settings.json` is checked so `modelProvider="gemini"` cannot silently route calls to a paid API key.
+- **`claude-cli`:** shells out to `claude -p --output-format json --tools "" --system-prompt-file <tmp>` from an empty temp dir using `CLAUDE_CODE_OAUTH_TOKEN`. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are stripped from the child env (never use `--bare`).
+- **`claude-api` (`api`):** metered Anthropic SDK (`SNESTACK_CLAUDE_API_KEY`).
+- **Chain & fallback telemetry:** `model_call` events carry `backend`; subscription CLI calls (`agy-cli`, `claude-cli`) log `billing: "subscription"`, `est_cost_usd: 0` and `api_equivalent_usd` (usage trend, not a charge). When a step fails and another step follows in `SNESTACK_EXECUTOR`, `executor_fallback` is logged (`subscription_fallbacks` when falling back between subscription CLIs like `agy-cli>claude-cli>fail`; `api_fallbacks` + a `run-check` `api_fallback` warning only when a call reaches metered `claude-api`). Ending a chain with `>fail` (e.g. `agy-cli>fail`) stops immediately on failure with zero fallback. Calls run one at a time per CLI backend.
+- **Cron & smoke test:** run cron jobs under your macOS user account (`HOME` preserved so `agy` reads `~/.gemini/`, with `~/.local/bin` on `PATH`). Verify with `SNESTACK_EXECUTOR="agy-cli>fail" npx ts-node src/cli.ts executor-check` or `./scripts/agy-cli-test.sh "ping"`.
 
 
 ## PM and eng role scripts (`pm-daily.sh`, `eng-daily.sh`)

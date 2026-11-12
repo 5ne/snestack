@@ -8,6 +8,83 @@ import { ConfigError, ValidationError } from "./errors";
 export type ModelTier = "cheap" | "normal" | "expensive";
 export const MODEL_TIERS: readonly ModelTier[] = ["cheap", "normal", "expensive"];
 
+/** Canonical backend IDs supported by runPrompt ("claude-api" in config normalizes to "api"). */
+export type ExecutorBackend = "agy-cli" | "claude-cli" | "api";
+
+function normalizeExecutorBackend(token: string): ExecutorBackend | null {
+  if (token === "agy-cli") return "agy-cli";
+  if (token === "claude-cli") return "claude-cli";
+  if (token === "api" || token === "claude-api") return "api";
+  return null;
+}
+
+/**
+ * Parse SNESTACK_EXECUTOR (and optional legacy SNESTACK_EXECUTOR_FALLBACK) into an
+ * ordered list of backends to attempt before failing gracefully.
+ *
+ * Chain syntax examples:
+ *   "agy-cli>fail"                       -> ["agy-cli"]
+ *   "agy-cli>claude-cli>fail"            -> ["agy-cli", "claude-cli"]
+ *   "agy-cli>claude-cli>claude-api>fail" -> ["agy-cli", "claude-cli", "api"]
+ *   "claude-cli>claude-api>fail"         -> ["claude-cli", "api"]
+ */
+export function parseExecutorChain(rawExecutor?: string, rawFallback?: string): ExecutorBackend[] {
+  const raw = (rawExecutor ?? "api").trim().toLowerCase();
+  if (raw === "") return ["api"];
+
+  if (raw.includes(">")) {
+    const segments = raw.split(">").map((s) => s.trim());
+    if (segments.some((s) => s.length === 0)) {
+      throw new ValidationError(`Invalid ${Config.EXECUTOR} "${rawExecutor}": empty step in chain`);
+    }
+    const chain: ExecutorBackend[] = [];
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      if (seg === "fail") {
+        if (i === 0 || i !== segments.length - 1) {
+          throw new ValidationError(
+            `Invalid ${Config.EXECUTOR} "${rawExecutor}": "fail" may only appear at the end of a chain (e.g. "agy-cli>fail")`
+          );
+        }
+        break;
+      }
+      const b = normalizeExecutorBackend(seg);
+      if (!b) {
+        throw new ValidationError(
+          `Invalid ${Config.EXECUTOR} step "${seg}" in "${rawExecutor}" (expected agy-cli, claude-cli, claude-api, api, or trailing fail)`
+        );
+      }
+      if (chain.includes(b)) {
+        throw new ValidationError(`Invalid ${Config.EXECUTOR} "${rawExecutor}": duplicate backend "${seg}" in chain`);
+      }
+      chain.push(b);
+    }
+    return chain;
+  }
+
+  const primary = normalizeExecutorBackend(raw);
+  if (!primary) {
+    throw new ValidationError(
+      `Invalid ${Config.EXECUTOR} "${rawExecutor}" (expected agy-cli, claude-cli, claude-api, api, or a ">"-chain like "agy-cli>fail")`
+    );
+  }
+  if (primary === "api") return ["api"];
+
+  // Legacy SNESTACK_EXECUTOR_FALLBACK handling when SNESTACK_EXECUTOR is a single backend name:
+  // claude-cli historically defaulted to "api" fallback; agy-cli defaults to no fallback ("fail") so it never
+  // silently jumps from a Google AI Pro/Ultra subscription to a paid API unless explicitly configured.
+  const fbDefault = primary === "claude-cli" ? "api" : "none";
+  const fb = (rawFallback ?? fbDefault).trim().toLowerCase();
+  if (fb === "" || fb === "none" || fb === "fail") return [primary];
+
+  const tail = parseExecutorChain(fb.includes(">") ? fb : `${fb}>fail`);
+  const chain: ExecutorBackend[] = [primary];
+  for (const b of tail) {
+    if (!chain.includes(b)) chain.push(b);
+  }
+  return chain;
+}
+
 export class Config {
   // Env-var key constants
   static readonly FINNHUB_API_KEY = "SNESTACK_FINNHUB_API_KEY";
@@ -15,11 +92,19 @@ export class Config {
   // blocks /stock/candle. Falls back to Finnhub-only (no RSI/MA) if unset.
   static readonly TWELVEDATA_API_KEY = "SNESTACK_TWELVEDATA_API_KEY";
   static readonly CLAUDE_API_KEY = "SNESTACK_CLAUDE_API_KEY";
-  /** Which backend runPrompt uses: "api" (default, pay-per-token) or "claude-cli" (`claude -p` on the owner's subscription). */
+  /**
+   * Ordered backend chain for runPrompt, e.g. "agy-cli>fail" or "agy-cli>claude-cli>claude-api>fail"
+   * (also accepts single values "api" | "claude-api" | "claude-cli" | "agy-cli").
+   */
   static readonly EXECUTOR = "SNESTACK_EXECUTOR";
-  /** claude-cli failures retry on the metered API by default (always reported); set to "none" to disable. */
+  /** Legacy fallback setting when SNESTACK_EXECUTOR is a single backend without ">". Prefer ">"-chains in SNESTACK_EXECUTOR. */
   static readonly EXECUTOR_FALLBACK = "SNESTACK_EXECUTOR_FALLBACK";
   static readonly CLI_TIMEOUT_MS = "SNESTACK_CLI_TIMEOUT_MS";
+  static readonly AGY_MODEL_ENV: Record<ModelTier, string> = {
+    cheap: "SNESTACK_AGY_MODEL_CHEAP",
+    normal: "SNESTACK_AGY_MODEL_NORMAL",
+    expensive: "SNESTACK_AGY_MODEL_EXPENSIVE",
+  };
   static readonly CLI_MODEL_ENV: Record<ModelTier, string> = {
     cheap: "SNESTACK_CLI_MODEL_CHEAP",
     normal: "SNESTACK_CLI_MODEL_NORMAL",
@@ -103,25 +188,39 @@ export class Config {
     return key;
   }
 
-  getExecutorBackend(): "api" | "claude-cli" {
-    const v = (Config.get(Config.EXECUTOR) ?? "api").trim().toLowerCase();
-    if (v === "api" || v === "") return "api";
-    if (v === "claude-cli") return "claude-cli";
-    throw new ValidationError(`Invalid ${Config.EXECUTOR} "${v}" (expected api or claude-cli)`);
+  /** Ordered list of backends runPrompt tries before failing (e.g. ["agy-cli"] for "agy-cli>fail"). */
+  getExecutorChain(): ExecutorBackend[] {
+    return parseExecutorChain(Config.get(Config.EXECUTOR), Config.get(Config.EXECUTOR_FALLBACK));
   }
 
-  /** Whether a failed claude-cli call retries on the metered API (default yes). */
+  /** Human-readable representation of the active chain, always ending in ">fail". */
+  getExecutorChainDisplay(): string {
+    return [...this.getExecutorChain().map((b) => (b === "api" ? "claude-api" : b)), "fail"].join(">");
+  }
+
+  /** Primary (first) backend in the configured executor chain. */
+  getExecutorBackend(): ExecutorBackend {
+    return this.getExecutorChain()[0];
+  }
+
+  /** Whether a metered API step appears as a fallback anywhere after the primary backend. */
   isApiFallbackEnabled(): boolean {
-    return (Config.get(Config.EXECUTOR_FALLBACK) ?? "api").trim().toLowerCase() !== "none";
+    return this.getExecutorChain().slice(1).includes("api");
   }
 
-  /** The API key runPrompt needs: required for the api backend; for claude-cli it is used only for the fallback, so "" if unset. */
+  /** The API key runPrompt needs: required when "api" ("claude-api") is primary; optional otherwise (validated only if fallback reaches "api"). */
   getExecutorApiKey(): string {
-    if (this.getExecutorBackend() === "claude-cli") {
+    if (this.getExecutorBackend() !== "api") {
       const key = Config.get(Config.CLAUDE_API_KEY);
       return key && key.startsWith("sk-") ? key : "";
     }
     return this.getClaudeApiKey();
+  }
+
+  /** Optional model id passed to `agy --model` for a tier; undefined means let `agy` use the Pro/Ultra session's default model. */
+  getAgyModel(tier: ModelTier = "normal"): string | undefined {
+    const v = Config.get(Config.AGY_MODEL_ENV[tier])?.trim();
+    return v ? v : undefined;
   }
 
   /** Model id passed to `claude --model`; defaults to the same model as the tier's API model. */

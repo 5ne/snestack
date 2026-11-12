@@ -53,9 +53,11 @@ export interface RunSummary {
     est_cost_usd: number | null;
     /** What the subscription calls would have cost at API list prices (usage trend, not a charge); null if a model is unpriced. */
     api_equivalent_usd?: number | null;
-    /** Calls that failed on a subscription usage limit (stop and retry later; never auto-falls back to the API). */
+    /** Calls that failed on a subscription usage limit (stop and retry later; never auto-falls back unless configured). */
     usage_limit?: number;
-    /** Calls that failed on claude-cli and were retried on the metered API (real spend; always surfaced). */
+    /** Calls that fell back from one subscription CLI to another (e.g. agy-cli -> claude-cli; $0 metered spend). */
+    subscription_fallbacks?: number;
+    /** Calls that failed on a CLI backend and were retried on the metered API (real spend; always surfaced). */
     api_fallbacks?: number;
     /** Calls that failed because the API account is out of credit (the run stops; retry on the next run). */
     api_credit_exhausted?: number;
@@ -64,7 +66,7 @@ export interface RunSummary {
 }
 
 // Approximate list prices in USD per million tokens (input, output), as published 2026-09.
-// Used only for the run summary's cost estimate; unknown models produce a null estimate.
+// Used only for the run summary's cost / API-equivalent estimate; subscription calls always record est_cost_usd = 0.
 const PRICES_PER_MTOK: Record<string, [number, number]> = {
   "claude-haiku-4-5": [1, 5],
   "claude-haiku-4-5-20251001": [1, 5],
@@ -73,6 +75,11 @@ const PRICES_PER_MTOK: Record<string, [number, number]> = {
   "claude-sonnet-5-5": [2, 10],
   "claude-opus-5": [5, 25],
   "claude-opus-5-5": [4, 20],
+  "gemini-flash": [0.3, 2.5],
+  "gemini-pro": [1.25, 10],
+  "gemini-2.5-flash": [0.3, 2.5],
+  "gemini-2.5-pro": [1.25, 10],
+  "gemini-3.1-pro": [1.25, 10],
 };
 
 export function estimateCostUsd(model: string, inputTokens: number, outputTokens: number): number | null {
@@ -165,6 +172,7 @@ export function summarizeRun(events: RunEvent[], scriptExitCode: number | null =
     est_cost_usd: 0,
     api_equivalent_usd: 0,
     usage_limit: 0,
+    subscription_fallbacks: 0,
     api_fallbacks: 0,
     api_credit_exhausted: 0,
     by_model: {},
@@ -184,7 +192,13 @@ export function summarizeRun(events: RunEvent[], scriptExitCode: number | null =
     slot.input_tokens += input;
     slot.output_tokens += output;
     if (e.error_code === "usage_limit") model_calls.usage_limit = (model_calls.usage_limit ?? 0) + 1;
-    if (e.fallback_from) model_calls.api_fallbacks = (model_calls.api_fallbacks ?? 0) + 1;
+    if (e.fallback_from && !e.error) {
+      if (e.billing === "subscription") {
+        model_calls.subscription_fallbacks = (model_calls.subscription_fallbacks ?? 0) + 1;
+      } else {
+        model_calls.api_fallbacks = (model_calls.api_fallbacks ?? 0) + 1;
+      }
+    }
     if (e.error_code === "api_credit_exhausted") model_calls.api_credit_exhausted = (model_calls.api_credit_exhausted ?? 0) + 1;
     if (e.billing === "subscription") {
       // Flat-rate: no real charge, but keep the API-equivalent so usage trends stay visible.

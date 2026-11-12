@@ -44,6 +44,11 @@ import domainsConfig from "./config/domains.json";
 
 const program = new Command();
 
+function formatCliError(e: unknown): string {
+  if (e instanceof ExecutorError) return `[${e.code}] ${e.message}`;
+  return e instanceof Error ? e.message : String(e);
+}
+
 const REGISTERED_DOMAINS = Object.keys(domainsConfig);
 // Cross-domain (harness-level) proposals live under <brain>/_system/feature-requests/ (see core/skills/pm.md).
 // `_system` isn't a runnable domain; only `feature` commands see it.
@@ -427,7 +432,7 @@ program
         process.exitCode = 3;
       }
     } catch (e) {
-      console.error(`run-skill failed: ${e}`);
+      console.error(`run-skill failed: ${formatCliError(e)}`);
       process.exitCode = 1;
     }
   });
@@ -516,7 +521,7 @@ travel
       }
       console.log("\nReview before promoting into the year's canonical files.");
     } catch (e) {
-      console.error(`travel catalog failed: ${e}`);
+      console.error(`travel catalog failed: ${formatCliError(e)}`);
       process.exitCode = 1;
     }
   });
@@ -642,11 +647,18 @@ program
       sections,
     ].join("\n");
 
-    const { output } = await runPrompt(config.getExecutorApiKey(), systemPrompt, userPrompt, {
-      tier: "cheap",
-      maxTokens: 8000,
-      label: "financial/distill-signals",
-    });
+    let output: string;
+    try {
+      ({ output } = await runPrompt(config.getExecutorApiKey(), systemPrompt, userPrompt, {
+        tier: "cheap",
+        maxTokens: 8000,
+        label: "financial/distill-signals",
+      }));
+    } catch (e) {
+      console.error(`distill-signals failed: ${formatCliError(e)}`);
+      process.exitCode = 1;
+      return;
+    }
     const cleaned = output
       .trim()
       .replace(/^```(?:json)?\s*/i, "")
@@ -873,6 +885,7 @@ runLog
         `${summary.steps.truncated} truncated; ${m.count} model calls (${m.input_tokens} in / ${m.output_tokens} out tokens, ` +
         `~${m.est_cost_usd == null ? "unknown cost" : "$" + m.est_cost_usd.toFixed(2)}` +
         `${m.api_equivalent_usd ? `, subscription calls ~$${m.api_equivalent_usd.toFixed(2)} at API prices` : ""}` +
+        `${m.subscription_fallbacks ? `; ${m.subscription_fallbacks} call(s) fell back across subscription CLIs` : ""}` +
         `${m.api_fallbacks ? `; WARNING ${m.api_fallbacks} call(s) fell back to the metered API` : ""}). Summary: ${path.join(dir, "run.json")}`
     );
     if (summary.status === "failed") process.exitCode = 1;
@@ -880,26 +893,33 @@ runLog
 
 program
   .command("executor-check")
-  .description("Smoke test: send one tiny prompt through the selected backend (SNESTACK_EXECUTOR) and print backend, model, tokens, latency")
+  .description("Smoke test: send one tiny prompt through the configured executor chain (SNESTACK_EXECUTOR) and print backend, model, tokens, latency")
   .option("--tier <t>", "cheap | normal | expensive", "cheap")
   .action(async (opts: { tier: string }) => {
     const config = getConfig();
     try {
       const tier = opts.tier as ModelTier;
-      const backend = config.getExecutorBackend();
-      const keyStripped = backend === "claude-cli" && Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+      const chainDisplay = config.getExecutorChainDisplay();
       const r = await runPrompt(config.getExecutorApiKey(), "You are a smoke test. Reply with exactly: OK", "ping", {
         tier,
         maxTokens: 50,
         label: "executor-check",
       });
-      console.log(`backend: ${backend}`);
+      const usedBackend = r.backend ?? config.getExecutorBackend();
+      console.log(`chain: ${chainDisplay}`);
+      console.log(`backend: ${usedBackend}${r.fallbackFrom ? ` (fallback from ${r.fallbackFrom})` : ""}`);
       console.log(`model: ${r.model}`);
       console.log(`reply: ${r.output.trim().slice(0, 80)}`);
       console.log(`tokens: ${r.inputTokensUsed ?? "?"} in / ${r.outputTokensUsed ?? "?"} out; latency ${r.latencyMs}ms; stop ${r.stopReason ?? "?"}`);
-      if (backend === "claude-cli") console.log(`API key env stripped from child: ${keyStripped ? "yes (was set in this shell)" : "n/a (was not set)"}`);
+      if (usedBackend === "agy-cli") {
+        const stripped = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+        console.log(`Gemini API key env stripped from child: ${stripped ? "yes (was set in this shell)" : "n/a (was not set)"}`);
+      } else if (usedBackend === "claude-cli") {
+        const stripped = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+        console.log(`Anthropic API key env stripped from child: ${stripped ? "yes (was set in this shell)" : "n/a (was not set)"}`);
+      }
     } catch (e) {
-      console.error(`executor-check failed: ${e instanceof ExecutorError ? `[${e.code}] ` : ""}${e instanceof Error ? e.message : e}`);
+      console.error(`executor-check failed (${config.getExecutorChainDisplay()}): ${formatCliError(e)}`);
       process.exitCode = 1;
     }
   });

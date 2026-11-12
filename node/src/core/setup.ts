@@ -233,7 +233,9 @@ export function validateEnv(): boolean {
   try {
     const config = getConfig();
     config.getFinnhubApiKey();
-    config.getClaudeApiKey();
+    if (config.getExecutorBackend() === "api") {
+      config.getClaudeApiKey();
+    }
     config.getGmailAddress();
     config.getNotificationEmail();
     return true;

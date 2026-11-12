@@ -152,4 +152,17 @@ describe("validateEnv", () => {
     getConfig(NO_ENV);
     expect(validateEnv()).toBe(true);
   });
+
+  it("does not require SNESTACK_CLAUDE_API_KEY when SNESTACK_EXECUTOR uses agy-cli>fail", () => {
+    process.env.SNESTACK_FINNHUB_API_KEY = "validfinnhubkeyabc";
+    process.env.SNESTACK_EXECUTOR = "agy-cli>fail";
+    process.env.SNESTACK_GMAIL_ADDRESS = "me@gmail.com";
+    process.env.SNESTACK_NOTIFICATION_EMAIL = "notify@example.com";
+    getConfig(NO_ENV);
+    try {
+      expect(validateEnv()).toBe(true);
+    } finally {
+      delete process.env.SNESTACK_EXECUTOR;
+    }
+  });
 });

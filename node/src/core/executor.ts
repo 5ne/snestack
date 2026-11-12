@@ -3,7 +3,7 @@ import { spawn } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { Config, getConfig, type ModelTier } from "./config";
+import { Config, getConfig, type ExecutorBackend, type ModelTier } from "./config";
 import { ExecutorError } from "./errors";
 import { logger } from "./logger";
 import { estimateCostUsd, logRunEvent } from "./runLog";
@@ -18,27 +18,35 @@ export interface ExecutorResult {
   inputTokensUsed: number | null;
   model: string;
   latencyMs: number;
+  /** Which backend in the chain produced this result. */
+  backend?: ExecutorBackend;
+  /** Set when an earlier backend in the chain failed and handed off (e.g. "agy-cli:usage_limit"). */
+  fallbackFrom?: string;
 }
 
 export interface RunPromptOptions {
-  /** Cost tier keyword; resolved to a concrete model by Config.getModel(). Defaults to "normal". */
+  /** Cost tier keyword; resolved to a concrete model by Config. Defaults to "normal". */
   tier?: ModelTier;
   maxTokens?: number;
   /** Human-readable identity of this call (e.g. "financial/long-term-quality INTU"), recorded in the run log. */
   label?: string;
-  /** Internal: set when this API call is a fallback from another backend (recorded in the run log). */
+  /** Internal: set when this call is a fallback from an earlier backend in the chain (recorded in the run log). */
   fallbackFrom?: string;
 }
 
 /**
- * Run a system + user prompt through the model and return its raw text output.
- * Dispatches on SNESTACK_EXECUTOR: "api" (default, the Anthropic SDK, metered) or
- * "claude-cli" (`claude -p` on the owner's subscription). Both backends return the
- * same ExecutorResult and log the same `model_call` event (plus `backend`).
+ * Run a system + user prompt through the configured backend chain (`SNESTACK_EXECUTOR`,
+ * e.g. `"agy-cli>fail"` or `"agy-cli>claude-cli>claude-api>fail"`) and return its raw text output.
  *
- * Every call — success or failure — is recorded to the active run log (see
- * core/runLog.ts) with the model, token usage, latency and stop reason, so a
- * truncated or failed call is visible without re-running anything.
+ * Supported backends:
+ * - `"agy-cli"`: Antigravity CLI (`agy -p`) on the owner's Google AI Pro / Ultra subscription.
+ * - `"claude-cli"`: Claude Code CLI (`claude -p`) on the owner's Claude subscription.
+ * - `"api"` (`"claude-api"`): Metered Anthropic SDK (`@anthropic-ai/sdk`).
+ *
+ * Every call — success or failure — is recorded to the active run log (see core/runLog.ts)
+ * with backend, model, token usage, latency, and stop reason. When a step fails with an
+ * `ExecutorError` and another backend follows in the chain, `executor_fallback` is logged
+ * and the next backend runs; when the chain ends (`>fail`), the error is rethrown cleanly.
  */
 export async function runPrompt(
   apiKey: string,
@@ -47,18 +55,46 @@ export async function runPrompt(
   opts: RunPromptOptions = {}
 ): Promise<ExecutorResult> {
   const config = getConfig();
-  if (config.getExecutorBackend() !== "claude-cli") return runPromptApi(apiKey, systemPrompt, userPrompt, opts);
-  try {
-    return await runPromptCli(systemPrompt, userPrompt, opts);
-  } catch (e) {
-    if (!(e instanceof ExecutorError) || !config.isApiFallbackEnabled()) throw e;
-    // Fall back to the metered API, but never silently: warn, log an executor_fallback event, and tag the
-    // model_call so run.json / run-check / the finalize line all show that this run spent real money.
-    const reason = `[${e.code}] ${e.message}`.slice(0, 300);
-    logger.warn(`claude-cli failed, falling back to the metered API: ${reason}`);
-    logRunEvent("executor_fallback", { label: opts.label ?? null, from: "claude-cli", to: "api", reason, error_code: e.code });
-    return runPromptApi(apiKey || config.getClaudeApiKey(), systemPrompt, userPrompt, { ...opts, fallbackFrom: `claude-cli:${e.code}` });
+  const chain = config.getExecutorChain();
+  let fallbackFrom = opts.fallbackFrom;
+
+  for (let i = 0; i < chain.length; i++) {
+    const backend = chain[i];
+    const stepOpts: RunPromptOptions = fallbackFrom ? { ...opts, fallbackFrom } : opts;
+    try {
+      if (backend === "agy-cli") {
+        return await runPromptAgy(systemPrompt, userPrompt, stepOpts);
+      }
+      if (backend === "claude-cli") {
+        return await runPromptCli(systemPrompt, userPrompt, stepOpts);
+      }
+      const resolvedKey = i === 0 && apiKey ? apiKey : apiKey || config.getClaudeApiKey();
+      return await runPromptApi(resolvedKey, systemPrompt, userPrompt, stepOpts);
+    } catch (e) {
+      if (!(e instanceof ExecutorError) || i + 1 >= chain.length) {
+        if (e instanceof ExecutorError) {
+          logger.warn(
+            `executor chain stopped at ${backend} (${config.getExecutorChainDisplay()}): [${e.code}] ${e.message}`.slice(0, 360)
+          );
+        }
+        throw e;
+      }
+      const next = chain[i + 1];
+      const reason = `[${e.code}] ${e.message}`.slice(0, 300);
+      const nextDesc = next === "api" ? "the metered API" : next;
+      logger.warn(`${backend} failed, falling back to ${nextDesc}: ${reason}`);
+      logRunEvent("executor_fallback", {
+        label: opts.label ?? null,
+        from: backend,
+        to: next,
+        billing: next === "api" ? "metered" : "subscription",
+        reason,
+        error_code: e.code,
+      });
+      fallbackFrom = `${backend}:${e.code}`;
+    }
   }
+  throw new ExecutorError("Empty executor chain", "misconfigured_auth");
 }
 
 /** The pay-per-token backend (the original implementation, unchanged in behavior). */
@@ -121,26 +157,59 @@ export async function runPromptApi(
     latency_ms: latencyMs,
   });
 
-  return { output, stopReason, outputTokensUsed, inputTokensUsed, model, latencyMs };
+  return {
+    output,
+    stopReason,
+    outputTokensUsed,
+    inputTokensUsed,
+    model,
+    latencyMs,
+    backend: "api",
+    ...(fallbackFrom ? { fallbackFrom } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
-// claude-cli backend
+// Shared CLI subprocess helpers
 // ---------------------------------------------------------------------------
 
 const DEFAULT_CLI_TIMEOUT_MS = 300_000;
 /** Env vars that would make `claude -p` bill the API instead of the subscription (an API key always wins in -p mode). */
 export const STRIPPED_ENV_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"] as const;
+/** Env vars that could route `agy` to a metered Gemini / AI Studio API key instead of Google AI Pro / Ultra OAuth. */
+export const AGY_STRIPPED_ENV_VARS = ["GEMINI_API_KEY", "GOOGLE_API_KEY"] as const;
 
-/** Child environment for the CLI: the parent's, minus anything that would switch billing to the metered API. */
+/** Child environment for `claude`: the parent's, minus anything that would switch billing to the metered API. */
 export function buildCliEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env = { ...base };
   for (const k of STRIPPED_ENV_VARS) delete env[k];
   return env;
 }
 
+/**
+ * Child environment for `agy`: strips Gemini/Google API keys so `agy` only uses cached
+ * Google AI Pro / Ultra OAuth credentials, and ensures `$HOME/.local/bin` (the default
+ * `install.sh` target) is on `PATH` for minimal cron environments.
+ */
+export function buildAgyEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...base };
+  for (const k of AGY_STRIPPED_ENV_VARS) delete env[k];
+  if (env.HOME) {
+    const localBin = path.join(env.HOME, ".local", "bin");
+    const parts = (env.PATH ?? "").split(path.delimiter).filter(Boolean);
+    if (!parts.includes(localBin)) {
+      env.PATH = [...parts, localBin].join(path.delimiter);
+    }
+  }
+  return env;
+}
+
 export function cliBinary(): string {
   return process.env.SNESTACK_CLAUDE_BIN || "claude";
+}
+
+export function agyBinary(): string {
+  return process.env.SNESTACK_AGY_BIN || "agy";
 }
 
 interface CliRun {
@@ -150,9 +219,17 @@ interface CliRun {
   timedOut: boolean;
 }
 
-function spawnCli(args: string[], stdin: string, cwd: string, timeoutMs: number): Promise<CliRun> {
+function spawnSubprocess(
+  bin: string,
+  missingMsg: string,
+  args: string[],
+  stdin: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number
+): Promise<CliRun> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cliBinary(), args, { cwd, env: buildCliEnv(), stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(bin, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -165,8 +242,10 @@ function spawnCli(args: string[], stdin: string, cwd: string, timeoutMs: number)
     child.on("error", (err: NodeJS.ErrnoException) => {
       clearTimeout(timer);
       if (err.code === "ENOENT") {
-        reject(new ExecutorError(`claude CLI not found (${cliBinary()}); install Claude Code or set SNESTACK_CLAUDE_BIN`, "cli_missing"));
-      } else reject(err);
+        reject(new ExecutorError(missingMsg, "cli_missing"));
+      } else {
+        reject(new ExecutorError(`${bin} spawn failed (${err.code ?? "ERR"}): ${err.message}`, "cli_failed"));
+      }
     });
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -177,8 +256,9 @@ function spawnCli(args: string[], stdin: string, cwd: string, timeoutMs: number)
   });
 }
 
-const USAGE_LIMIT_RE = /usage limit|rate limit|limit reached|too many requests|\b429\b|quota/i;
-const LOGIN_RE = /login expired|not logged in|please run \/login|invalid (api key|token|credentials)|authentication|unauthorized|\b401\b/i;
+const USAGE_LIMIT_RE = /usage limit|rate limit|limit reached|too many requests|\b429\b|quota|resource_exhausted/i;
+const LOGIN_RE =
+  /login expired|not logged in|not authenticated|authentication required|please run (\/login|agy login)|agy login|sign in|invalid (api key|token|credentials)|authentication|unauthorized|\b401\b/i;
 
 /** Map a failed CLI result (message text) to a distinct error code. */
 export function classifyCliFailure(text: string): "usage_limit" | "login_expired" | "cli_failed" {
@@ -186,6 +266,287 @@ export function classifyCliFailure(text: string): "usage_limit" | "login_expired
   if (LOGIN_RE.test(text)) return "login_expired";
   return "cli_failed";
 }
+
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1B\[[0-?]*[ -/]*[@-~]/g;
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI_RE, "");
+}
+
+/**
+ * Extract a JSON object from CLI stdout. Handles clean JSON stdout as well as
+ * CLIs that print update/status lines before the final JSON object envelope.
+ */
+export function parseJsonEnvelope(rawStdout: string): Record<string, unknown> | null {
+  const cleaned = stripAnsi(rawStdout).trim();
+  if (!cleaned) return null;
+  try {
+    const direct = JSON.parse(cleaned);
+    if (direct && typeof direct === "object" && !Array.isArray(direct)) {
+      return direct as Record<string, unknown>;
+    }
+  } catch {
+    // Fall through: check if leading non-JSON lines preceded the JSON object.
+  }
+  const lines = cleaned.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const candidate = lines.slice(i).join("\n").trim();
+    if (!candidate.startsWith("{")) continue;
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // keep scanning upward for the opening `{` of a multi-line JSON object
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// agy-cli backend (Google Antigravity CLI on Google AI Pro / Ultra OAuth)
+// ---------------------------------------------------------------------------
+
+// One agy call at a time per process, avoiding rate-window bursts during ticker loops.
+let agyQueue: Promise<unknown> = Promise.resolve();
+function serializeAgy<T>(fn: () => Promise<T>): Promise<T> {
+  const next = agyQueue.then(fn, fn);
+  agyQueue = next.catch(() => undefined);
+  return next;
+}
+
+/**
+ * Verify that the environment can use cached Google AI Pro / Ultra OAuth credentials
+ * and isn't configured to force paid Gemini API key billing in `settings.json`.
+ */
+export function assertAgyAuth(env: NodeJS.ProcessEnv = process.env): void {
+  if (!env.HOME) {
+    throw new ExecutorError(
+      "agy-cli executor needs HOME set so `agy` can read your cached Google AI Pro/Ultra login (run `agy login`)",
+      "not_logged_in"
+    );
+  }
+  const settingsPath = path.join(env.HOME, ".gemini", "antigravity-cli", "settings.json");
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+      if (typeof settings.modelProvider === "string" && settings.modelProvider.trim().toLowerCase() === "gemini") {
+        throw new ExecutorError(
+          `${settingsPath} sets modelProvider="gemini" (paid API key mode); remove modelProvider so agy uses your Google AI Pro/Ultra OAuth login`,
+          "misconfigured_auth"
+        );
+      }
+    } catch (e) {
+      if (e instanceof ExecutorError) throw e;
+      // Ignore malformed settings.json here; let agy report its own config error if any.
+    }
+  }
+}
+
+/**
+ * Google Antigravity CLI subscription backend: runs `agy -p` in an isolated temp dir with
+ * `--sandbox` and `--disable-slash-commands`, Gemini/Google API keys stripped from child env,
+ * diagnostics isolated on stderr, and structured JSON (or clean text) parsed from stdout.
+ */
+export function runPromptAgy(
+  systemPrompt: string,
+  userPrompt: string,
+  { tier = "normal", maxTokens, label, fallbackFrom }: RunPromptOptions = {}
+): Promise<ExecutorResult> {
+  return serializeAgy(async () => {
+    const config = getConfig();
+    const configuredModel = config.getAgyModel(tier);
+    const modelLabel = configuredModel ?? "agy-default";
+    const fallbackFields = fallbackFrom ? { fallback_from: fallbackFrom } : {};
+    const started = Date.now();
+    const base = {
+      label: label ?? null,
+      tier,
+      model: modelLabel,
+      backend: "agy-cli",
+      billing: "subscription",
+      max_tokens: maxTokens ?? null,
+      ...fallbackFields,
+    };
+    const fail = (err: ExecutorError): never => {
+      logRunEvent("model_call", {
+        ...base,
+        latency_ms: Date.now() - started,
+        error: `[${err.code}] ${err.message}`.slice(0, 500),
+        error_code: err.code,
+      });
+      throw err;
+    };
+
+    try {
+      assertAgyAuth();
+    } catch (e) {
+      return fail(e as ExecutorError);
+    }
+
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-agy-"));
+    try {
+      const outputFormat = (process.env.SNESTACK_AGY_OUTPUT_FORMAT ?? "json").trim().toLowerCase();
+      const extra = (process.env.SNESTACK_AGY_EXTRA_ARGS ?? "").split(/\s+/).filter(Boolean);
+
+      // Keep -p argument well below OS ARG_MAX by piping large payloads over stdin.
+      const inlineSystem = systemPrompt.trim().length > 0 && systemPrompt.length <= 4000;
+      const promptArg = inlineSystem
+        ? systemPrompt
+        : "Follow the system instructions and respond to the user prompt provided on stdin.";
+      const stdinPayload = inlineSystem
+        ? userPrompt
+        : [systemPrompt.trim() ? `SYSTEM INSTRUCTIONS:\n${systemPrompt.trim()}\n` : "", userPrompt].filter(Boolean).join("\n");
+
+      const args = [
+        "-p",
+        promptArg,
+        ...(configuredModel ? ["--model", configuredModel] : []),
+        ...(outputFormat === "text" ? [] : ["--output-format", "json"]),
+        "--disable-slash-commands",
+        "--sandbox",
+        ...extra,
+      ];
+      const timeoutMs = Number(process.env[Config.CLI_TIMEOUT_MS]) || DEFAULT_CLI_TIMEOUT_MS;
+      const bin = agyBinary();
+
+      let run: CliRun;
+      try {
+        run = await spawnSubprocess(
+          bin,
+          `agy CLI not found (${bin}); install via 'curl -fsSL https://antigravity.google/cli/install.sh | bash' and run 'agy' once to sign in, or set SNESTACK_AGY_BIN`,
+          args,
+          stdinPayload,
+          workDir,
+          buildAgyEnv(),
+          timeoutMs
+        );
+      } catch (e) {
+        if (e instanceof ExecutorError) return fail(e);
+        throw e;
+      }
+      if (run.timedOut) return fail(new ExecutorError(`agy CLI timed out after ${timeoutMs}ms`, "timeout"));
+
+      const cleanStderr = stripAnsi(run.stderr).trim();
+
+      if (outputFormat === "text") {
+        const cleanStdout = stripAnsi(run.stdout);
+        if (run.code !== 0) {
+          const text = `${cleanStderr} ${cleanStdout}`.trim();
+          return fail(new ExecutorError(`agy CLI failed (exit ${run.code}): ${text.slice(0, 300)}`, classifyCliFailure(text)));
+        }
+        const output = cleanStdout.trim();
+        const latencyMs = Date.now() - started;
+        logRunEvent("model_call", {
+          ...base,
+          input_tokens: null,
+          output_tokens: null,
+          stop_reason: "end_turn",
+          truncated: false,
+          empty_output: output.length === 0,
+          latency_ms: latencyMs,
+          est_cost_usd: 0,
+          api_equivalent_usd: null,
+        });
+        return {
+          output,
+          stopReason: "end_turn",
+          outputTokensUsed: null,
+          inputTokensUsed: null,
+          model: modelLabel,
+          latencyMs,
+          backend: "agy-cli",
+          ...(fallbackFrom ? { fallbackFrom } : {}),
+        };
+      }
+
+      const parsed = parseJsonEnvelope(run.stdout);
+      const statusStr = typeof parsed?.status === "string" ? parsed.status.toUpperCase() : null;
+      const statusFailed = statusStr !== null && !["SUCCESS", "OK", "DONE", "COMPLETED"].includes(statusStr);
+      const hasErrorField = typeof parsed?.error === "string" && parsed.error.trim().length > 0;
+
+      if (run.code !== 0 || parsed?.is_error === true || statusFailed || hasErrorField) {
+        const errDetail = [
+          typeof parsed?.error === "string" ? parsed.error : "",
+          typeof parsed?.response === "string" ? parsed.response : "",
+          typeof parsed?.result === "string" ? parsed.result : "",
+          cleanStderr,
+          parsed ? "" : stripAnsi(run.stdout).trim(),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+        return fail(new ExecutorError(`agy CLI failed (exit ${run.code}): ${errDetail.slice(0, 300)}`, classifyCliFailure(errDetail)));
+      }
+      if (!parsed) {
+        return fail(new ExecutorError("agy CLI returned non-JSON output on stdout", "bad_output"));
+      }
+
+      const output =
+        typeof parsed.response === "string"
+          ? parsed.response
+          : typeof parsed.result === "string"
+            ? parsed.result
+            : "";
+      const usage = (parsed.usage ?? {}) as Record<string, unknown>;
+      const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
+      // agy reports input_tokens + cache_read_tokens; accept Claude-style cache_* keys too if present.
+      const inputParts = [
+        usage.input_tokens,
+        usage.cache_read_tokens,
+        usage.cache_creation_input_tokens,
+        usage.cache_read_input_tokens,
+      ].map(num);
+      const inputTokensUsed = inputParts.some((v) => v != null) ? inputParts.reduce<number>((a, v) => a + (v ?? 0), 0) : null;
+      const outputTokensUsed = num(usage.output_tokens);
+      const reportedModel = typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : modelLabel;
+      const stopReason =
+        typeof parsed.stop_reason === "string"
+          ? parsed.stop_reason
+          : typeof parsed.status === "string"
+            ? parsed.status
+            : null;
+      const durationSec = num(parsed.duration_seconds);
+      const latencyMs =
+        durationSec != null ? Math.round(durationSec * 1000) : (num(parsed.duration_ms) ?? Date.now() - started);
+      const apiEquivalent =
+        inputTokensUsed != null && outputTokensUsed != null
+          ? estimateCostUsd(reportedModel, inputTokensUsed, outputTokensUsed)
+          : null;
+
+      logRunEvent("model_call", {
+        ...base,
+        model: reportedModel,
+        input_tokens: inputTokensUsed,
+        output_tokens: outputTokensUsed,
+        stop_reason: stopReason,
+        truncated: stopReason === "max_tokens",
+        empty_output: output.length === 0,
+        latency_ms: latencyMs,
+        est_cost_usd: 0,
+        api_equivalent_usd: apiEquivalent,
+      });
+
+      return {
+        output,
+        stopReason,
+        outputTokensUsed,
+        inputTokensUsed,
+        model: reportedModel,
+        latencyMs,
+        backend: "agy-cli",
+        ...(fallbackFrom ? { fallbackFrom } : {}),
+      };
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// claude-cli backend
+// ---------------------------------------------------------------------------
 
 // One CLI call at a time per process, so a per-ticker loop never bursts the plan's rate window.
 let cliQueue: Promise<unknown> = Promise.resolve();
@@ -209,15 +570,29 @@ export function assertCliAuth(env: NodeJS.ProcessEnv = process.env): void {
 export function runPromptCli(
   systemPrompt: string,
   userPrompt: string,
-  { tier = "normal", maxTokens, label }: RunPromptOptions = {}
+  { tier = "normal", maxTokens, label, fallbackFrom }: RunPromptOptions = {}
 ): Promise<ExecutorResult> {
   return serialize(async () => {
     const config = getConfig();
     const model = config.getCliModel(tier);
+    const fallbackFields = fallbackFrom ? { fallback_from: fallbackFrom } : {};
     const started = Date.now();
-    const base = { label: label ?? null, tier, model, backend: "claude-cli", billing: "subscription", max_tokens: maxTokens ?? null };
+    const base = {
+      label: label ?? null,
+      tier,
+      model,
+      backend: "claude-cli",
+      billing: "subscription",
+      max_tokens: maxTokens ?? null,
+      ...fallbackFields,
+    };
     const fail = (err: ExecutorError): never => {
-      logRunEvent("model_call", { ...base, latency_ms: Date.now() - started, error: `[${err.code}] ${err.message}`.slice(0, 500), error_code: err.code });
+      logRunEvent("model_call", {
+        ...base,
+        latency_ms: Date.now() - started,
+        error: `[${err.code}] ${err.message}`.slice(0, 500),
+        error_code: err.code,
+      });
       throw err;
     };
 
@@ -235,26 +610,29 @@ export function runPromptCli(
       // Do NOT add --bare: it ignores subscription OAuth credentials.
       const args = ["-p", "--model", model, "--output-format", "json", "--tools", "", "--system-prompt-file", sysFile, ...extra];
       const timeoutMs = Number(process.env[Config.CLI_TIMEOUT_MS]) || DEFAULT_CLI_TIMEOUT_MS;
+      const bin = cliBinary();
 
       let run: CliRun;
       try {
-        run = await spawnCli(args, userPrompt, workDir, timeoutMs);
+        run = await spawnSubprocess(
+          bin,
+          `claude CLI not found (${bin}); install Claude Code or set SNESTACK_CLAUDE_BIN`,
+          args,
+          userPrompt,
+          workDir,
+          buildCliEnv(),
+          timeoutMs
+        );
       } catch (e) {
         if (e instanceof ExecutorError) return fail(e);
         throw e;
       }
       if (run.timedOut) return fail(new ExecutorError(`claude CLI timed out after ${timeoutMs}ms`, "timeout"));
 
-      let parsed: Record<string, unknown> | null = null;
-      try {
-        const p = JSON.parse(run.stdout);
-        if (p && typeof p === "object" && !Array.isArray(p)) parsed = p as Record<string, unknown>;
-      } catch {
-        // handled below
-      }
+      const parsed = parseJsonEnvelope(run.stdout);
 
       if (run.code !== 0 || parsed?.is_error === true) {
-        const text = `${typeof parsed?.result === "string" ? parsed.result : ""} ${run.stderr} ${parsed ? "" : run.stdout}`.trim();
+        const text = `${typeof parsed?.result === "string" ? parsed.result : ""} ${stripAnsi(run.stderr)} ${parsed ? "" : stripAnsi(run.stdout)}`.trim();
         return fail(new ExecutorError(`claude CLI failed (exit ${run.code}): ${text.slice(0, 300)}`, classifyCliFailure(text)));
       }
       if (!parsed) return fail(new ExecutorError("claude CLI returned non-JSON output", "bad_output"));
@@ -283,7 +661,16 @@ export function runPromptCli(
         est_cost_usd: 0,
         api_equivalent_usd: apiEquivalent,
       });
-      return { output, stopReason, outputTokensUsed, inputTokensUsed, model, latencyMs };
+      return {
+        output,
+        stopReason,
+        outputTokensUsed,
+        inputTokensUsed,
+        model,
+        latencyMs,
+        backend: "claude-cli",
+        ...(fallbackFrom ? { fallbackFrom } : {}),
+      };
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }

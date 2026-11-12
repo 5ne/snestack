@@ -17,7 +17,7 @@ import type { ProposalFile } from "./featureRequests";
 export const MAX_AUTO_APPROVALS_PER_RUN = 2;
 
 const RISK_WORDS =
-  /skills\/|\bskill\b|executor|\bcron\b|crontab|scripts\/|\.env\b|secret|token|api[ -]?key|password|credential|verdict|\b(buy|sell|trim|trade|trading|position|portfolio)\b|\bgate\b|prompt|brain|delete|migrat|database|supabase|postgres|auth|email|notify|claude-cli|launchd|permission/i;
+  /skills\/|\bskill\b|executor|\bcron\b|crontab|scripts\/|\.env\b|secret|token|api[ -]?key|password|credential|verdict|\b(buy|sell|trim|trade|trading|position|portfolio)\b|\bgate\b|prompt|brain|delete|migrat|database|supabase|postgres|auth|email|notify|claude-cli|agy-cli|\bagy\b|launchd|permission/i;
 
 export interface AutoApproveDecision {
   ok: boolean;
