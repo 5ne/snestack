@@ -22,10 +22,12 @@ describe("buildSignalsFromDir", () => {
 
   it("builds signals with the skill prefix, confidence and reasoning", async () => {
     write("INTU-long-term-quality.md", "text\nVERDICT: BUY | 0.6 | Cheap with a 40% FCF margin.\n");
+    write("INTU-buffett-value.md", "text\nVERDICT: HOLD | 0.75 | Wide moat, wait for 0.85x fair value.\n");
     write("MSFT-swing-trading-large-cap.md", "text\nVERDICT: SELL | 0.65 | RSI 73.85 is overbought.\n");
     const r = buildSignalsFromDir(dir);
     expect(r.errors).toEqual([]);
     expect(r.signals).toEqual([
+      { ticker: "INTU", recommendation: "HOLD", confidence: 0.75, reasoning: "[Buffett] Wide moat, wait for 0.85x fair value.", fromWatchlist: false },
       { ticker: "INTU", recommendation: "BUY", confidence: 0.6, reasoning: "[Long-term] Cheap with a 40% FCF margin.", fromWatchlist: false },
       { ticker: "MSFT", recommendation: "SELL", confidence: 0.65, reasoning: "[Swing] RSI 73.85 is overbought.", fromWatchlist: false },
     ]);
@@ -95,6 +97,7 @@ describe("buildSignalsFromDir", () => {
 
       write("AAPL-long-term-quality.md", "VERDICT: HOLD | 0.7 | Intact ecosystem moat.");
       write("GOOG-long-term-quality.md", "VERDICT: BUY | 0.75 | Wide moat at a discount.");
+      write("GOOG-buffett-value.md", "VERDICT: BUY | 0.8 | Exemplary allocator at 0.86x fair value.");
       write("MSFT-long-term-quality.md", "VERDICT: HOLD | 0.65 | Enterprise cloud durability.");
       write("GOOG-swing-trading-large-cap.md", "VERDICT: BUY | 0.8 | RSI oversold bounce.");
 
@@ -106,9 +109,10 @@ describe("buildSignalsFromDir", () => {
 
       // Covered ticker is untouched
       expect(byKey["AAPL:[Long-term]"]).toBe("[Long-term] Intact ecosystem moat.");
-      // Empty-thesis and missing-file tickers on long-term-quality get [no thesis on file] + Buffett research prompt
+      // Empty-thesis and missing-file tickers on long-term-quality and buffett-value get [no thesis on file] + Buffett research prompt
       expect(byKey["GOOG:[Long-term]"]).toContain(`[Long-term] ${NO_THESIS_TAG} Wide moat at a discount.`);
       expect(byKey["GOOG:[Long-term]"]).toContain("Buffett research needed: research GOOG across the 5 Buffett owner pillars");
+      expect(byKey["GOOG:[Buffett]"]).toContain(`[Buffett] ${NO_THESIS_TAG} Exemplary allocator at 0.86x fair value.`);
       expect(byKey["MSFT:[Long-term]"]).toContain(`[Long-term] ${NO_THESIS_TAG} Enterprise cloud durability.`);
       // Swing signal is never tagged for long-term thesis absence
       expect(byKey["GOOG:[Swing]"]).toBe("[Swing] RSI oversold bounce.");
@@ -159,10 +163,23 @@ describe("filterUnchangedSignals", () => {
     expect(changed).toHaveLength(1);
   });
 
-  it("does not compare across strategies — a matching long-term call doesn't suppress a swing one", async () => {
+  it("does not compare across strategies — a matching long-term call doesn't suppress a swing or Buffett one", async () => {
     await db.addSignal("MSFT", "2026-10-12T07:00:00.000Z", "SELL", 0.8, "[Long-term] thesis broke");
-    const { changed } = await filterUnchangedSignals(db, [swing("MSFT", "SELL")]);
-    expect(changed).toHaveLength(1);
+    const buffettSell: BuiltSignal = {
+      ticker: "MSFT",
+      recommendation: "SELL",
+      confidence: 0.8,
+      reasoning: "[Buffett] extreme valuation detachment",
+      fromWatchlist: false,
+    };
+    const { changed } = await filterUnchangedSignals(db, [swing("MSFT", "SELL"), buffettSell]);
+    expect(changed).toHaveLength(2);
+
+    // Once [Buffett] SELL is recorded, an unchanged [Buffett] SELL IS suppressed
+    await db.addSignal("MSFT", "2026-10-12T08:00:00.000Z", "SELL", 0.8, "[Buffett] extreme valuation detachment");
+    const after = await filterUnchangedSignals(db, [buffettSell]);
+    expect(after.changed).toEqual([]);
+    expect(after.unchanged).toHaveLength(1);
   });
 
   it("filters independently per ticker", async () => {

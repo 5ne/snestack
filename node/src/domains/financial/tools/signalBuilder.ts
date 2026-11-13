@@ -23,7 +23,7 @@ export interface BuildResult {
 }
 
 /** The strategy prefixes buildSignalsFromDir bakes into `reasoning` (see SKILL_PREFIX below). */
-const KNOWN_PREFIXES = ["[Long-term]", "[Swing]"];
+const KNOWN_PREFIXES = ["[Long-term]", "[Swing]", "[Buffett]"];
 
 /**
  * Drops any signal whose recommendation matches the last one recorded in `signals` for
@@ -58,8 +58,9 @@ export async function filterUnchangedSignals(
 const SKILL_PREFIX: Record<string, string> = {
   "long-term-quality": "[Long-term]",
   "swing-trading-large-cap": "[Swing]",
+  "buffett-value": "[Buffett]",
 };
-const FILE_RE = /^([A-Za-z0-9.\-]+?)-(long-term-quality|swing-trading-large-cap)\.md$/;
+const FILE_RE = /^([A-Za-z0-9.\-]+?)-(long-term-quality|swing-trading-large-cap|buffett-value)\.md$/;
 
 export interface EvaluatedVerdict {
   ticker: string;
@@ -156,7 +157,7 @@ export function buildSignalsFromDir(dir: string, opts?: { brainRoot?: string }):
     }
     const missingThesis =
       checkBrain &&
-      skill === "long-term-quality" &&
+      (skill === "long-term-quality" || skill === "buffett-value") &&
       !inspectTickerThesis(opts!.brainRoot!, upperTicker).hasThesis;
     const reasoning = missingThesis
       ? `${SKILL_PREFIX[skill]} ${NO_THESIS_TAG} ${verdict.reasoning} — Buffett research needed: ${buffettResearchBrief(upperTicker)}.`

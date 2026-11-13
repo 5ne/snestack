@@ -24,17 +24,19 @@
 # failure is visible. The run is staged under node/logs/runs/ and published to Google
 # Drive (financial/signals/<date>/) when it finishes.
 #
-# Usage: daily-analysis.sh [--dry-run] [--tickers INTU,GOOG]
+# Usage: daily-analysis.sh [--dry-run] [--tickers INTU,GOOG] [--skills long-term-quality,buffett-value]
 #   --dry-run  run everything but email nothing and record no signals; output goes to
 #              <date>-dryrun/. Defaults to the first two tickers unless --tickers is given.
 set -euo pipefail
 
 DRY_RUN=0
 ONLY_TICKERS=""
+SKILLS="long-term-quality,buffett-value"
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --tickers) ONLY_TICKERS="${2:-}"; shift ;;
+    --skills) SKILLS="${2:-}"; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -106,23 +108,26 @@ if [ -z "$TICKERS" ]; then
   exit 0
 fi
 
-# Step 2: run the long-term-quality skill for every ticker. Each call is its own Claude judgment.
-SKILL=long-term-quality
-while IFS= read -r TICKER; do
-  echo "Analyzing $TICKER..."
-  OUT="$RUN_DIR/$TICKER-$SKILL.md"
-  ERR="$RUN_DIR/$TICKER-$SKILL.log"
-  # run-skill writes and verifies its own output file; exit 5 means the model answered but the file
-  # didn't hold it, which is worth one retry.
-  for ATTEMPT in 1 2; do
-    rc=0
-    RL_ERR_FILE="$ERR" rl_step "run-skill:$SKILL" "$TICKER" \
-      node dist/cli.js run-skill financial "$SKILL" "$TICKER" --gated --out "$OUT.tmp" 2> "$ERR" || rc=$?
-    [ "$rc" -ne 5 ] && break
-  done
-  # Keep the write-up if it succeeded or was merely cut off; drop it on failure or when the gate skipped the call.
-  if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then mv "$OUT.tmp" "$OUT"; else rm -f "$OUT.tmp" "$OUT"; fi
-done <<< "$TICKERS"
+# Step 2: run each configured nightly strategy skill (long-term-quality and buffett-value by default)
+# independently for every ticker. Each call has its own gate and its own Claude judgment.
+SKILL_LIST="$(echo "$SKILLS" | tr ',' '\n' | sed '/^$/d')"
+while IFS= read -r SKILL; do
+  while IFS= read -r TICKER; do
+    echo "Analyzing $TICKER ($SKILL)..."
+    OUT="$RUN_DIR/$TICKER-$SKILL.md"
+    ERR="$RUN_DIR/$TICKER-$SKILL.log"
+    # run-skill writes and verifies its own output file; exit 5 means the model answered but the file
+    # didn't hold it, which is worth one retry.
+    for ATTEMPT in 1 2; do
+      rc=0
+      RL_ERR_FILE="$ERR" rl_step "run-skill:$SKILL" "$TICKER" \
+        node dist/cli.js run-skill financial "$SKILL" "$TICKER" --gated --out "$OUT.tmp" 2> "$ERR" || rc=$?
+      [ "$rc" -ne 5 ] && break
+    done
+    # Keep the write-up if it succeeded or was merely cut off; drop it on failure or when the gate skipped the call.
+    if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then mv "$OUT.tmp" "$OUT"; else rm -f "$OUT.tmp" "$OUT"; fi
+  done <<< "$TICKERS"
+done <<< "$SKILL_LIST"
 
 # Step 3: build the signals array from each write-up's VERDICT line (deterministic, no model call).
 # A write-up without a valid verdict is reported as an error but doesn't block the valid ones.
