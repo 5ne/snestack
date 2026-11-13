@@ -1,7 +1,7 @@
 ---
 name: swing-trading-large-cap
 domain: financial
-requires: [quote, fundamentals, brain]
+requires: [quote, fundamentals, brain, data-quality]
 model: normal
 references: [quality-bar]
 # Only worth a call when RSI is at an extreme — in between, the answer is always "no action".
@@ -34,7 +34,7 @@ If a ticker fails this filter, stop here — it doesn't get a swing trade recomm
 
 ## Judgment process (for names that pass the filter)
 
-1. Confirm eligibility (above) using the ticker's brain file and latest fundamentals.
+1. Confirm eligibility (above) using the ticker's brain file and latest fundamentals (and cite any pre-computed `DATA-QUALITY` flag rather than re-deriving source mismatches).
 2. Check RSI-14 (`QuoteAgent`): buy signal when oversold (under the threshold in `quality-bar.md`, draft ~30), sell/trim signal when overbought (over the threshold, draft ~70). This step is deliberately mechanical and short-horizon — don't re-litigate the fundamental case each time, that's the other skill's job.
 3. Size the trade separately from any long-term core position in the same name (see the gap noted below — the database doesn't yet support this distinction).
 4. Exit discipline: a swing position is meant to close on the reversion (RSI crossing back through neutral), not sit indefinitely. If it's still open after some reasonable window, flag it for reassessment rather than letting it drift into a de-facto long-term hold — exact window still TBD with the user.

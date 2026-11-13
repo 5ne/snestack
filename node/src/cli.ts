@@ -32,6 +32,7 @@ import { financialRunExpectations, financialRunStatsTargets } from "./domains/fi
 import { computeRunStats, formatRunStats } from "./core/runStats";
 import { runDataRefresh, DATA_REFRESH_TIERS, type DataRefreshTier } from "./domains/financial/dataRefresh";
 import { equityDataFromCache } from "./domains/financial/fundamentalsCache";
+import { computeTickerDataQuality, loadDataQualityTolerances } from "./domains/financial/dataQuality";
 import type { Signal } from "./core/models";
 import { getDomainConfig } from "./core/domainRegistry";
 import {
@@ -307,10 +308,16 @@ program
         return;
       }
 
+      const tolerances = loadDataQualityTolerances();
+      const now = new Date();
       const output = await Promise.all(allTickers.map(async (ticker) => {
         const pos = positionsByTicker[ticker];
         const watch = watchlistByTicker[ticker];
-        const fundRow = await db.getLatestFundamentals(ticker, "morningstar");
+        const [morningstarRow, finnhubRow, quote] = await Promise.all([
+          db.getLatestFundamentals(ticker, "morningstar"),
+          db.getLatestFundamentals(ticker, "finnhub"),
+          db.getLatestQuote(ticker),
+        ]);
         return {
           ticker,
           isPosition: !!pos,
@@ -319,8 +326,17 @@ program
           shares: pos?.shares ?? null,
           costBasis: pos?.cost_basis ?? null,
           watchlistThesis: watch?.thesis ?? null,
-          quote: (await db.getLatestQuote(ticker)) ?? null,
-          equity: fundRow ? equityDataFromCache(fundRow) : null,
+          quote: quote ?? null,
+          equity: morningstarRow ? equityDataFromCache(morningstarRow) : null,
+          data_quality: computeTickerDataQuality({
+            ticker,
+            finnhub: finnhubRow,
+            morningstar: morningstarRow,
+            quote,
+            position: pos,
+            tolerances,
+            now,
+          }),
         };
       }));
 
