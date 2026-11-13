@@ -433,5 +433,41 @@ describe("Db", () => {
     it("requires SNESTACK_DATABASE_URL when no pool is injected", async () => {
       await expect(Db.open(undefined)).rejects.toThrow(/SNESTACK_DATABASE_URL/);
     });
+
+    it("retries transient EMAXCONNSESSION errors on open and succeeds", async () => {
+      let calls = 0;
+      const pool = {
+        query: jest.fn(async () => {
+          calls++;
+          if (calls <= 2) {
+            const err = new Error("max clients reached in session mode - max clients are limited to pool_size: 15") as Error & { code?: string };
+            err.code = "EMAXCONNSESSION";
+            throw err;
+          }
+          return { rows: [], rowCount: 0 };
+        }),
+        end: jest.fn().mockResolvedValue(undefined),
+      };
+      const db = await Db.open(undefined, { pool, enableRls: false, retryDelaysMs: [1, 1] });
+      expect(db).toBeInstanceOf(Db);
+      expect(calls).toBe(4); // 2 failed SELECT 1 + 1 succeeded SELECT 1 + 1 SCHEMA
+      expect(pool.end).not.toHaveBeenCalled();
+    });
+
+    it("fails with DatabaseError after exhausting EMAXCONNSESSION retries", async () => {
+      const pool = {
+        query: jest.fn(async () => {
+          const err = new Error("(EMAXCONNSESSION) max clients reached in session mode") as Error & { code?: string };
+          err.code = "EMAXCONNSESSION";
+          throw err;
+        }),
+        end: jest.fn().mockResolvedValue(undefined),
+      };
+      const err = await Db.open(undefined, { pool, enableRls: false, retryDelaysMs: [1, 1] }).catch((e) => e);
+      expect(err.name).toBe("DatabaseError");
+      expect(err.message).toContain("EMAXCONNSESSION");
+      expect(pool.query).toHaveBeenCalledTimes(3);
+      expect(pool.end).toHaveBeenCalledTimes(1);
+    });
   });
 });

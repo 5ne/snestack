@@ -83,6 +83,17 @@ export interface DbOpenOptions {
   pool?: PgPoolLike;
   /** Enable row level security on every table (Supabase exposes `public` via PostgREST). Default true; pg-mem can't run it. */
   enableRls?: boolean;
+  /** Backoff delays (ms) when retrying transient EMAXCONNSESSION errors on open. */
+  retryDelaysMs?: number[];
+}
+
+const DEFAULT_OPEN_RETRY_DELAYS_MS = [250, 500, 1000];
+
+function isMaxSessionError(e: unknown): boolean {
+  const code = (e as { code?: unknown })?.code;
+  if (code === "EMAXCONNSESSION") return true;
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.includes("EMAXCONNSESSION") || msg.includes("max clients reached in session mode");
 }
 
 /** SQLSTATE class 22 (data exception) / 23 (integrity constraint) — the write was rejected, the db is fine. */
@@ -193,7 +204,7 @@ export class Db {
       const { Pool, types } = require("pg") as typeof import("pg");
       pool = new Pool({
         connectionString,
-        max: 3,
+        max: 1,
         connectionTimeoutMillis: 10_000,
         // Supabase requires TLS; its pooler certs don't chain to a public CA bundle.
         ssl: { rejectUnauthorized: false },
@@ -203,17 +214,24 @@ export class Db {
       } as import("pg").PoolConfig) as unknown as PgPoolLike;
     }
     const db = new Db(pool);
-    try {
-      await pool.query("SELECT 1");
-      await pool.query(SCHEMA);
-      if (opts.enableRls ?? !opts.pool) {
-        for (const t of TABLES) await pool.query(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`);
+    const retryDelays = opts.retryDelaysMs ?? DEFAULT_OPEN_RETRY_DELAYS_MS;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await pool.query("SELECT 1");
+        await pool.query(SCHEMA);
+        if (opts.enableRls ?? !opts.pool) {
+          for (const t of TABLES) await pool.query(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`);
+        }
+        return db;
+      } catch (e) {
+        if (isMaxSessionError(e) && attempt < retryDelays.length) {
+          await new Promise((r) => setTimeout(r, retryDelays[attempt]));
+          continue;
+        }
+        await pool.end().catch(() => undefined);
+        throw new DatabaseError(`Failed to open database (is Supabase reachable? see node/README.md): ${scrub(e)}`);
       }
-    } catch (e) {
-      await pool.end().catch(() => undefined);
-      throw new DatabaseError(`Failed to open database (is Supabase reachable? see node/README.md): ${scrub(e)}`);
     }
-    return db;
   }
 
   /** Run an arbitrary query (migration, tests). */
