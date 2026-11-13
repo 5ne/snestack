@@ -51,3 +51,9 @@ _to_delete/
 # not in the repo. Referenced by config (see SNESTACK_DATABASE_PATH), not committed.
 brain/
 reports/
+
+# Unison workspace credentials
+.unison.json
+
+# Agent worktrees
+.claude/worktrees/
