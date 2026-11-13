@@ -27,6 +27,7 @@ import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
 import { resolveTickerUniverse, loadCacheAgeGetters } from "./domains/financial/cliHelpers";
+import { checkThesisCoverageFindings } from "./domains/financial/thesisCoverage";
 import { financialRunExpectations, financialRunStatsTargets } from "./domains/financial/runExpectations";
 import { computeRunStats, formatRunStats } from "./core/runStats";
 import { runDataRefresh, DATA_REFRESH_TIERS, type DataRefreshTier } from "./domains/financial/dataRefresh";
@@ -1013,7 +1014,9 @@ program
       const db = await Db.open(config.getDatabaseUrl());
       try {
         const tickers = await resolveTickerUniverse(db);
-        findings.push(...checkCacheStaleness({ now: new Date(), tickers, ...(await loadCacheAgeGetters(db, tickers)) }));
+        const checkNow = new Date();
+        findings.push(...checkCacheStaleness({ now: checkNow, tickers, ...(await loadCacheAgeGetters(db, tickers)) }));
+        findings.push(...checkThesisCoverageFindings({ now: checkNow, brainRoot, tickers }));
       } finally {
         await db.close();
       }

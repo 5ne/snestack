@@ -1,5 +1,4 @@
 import * as fs from "fs";
-import * as path from "path";
 import { getConfig } from "../../core/config";
 import { Db } from "../../core/db";
 import { getLogger } from "../../core/logger";
@@ -8,6 +7,8 @@ import type { ContextToolMap } from "../../core/contextTools";
 import { QuoteAgent } from "./agents/quoteAgent";
 import { EquityAgent } from "./agents/equityAgent";
 import { quoteDataFromCache, equityDataFromCache } from "./fundamentalsCache";
+import { resolveTickerUniverse } from "./cliHelpers";
+import { companyBrainPath, evaluateThesisCoverage } from "./thesisCoverage";
 
 const logger = getLogger("financial/contextTools");
 
@@ -81,15 +82,29 @@ export const contextTools: ContextToolMap = {
 
   brain: async (subject) => {
     const brainRoot = getConfig().getBrainRoot();
-    const file = path.join(
-      brainRoot,
-      "financial",
-      "brain",
-      "investing",
-      "public",
-      "companies",
-      `${subject.toUpperCase()}.md`
-    );
+    const file = companyBrainPath(brainRoot, subject);
     return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  },
+
+  "thesis-coverage": async (subject) => {
+    const config = getConfig();
+    const brainRoot = config.getBrainRoot();
+    const trimmed = subject.trim();
+    const isFullUniverse = trimmed === "" || trimmed === "*" || trimmed.toLowerCase() === "all";
+    if (!isFullUniverse) {
+      const explicitTickers = trimmed
+        .split(",")
+        .map((t) => t.trim().toUpperCase())
+        .filter(Boolean);
+      return evaluateThesisCoverage(brainRoot, explicitTickers);
+    }
+
+    const db = await Db.open(config.getDatabaseUrl());
+    try {
+      const tickers = await resolveTickerUniverse(db);
+      return evaluateThesisCoverage(brainRoot, tickers);
+    } finally {
+      await db.close();
+    }
   },
 };
