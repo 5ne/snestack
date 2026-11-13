@@ -769,11 +769,13 @@ program
       process.exitCode = 1;
       return;
     }
-    const result = buildSignalsFromDir(opts.dir);
+    const config = getConfig();
+    const brainRoot = config.getBrainRoot();
+    const companiesDir = path.join(brainRoot, "financial", "brain", "investing", "public", "companies");
+    const result = buildSignalsFromDir(opts.dir, fs.existsSync(companiesDir) ? { brainRoot } : undefined);
     const evaluations = opts.dryRun ? [] : collectEvaluationsFromDir(opts.dir);
     let signals = result.signals;
     let unchangedCount = 0;
-    const config = getConfig();
     const dbUrl = config.getDatabaseUrl();
     if (opts.onlyChanged || (!opts.dryRun && evaluations.length > 0 && dbUrl)) {
       const db = await Db.open(dbUrl);

@@ -2,8 +2,10 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import {
+  buildBuffettResearchAreas,
   companyBrainPath,
   extractRecordedThesis,
+  hasRecordedThesisFile,
   inspectTickerThesis,
   evaluateThesisCoverage,
   checkThesisCoverageFindings,
@@ -119,6 +121,23 @@ describe("thesisCoverage", () => {
         { ticker: "MSFT", status: "empty_thesis" },
         { ticker: "SPCX", status: "missing_file" },
       ]);
+      // Covered tickers have no missing-thesis research areas; uncovered ones get all 5 Buffett pillars
+      const aaplItem = report.items.find((i) => i.ticker === "AAPL")!;
+      expect(aaplItem.researchAreas).toEqual([]);
+      expect(hasRecordedThesisFile(aaplItem.filePath)).toBe(true);
+
+      const googItem = inspectTickerThesis(brainRoot, "GOOG");
+      expect(hasRecordedThesisFile(googItem.filePath)).toBe(false);
+      expect(googItem.researchAreas.map((a) => a.area)).toEqual([
+        "circle_of_competence",
+        "economic_moat",
+        "owner_earnings_and_fortress",
+        "management_capital_allocation",
+        "margin_of_safety_and_kill_criteria",
+      ]);
+      expect(googItem.researchAreas[0].whatBuffettWouldDo).toContain("GOOG's latest 10-K");
+      expect(buildBuffettResearchAreas("crwd")).toHaveLength(5);
+      expect(hasRecordedThesisFile(companyBrainPath(brainRoot, "CRWD"))).toBe(false);
 
       const findings = checkThesisCoverageFindings({
         now: new Date(2026, 10, 12, 12, 0, 0),
@@ -132,7 +151,10 @@ describe("thesisCoverage", () => {
         date: "2026-11-12",
         code: "missing_thesis",
         message:
-          "No recorded thesis for 4 of 5 tracked ticker(s) — missing brain file: CRWD, SPCX; empty thesis section: GOOG, MSFT (under financial/brain/investing/public/companies/).",
+          "No recorded thesis for 4 of 5 tracked ticker(s) — missing brain file: CRWD, SPCX; empty thesis section: GOOG, MSFT (under financial/brain/investing/public/companies/). " +
+          "Suggested Buffett research per uncovered ticker: 10-K business model & 10yr predictability, " +
+          "economic moat & pricing power, 5yr owner earnings (FCF vs. GAAP) & debt payoff, " +
+          "management capital allocation, and margin of safety.",
       });
     });
 

@@ -2,6 +2,9 @@ import * as fs from "fs";
 import * as path from "path";
 import { parseVerdict } from "../../../core/verdict";
 import type { Db } from "../../../core/db";
+import { buffettResearchBrief, inspectTickerThesis } from "../thesisCoverage";
+
+export const NO_THESIS_TAG = "[no thesis on file]";
 
 export interface BuiltSignal {
   ticker: string;
@@ -127,14 +130,16 @@ export function collectEvaluationsFromDir(dir: string): EvaluatedVerdict[] {
  * was already made by the skill — so it costs no model call and gives the same
  * answer every time.
  */
-export function buildSignalsFromDir(dir: string): BuildResult {
+export function buildSignalsFromDir(dir: string, opts?: { brainRoot?: string }): BuildResult {
   const watchlist = readWatchlistTickers(dir);
+  const checkBrain = Boolean(opts?.brainRoot && fs.existsSync(opts.brainRoot));
   const result: BuildResult = { signals: [], noSignal: [], errors: [] };
 
   for (const name of fs.readdirSync(dir).sort()) {
     const m = FILE_RE.exec(name);
     if (!m) continue;
     const [, ticker, skill] = m;
+    const upperTicker = ticker.toUpperCase();
     const verdict = parseVerdict(fs.readFileSync(path.join(dir, name), "utf8"));
 
     if (!verdict) {
@@ -149,12 +154,20 @@ export function buildSignalsFromDir(dir: string): BuildResult {
       result.errors.push(`${name}: unknown verdict label "${verdict.label}" (expected BUY, SELL, HOLD or NONE)`);
       continue;
     }
+    const missingThesis =
+      checkBrain &&
+      skill === "long-term-quality" &&
+      !inspectTickerThesis(opts!.brainRoot!, upperTicker).hasThesis;
+    const reasoning = missingThesis
+      ? `${SKILL_PREFIX[skill]} ${NO_THESIS_TAG} ${verdict.reasoning} — Buffett research needed: ${buffettResearchBrief(upperTicker)}.`
+      : `${SKILL_PREFIX[skill]} ${verdict.reasoning}`;
+
     result.signals.push({
-      ticker: ticker.toUpperCase(),
+      ticker: upperTicker,
       recommendation: verdict.label,
       confidence: verdict.confidence,
-      reasoning: `${SKILL_PREFIX[skill]} ${verdict.reasoning}`,
-      fromWatchlist: watchlist.has(ticker.toUpperCase()),
+      reasoning,
+      fromWatchlist: watchlist.has(upperTicker),
     });
   }
   return result;

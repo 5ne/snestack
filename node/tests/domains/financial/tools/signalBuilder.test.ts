@@ -7,6 +7,7 @@ import {
   buildSignalsFromDir,
   collectEvaluationsFromDir,
   filterUnchangedSignals,
+  NO_THESIS_TAG,
   type BuiltSignal,
 } from "../../../../src/domains/financial/tools/signalBuilder";
 
@@ -76,6 +77,44 @@ describe("buildSignalsFromDir", () => {
       { ticker: "GOOG", skill: "swing-trading-large-cap", verdict: "BUY", rsi: 14.87, price: 175.0 },
       { ticker: "RIVN", skill: "swing-trading-large-cap", verdict: "NONE", rsi: 15.8, price: 12.34 },
     ]);
+  });
+
+  it("labels long-term-quality signals '[no thesis on file]' with Buffett research guidance when brainRoot shows no recorded thesis", () => {
+    const brainRoot = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-signal-brain-"));
+    try {
+      const companiesDir = path.join(brainRoot, "financial", "brain", "investing", "public", "companies");
+      fs.mkdirSync(companiesDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(companiesDir, "AAPL.md"),
+        '# AAPL\n\n## Your thesis (compiled truth)\n\n> "ecosystem moat"\n'
+      );
+      fs.writeFileSync(
+        path.join(companiesDir, "GOOG.md"),
+        "# GOOG\n\n## Your thesis (compiled truth)\n\n_No thesis recorded yet. Add one via the CLI._\n"
+      );
+
+      write("AAPL-long-term-quality.md", "VERDICT: HOLD | 0.7 | Intact ecosystem moat.");
+      write("GOOG-long-term-quality.md", "VERDICT: BUY | 0.75 | Wide moat at a discount.");
+      write("MSFT-long-term-quality.md", "VERDICT: HOLD | 0.65 | Enterprise cloud durability.");
+      write("GOOG-swing-trading-large-cap.md", "VERDICT: BUY | 0.8 | RSI oversold bounce.");
+
+      const r = buildSignalsFromDir(dir, { brainRoot });
+      expect(r.errors).toEqual([]);
+      const byKey = Object.fromEntries(
+        r.signals.map((s) => [`${s.ticker}:${s.reasoning.split(" ")[0]}`, s.reasoning])
+      );
+
+      // Covered ticker is untouched
+      expect(byKey["AAPL:[Long-term]"]).toBe("[Long-term] Intact ecosystem moat.");
+      // Empty-thesis and missing-file tickers on long-term-quality get [no thesis on file] + Buffett research prompt
+      expect(byKey["GOOG:[Long-term]"]).toContain(`[Long-term] ${NO_THESIS_TAG} Wide moat at a discount.`);
+      expect(byKey["GOOG:[Long-term]"]).toContain("Buffett research needed: research GOOG across the 5 Buffett owner pillars");
+      expect(byKey["MSFT:[Long-term]"]).toContain(`[Long-term] ${NO_THESIS_TAG} Enterprise cloud durability.`);
+      // Swing signal is never tagged for long-term thesis absence
+      expect(byKey["GOOG:[Swing]"]).toBe("[Swing] RSI oversold bounce.");
+    } finally {
+      fs.rmSync(brainRoot, { recursive: true, force: true });
+    }
   });
 });
 

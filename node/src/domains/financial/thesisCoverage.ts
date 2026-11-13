@@ -4,11 +4,25 @@ import { dayString, type Finding } from "../../core/runCheck";
 
 export type ThesisStatus = "covered" | "missing_file" | "empty_thesis";
 
+export type BuffettResearchAreaId =
+  | "circle_of_competence"
+  | "economic_moat"
+  | "owner_earnings_and_fortress"
+  | "management_capital_allocation"
+  | "margin_of_safety_and_kill_criteria";
+
+export interface BuffettResearchArea {
+  area: BuffettResearchAreaId;
+  title: string;
+  whatBuffettWouldDo: string;
+}
+
 export interface TickerThesisCoverage {
   ticker: string;
   status: ThesisStatus;
   hasThesis: boolean;
   filePath: string;
+  researchAreas: BuffettResearchArea[];
 }
 
 export interface ThesisCoverageReport {
@@ -18,6 +32,65 @@ export interface ThesisCoverageReport {
   emptyThesis: string[];
   uncovered: TickerThesisCoverage[];
   items: TickerThesisCoverage[];
+}
+
+/**
+ * Deterministic "What Would Buffett Do" research agenda for any ticker that lacks
+ * a recorded owner thesis. Suggests the five areas an owner-operator investigates
+ * before writing a thesis in `brain/investing/public/companies/<TICKER>.md` —
+ * without ever writing to the user's brain file on their behalf.
+ */
+export function buildBuffettResearchAreas(rawTicker: string): BuffettResearchArea[] {
+  const ticker = rawTicker.trim().toUpperCase();
+  return [
+    {
+      area: "circle_of_competence",
+      title: "Circle of Competence & 10-Year Predictability",
+      whatBuffettWouldDo:
+        `Read ${ticker}'s latest 10-K Item 1 (Business) and shareholder letter: explain in plain English ` +
+        `how a customer pays, why they stay, and whether industry unit economics are predictable 10 years out.`,
+    },
+    {
+      area: "economic_moat",
+      title: "Economic Moat & Pricing Power",
+      whatBuffettWouldDo:
+        `Identify ${ticker}'s durable moat source (switching costs, network effects, intangible brand/IP, or ` +
+        `structural cost advantage) and run the 10% pricing-power test — could it raise prices without losing customers?`,
+    },
+    {
+      area: "owner_earnings_and_fortress",
+      title: "Owner Earnings & Balance-Sheet Fortress",
+      whatBuffettWouldDo:
+        `Compare ${ticker}'s 5-year free cash flow (after maintenance capex and SBC dilution) against GAAP net income, ` +
+        `and check that long-term debt can be retired in under 3–4 years of normalized owner earnings.`,
+    },
+    {
+      area: "management_capital_allocation",
+      title: "Management Candor & Capital Allocation",
+      whatBuffettWouldDo:
+        `Audit 5 years of ${ticker}'s retained-earnings deployment (returns on incremental invested capital, ` +
+        `disciplined vs. empire-building M&A, and share buybacks below vs. above intrinsic value) plus candor in shareholder letters.`,
+    },
+    {
+      area: "margin_of_safety_and_kill_criteria",
+      title: "Intrinsic Value, Margin of Safety & Kill Criteria",
+      whatBuffettWouldDo:
+        `Estimate conservative discounted owner earnings vs. ${ticker}'s market cap, set your required margin of safety, ` +
+        `and write down the 1–2 structural moat-impairment events that would make you sell regardless of price.`,
+    },
+  ];
+}
+
+export function buffettResearchBrief(rawTicker: string): string {
+  const ticker = rawTicker.trim().toUpperCase();
+  return (
+    `research ${ticker} across the 5 Buffett owner pillars: ` +
+    `(1) 10-K business model & 10yr predictability, ` +
+    `(2) economic moat & pricing power, ` +
+    `(3) 5yr owner earnings/FCF vs. GAAP & debt payoff, ` +
+    `(4) management candor & capital allocation, ` +
+    `(5) intrinsic value margin of safety & thesis-break criteria`
+  );
 }
 
 export function companyBrainPath(brainRoot: string, ticker: string): string {
@@ -69,18 +142,35 @@ export function extractRecordedThesis(markdown: string): string | null {
   return meaningfulLines.join("\n");
 }
 
+export function hasRecordedThesisFile(filePath: string): boolean {
+  if (!fs.existsSync(filePath)) return false;
+  return extractRecordedThesis(fs.readFileSync(filePath, "utf8")) !== null;
+}
+
 export function inspectTickerThesis(brainRoot: string, rawTicker: string): TickerThesisCoverage {
   const ticker = rawTicker.trim().toUpperCase();
   const filePath = companyBrainPath(brainRoot, ticker);
   if (!fs.existsSync(filePath)) {
-    return { ticker, status: "missing_file", hasThesis: false, filePath };
+    return {
+      ticker,
+      status: "missing_file",
+      hasThesis: false,
+      filePath,
+      researchAreas: buildBuffettResearchAreas(ticker),
+    };
   }
   const content = fs.readFileSync(filePath, "utf8");
   const thesis = extractRecordedThesis(content);
   if (thesis === null) {
-    return { ticker, status: "empty_thesis", hasThesis: false, filePath };
+    return {
+      ticker,
+      status: "empty_thesis",
+      hasThesis: false,
+      filePath,
+      researchAreas: buildBuffettResearchAreas(ticker),
+    };
   }
-  return { ticker, status: "covered", hasThesis: true, filePath };
+  return { ticker, status: "covered", hasThesis: true, filePath, researchAreas: [] };
 }
 
 export function evaluateThesisCoverage(brainRoot: string, tickers: string[]): ThesisCoverageReport {
@@ -133,7 +223,10 @@ export function checkThesisCoverageFindings(opts: {
       code: "missing_thesis",
       message:
         `No recorded thesis for ${report.uncovered.length} of ${report.total} tracked ticker(s) — ` +
-        `${parts.join("; ")} (under financial/brain/investing/public/companies/).`,
+        `${parts.join("; ")} (under financial/brain/investing/public/companies/). ` +
+        `Suggested Buffett research per uncovered ticker: 10-K business model & 10yr predictability, ` +
+        `economic moat & pricing power, 5yr owner earnings (FCF vs. GAAP) & debt payoff, ` +
+        `management capital allocation, and margin of safety.`,
     },
   ];
 }
