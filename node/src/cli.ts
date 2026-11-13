@@ -66,11 +66,13 @@ export async function buildCliProgram(buildOpts: BuildCliOptions = {}): Promise<
   program
     .command("serve")
     .description(
-      "Start the snestack HTTP JSON API server (defaults to 127.0.0.1:4700, or 0.0.0.0:$PORT when PORT is set)"
+      "Start the snestack HTTP JSON API + Web UI server (defaults to 127.0.0.1:4700, or 0.0.0.0:$PORT when PORT is set)"
     )
     .option("--addr <addr>", "Listen address as host:port or :port (e.g. 127.0.0.1:4700)")
     .option("--host <host>", "Bind host (default: 127.0.0.1, or 0.0.0.0 when PORT is set)")
     .option("--port <port>", "Bind port (default: 4700, or $PORT)")
+    .option("--web-dist <dir>", "Path to built Web UI static assets (defaults to ../web/dist if present)")
+    .option("--no-web", "Disable static Web UI serving (API-only mode)")
     .option(
       "--allow-unauthenticated-remote",
       "Allow binding a non-loopback address without SNESTACK_API_TOKEN configured"
@@ -80,6 +82,8 @@ export async function buildCliProgram(buildOpts: BuildCliOptions = {}): Promise<
         addr?: string;
         host?: string;
         port?: string;
+        webDist?: string;
+        web?: boolean;
         allowUnauthenticatedRemote?: boolean;
       }) => {
         const globalOpts = program.opts<{ apiToken?: string }>();
@@ -90,10 +94,12 @@ export async function buildCliProgram(buildOpts: BuildCliOptions = {}): Promise<
           host = parsed.host;
           port = parsed.port;
         }
+        const webDistDir = opts.web === false ? null : opts.webDist;
         const running = await startApiServer({
           host,
           port,
           apiToken: globalOpts.apiToken,
+          webDistDir,
           allowUnauthenticatedRemote: Boolean(opts.allowUnauthenticatedRemote),
         });
         if (ctx.isJson()) {
@@ -104,11 +110,14 @@ export async function buildCliProgram(buildOpts: BuildCliOptions = {}): Promise<
               port: running.port,
               url: running.url,
               routes: running.router.listRoutes().length,
+              webEnabled: running.webEnabled,
+              webDistDir: running.webDistDir,
             })
           );
         } else {
+          const webLabel = running.webEnabled ? ", Web UI enabled" : ", API-only";
           console.log(
-            `snestack API server listening on ${running.url} (${running.router.listRoutes().length} routes)`
+            `snestack server listening on ${running.url} (${running.router.listRoutes().length} routes${webLabel})`
           );
         }
 

@@ -1,0 +1,16 @@
+.git
+.claude
+.gstack
+node/node_modules
+node/dist
+node/coverage
+node/logs
+node/.env
+web/node_modules
+web/dist
+.env
+.unison.json
+*.log
+*.db
+brain
+reports

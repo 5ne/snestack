@@ -1,6 +1,7 @@
 # Node.js
 node_modules/
 node/dist/
+web/dist/
 node/coverage/
 *.tsbuildinfo
 

@@ -8,7 +8,11 @@
   },
   "scripts": {
     "build": "tsc",
+    "build:web": "npm --prefix ../web run build",
+    "build:all": "tsc && npm --prefix ../web run build",
     "dev": "ts-node src/cli.ts",
+    "dev:web": "npm --prefix ../web run dev",
+    "serve": "ts-node src/cli.ts serve",
     "start": "node dist/cli.js",
     "test": "jest",
     "test:watch": "jest --watch",

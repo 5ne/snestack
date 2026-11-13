@@ -8,15 +8,27 @@ A "thin harness, fat skills" system: deterministic TypeScript code fetches data,
 
 ```
 snestack/
-└── node/              # Node.js / TypeScript implementation
-    └── src/
-        ├── core/       # domain-agnostic harness: skillLoader, domainRegistry,
-        │               # executor, runSkill, db, config, logger, errors
-        ├── config/
-        │   └── domains.json   # registers each domain's skillsDir + contextTools
-        └── domains/
-            ├── financial/     # skills/, agents/, tools/, providers/
-            └── calendar/      # skills/, tools/, googleAuth.ts, setup.ts
+├── node/              # Node.js / TypeScript CLI, harness, and HTTP JSON API
+│   └── src/
+│       ├── core/       # domain-agnostic harness: skillLoader, domainRegistry,
+│       │               # executor, runSkill, db, config, logger, errors, api/
+│       ├── config/
+│       │   └── domains.json   # registers each domain's skillsDir + contextTools + apiModule
+│       └── domains/
+│           ├── financial/     # skills/, agents/, tools/, providers/, api.ts
+│           ├── calendar/      # skills/, tools/, googleAuth.ts, setup.ts, api.ts
+│           └── travel/        # skills/, tools/, googleAuth.ts, setup.ts, api.ts
+└── web/               # Isomorphic Web UI (Vite + React 19 + Unison light-dark theme)
+```
+
+## Web UI & Isomorphic Server
+
+`snestack` is isomorphic across CLI and Web UI — both talk to the exact same core and domain API routes (`snestack routes` / `GET /api/routes`):
+
+```bash
+cd web && npm install && npm run build
+cd ../node && npm run serve
+# Open http://127.0.0.1:4700
 ```
 
 `brain/` and `reports/` (Morningstar PDFs) live outside the repo, in a shared Google Drive folder at `<SNESTACK_BRAIN_ROOT>/financial/` (default `~/Documents/personal-brain/financial/`) — not committed here; see `.gitignore`.

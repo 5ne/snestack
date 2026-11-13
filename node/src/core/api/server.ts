@@ -5,6 +5,7 @@ import { Config, getConfig } from "../config";
 import { ConfigError } from "../errors";
 import { createApiRouter } from "./app";
 import type { ApiRouter } from "./router";
+import { createStaticWebHandler, resolveDefaultWebDistDir } from "./staticWeb";
 import type { HttpMethod } from "./types";
 
 const MAX_BODY_BYTES = 5 * 1024 * 1024; // 5 MiB
@@ -15,6 +16,8 @@ export interface ApiServerOptions {
   apiToken?: string;
   /** Explicit opt-in required to bind non-loopback interfaces without SNESTACK_API_TOKEN. */
   allowUnauthenticatedRemote?: boolean;
+  /** Optional directory containing built Web UI static assets (`null` disables auto-discovery). */
+  webDistDir?: string | null;
   /** Optional fallback handler for non-`/api/` paths (e.g. static Web UI assets). */
   fallbackHandler?: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<boolean> | boolean;
   router?: ApiRouter;
@@ -26,6 +29,8 @@ export interface RunningApiServer {
   host: string;
   port: number;
   url: string;
+  webEnabled: boolean;
+  webDistDir: string | null;
   close: () => Promise<void>;
 }
 
@@ -119,6 +124,11 @@ export async function startApiServer(opts: ApiServerOptions = {}): Promise<Runni
   }
 
   const router = opts.router ?? (await createApiRouter());
+  const resolvedWebDistDir =
+    opts.webDistDir !== undefined ? opts.webDistDir : resolveDefaultWebDistDir();
+  const fallbackHandler =
+    opts.fallbackHandler ??
+    (resolvedWebDistDir ? createStaticWebHandler(resolvedWebDistDir) : undefined);
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -136,8 +146,8 @@ export async function startApiServer(opts: ApiServerOptions = {}): Promise<Runni
       }
 
       if (!pathname.startsWith("/api/") && pathname !== "/api") {
-        if (opts.fallbackHandler) {
-          const handled = await opts.fallbackHandler(req, res);
+        if (fallbackHandler) {
+          const handled = await fallbackHandler(req, res);
           if (handled) return;
         }
         sendJson(res, 404, { error: `Not found: ${pathname}`, code: "not_found" });
@@ -230,6 +240,8 @@ export async function startApiServer(opts: ApiServerOptions = {}): Promise<Runni
     host,
     port: boundPort,
     url: `http://${urlHost}:${boundPort}`,
+    webEnabled: Boolean(fallbackHandler),
+    webDistDir: resolvedWebDistDir,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
