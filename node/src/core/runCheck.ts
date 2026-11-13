@@ -44,7 +44,7 @@ export interface Finding {
   severity: Severity;
   domain: string;
   date: string;
-  code: "missing_run" | "incomplete_run" | "failed" | "degraded" | "model_errors" | "usage_limit" | "api_fallback" | "api_credit_exhausted" | "cost_anomaly" | "cache_stale" | "missing_thesis" | "database_unreachable" | "host_outage" | "brain_root_unreadable";
+  code: "missing_run" | "incomplete_run" | "failed" | "degraded" | "model_errors" | "usage_limit" | "api_fallback" | "api_credit_exhausted" | "cost_anomaly" | "cache_stale" | "missing_thesis" | "database_unreachable" | "host_outage" | "brain_root_unreadable" | "stale_dryrun";
   message: string;
 }
 
@@ -524,4 +524,83 @@ export function checkCacheStaleness(opts: {
   );
 
   return findings;
+}
+
+const DEFAULT_STALE_DRYRUN_DAYS = 7;
+
+/** Read `stale_dryrun_days` from `core/skills/references/run-retention.md`. */
+export function readStaleDryRunDays(refPath?: string): number {
+  const candidates = refPath
+    ? [refPath]
+    : [
+        path.resolve(__dirname, "skills/references/run-retention.md"),
+        path.resolve(__dirname, "../../src/core/skills/references/run-retention.md"),
+      ];
+  for (const p of candidates) {
+    if (!fs.existsSync(p)) continue;
+    const m = /^stale_dryrun_days:\s*(\d+)/m.exec(fs.readFileSync(p, "utf8"));
+    if (m) return parseInt(m[1], 10);
+  }
+  return DEFAULT_STALE_DRYRUN_DAYS;
+}
+
+function dirSizeBytes(dir: string): number {
+  let total = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) total += dirSizeBytes(full);
+    else if (entry.isFile()) total += fs.statSync(full).size;
+  }
+  return total;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Count `YYYY-MM-DD-dryrun` directories older than `maxAgeDays` across the
+ * given runs roots and report a low-severity `stale_dryrun` finding with count
+ * and total size. Never deletes anything.
+ */
+export function checkStaleDryRuns(opts: {
+  now: Date;
+  runsRoots: string[];
+  maxAgeDays?: number;
+}): Finding[] {
+  const maxAgeDays = opts.maxAgeDays ?? readStaleDryRunDays();
+  const nowDayMs = Date.parse(`${dayString(opts.now)}T00:00:00Z`);
+  let staleCount = 0;
+  let totalBytes = 0;
+
+  for (const root of new Set(opts.runsRoots)) {
+    if (!fs.existsSync(root)) continue;
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const m = /^(\d{4}-\d{2}-\d{2})-dryrun$/.exec(entry.name);
+      if (!m) continue;
+      const dirDayMs = Date.parse(`${m[1]}T00:00:00Z`);
+      if (Number.isNaN(dirDayMs)) continue;
+      const ageDays = (nowDayMs - dirDayMs) / 86_400_000;
+      if (ageDays > maxAgeDays) {
+        staleCount++;
+        totalBytes += dirSizeBytes(path.join(root, entry.name));
+      }
+    }
+  }
+
+  if (staleCount === 0) return [];
+  return [
+    {
+      severity: "warn",
+      domain: "_system",
+      date: dayString(opts.now),
+      code: "stale_dryrun",
+      message:
+        `${staleCount} stale *-dryrun director${staleCount === 1 ? "y" : "ies"} older than ${maxAgeDays}d ` +
+        `(${formatBytes(totalBytes)} total) — prune manually when no longer needed.`,
+    },
+  ];
 }
