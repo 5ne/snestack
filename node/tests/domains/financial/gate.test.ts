@@ -153,4 +153,30 @@ describe("computeGateFacts", () => {
     const f = await computeGateFacts(db, "long-term-quality", "INTU", opts());
     expect(f.noUsableContext).toBeNull();
   });
+
+  it("tracks buffett-value ([Buffett]) independently from long-term-quality and swing, and enforces fundamentals & watchlist thesis gates", async () => {
+    await db.addQuote("INTU", "2026-10-08", 1, 1, 1, 290, 1, 45, null, null);
+    await db.addQuote("INTU", "2026-10-05", 1, 1, 1, 260, 1, 34, null, null);
+    await db.addSignal("INTU", "2026-10-07T08:00:00.000Z", "HOLD", 0.7, "[Long-term] growth intact", false);
+    await db.addSignal("INTU", "2026-10-05T08:00:00.000Z", "BUY", 0.8, "[Buffett] wide moat at 0.82x fair value", false);
+
+    // Without Morningstar data, buffett-value has noUsableContext
+    expect((await computeGateFacts(db, "buffett-value", "INTU", opts())).noUsableContext).toContain("INTU");
+
+    // With Morningstar PDF, it reads the [Buffett] signal history (not [Long-term])
+    fs.writeFileSync(path.join(reportsDir, "INTU-morningstar.pdf"), "x");
+    const buffettFacts = await computeGateFacts(db, "buffett-value", "INTU", opts());
+    expect(buffettFacts.noUsableContext).toBeNull();
+    expect(buffettFacts.lastRunAt?.toISOString()).toBe("2026-10-05T08:00:00.000Z");
+    expect(buffettFacts.lastRunPrice).toBe(260);
+    expect(buffettFacts.lastRunRsi).toBe(34);
+
+    // Unanchored watchlist ticker is skipped for buffett-value too, while held positions run
+    await db.addWatchlist("INTU", "");
+    expect((await computeGateFacts(db, "buffett-value", "INTU", opts())).noUsableContext).toContain(
+      "watchlist ticker INTU has no recorded thesis"
+    );
+    await db.addPosition("INTU", 10, 500, "2026-06-02");
+    expect((await computeGateFacts(db, "buffett-value", "INTU", opts())).noUsableContext).toBeNull();
+  });
 });

@@ -599,7 +599,7 @@ program
   .description(
     "[No longer used by daily-analysis.sh — see build-signals] Turn a directory of run-skill output files into a notify-ready signals JSON array, " +
       "via a single Claude call over all of them at once. Reads every " +
-      "*-long-term-quality.md / *-swing-trading-large-cap.md file in --dir, plus that " +
+      "*-long-term-quality.md / *-swing-trading-large-cap.md / *-buffett-value.md file in --dir, plus that " +
       "dir's data-dump.json (if present) for isWatchlist flags. Prints the JSON array to " +
       "stdout — pipe it to a file, then pass that file to `notify --file`. " +
       "Unlike run-skill, this makes no fresh judgment of its own: it summarizes the " +
@@ -620,9 +620,14 @@ program
     }
     const files = fs
       .readdirSync(dir)
-      .filter((f) => f.endsWith("-long-term-quality.md") || f.endsWith("-swing-trading-large-cap.md"));
+      .filter(
+        (f) =>
+          f.endsWith("-long-term-quality.md") ||
+          f.endsWith("-swing-trading-large-cap.md") ||
+          f.endsWith("-buffett-value.md")
+      );
     if (files.length === 0) {
-      console.error(`No *-long-term-quality.md or *-swing-trading-large-cap.md files found in ${dir}`);
+      console.error(`No *-long-term-quality.md, *-swing-trading-large-cap.md, or *-buffett-value.md files found in ${dir}`);
       process.exitCode = 1;
       return;
     }
@@ -750,7 +755,10 @@ program
       "`VERDICT:` line. Deterministic, no model call. Prints the JSON array to stdout; files with a missing " +
       "or invalid verdict are listed on stderr and make the command exit 1 (the valid signals are still printed)."
   )
-  .requiredOption("--dir <path>", "Run directory containing *-long-term-quality.md / *-swing-trading-large-cap.md files")
+  .requiredOption(
+    "--dir <path>",
+    "Run directory containing *-long-term-quality.md / *-swing-trading-large-cap.md / *-buffett-value.md files"
+  )
   .option(
     "--only-changed",
     "Drop any signal whose recommendation matches the last one recorded for that ticker+strategy and whose " +

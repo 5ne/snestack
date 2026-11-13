@@ -10,10 +10,11 @@ import { buffettResearchBrief, hasRecordedThesisFile } from "./thesisCoverage";
 const SKILL_PREFIX: Record<string, string> = {
   "long-term-quality": "[Long-term]",
   "swing-trading-large-cap": "[Swing]",
+  "buffett-value": "[Buffett]",
 };
 
 /** Skills whose judgment is meaningless without Morningstar fundamentals. */
-const NEEDS_FUNDAMENTALS = new Set(["long-term-quality"]);
+const NEEDS_FUNDAMENTALS = new Set(["long-term-quality", "buffett-value"]);
 
 /** A stored quote older than this is too stale to gate on; the skill just runs. */
 const MAX_QUOTE_AGE_DAYS = 4;
