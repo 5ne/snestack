@@ -45,21 +45,35 @@ export async function computeGateFacts(
 
   const prefix = SKILL_PREFIX[skillName];
   const lastSignal = prefix ? await db.getLastSignalWithPrefix(T, prefix) : undefined;
-  const lastRunAt = lastSignal ? new Date(lastSignal.date) : null;
+  const lastGateRun = await db.getLastGateRun(T, skillName);
 
-  let lastRunPrice: number | null = null;
-  let lastRunRsi: number | null = null;
-  if (lastRunAt) {
+  const signalTime = lastSignal ? Date.parse(lastSignal.date) : -Infinity;
+  const gateRunTime = lastGateRun ? Date.parse(lastGateRun.run_at) : -Infinity;
+  const useGateRun = lastGateRun != null && Number.isFinite(gateRunTime) && gateRunTime >= signalTime;
+
+  const lastRunAt = useGateRun
+    ? new Date(lastGateRun!.run_at)
+    : lastSignal
+      ? new Date(lastSignal.date)
+      : null;
+
+  let lastRunPrice: number | null = useGateRun ? lastGateRun!.price : null;
+  let lastRunRsi: number | null = useGateRun ? lastGateRun!.rsi : null;
+  if (lastRunAt && (lastRunPrice == null || lastRunRsi == null)) {
     const lastDay = lastRunAt.getTime();
     let best = Infinity;
+    let bestPrice: number | null = null;
+    let bestRsi: number | null = null;
     for (const q of await db.getQuotes(T, 250)) {
       const gap = Math.abs(Date.parse(`${q.date}T12:00:00Z`) - lastDay);
       if (gap < best && gap <= 3 * DAY_MS) {
         best = gap;
-        lastRunPrice = q.close;
-        lastRunRsi = q.rsi ?? null;
+        bestPrice = q.close;
+        bestRsi = q.rsi ?? null;
       }
     }
+    if (lastRunPrice == null) lastRunPrice = bestPrice;
+    if (lastRunRsi == null) lastRunRsi = bestRsi;
   }
 
   const inputsChanged =

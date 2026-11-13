@@ -413,7 +413,7 @@ describe("Db", () => {
         end: jest.fn().mockResolvedValue(undefined),
       };
       await Db.open(undefined, { pool, enableRls: true });
-      for (const t of ["tickers", "positions", "watchlist", "quotes", "fundamentals", "signals"]) {
+      for (const t of ["tickers", "positions", "watchlist", "quotes", "fundamentals", "signals", "gate_runs"]) {
         expect(sent).toContain(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`);
       }
     });
@@ -468,6 +468,47 @@ describe("Db", () => {
       expect(err.message).toContain("EMAXCONNSESSION");
       expect(pool.query).toHaveBeenCalledTimes(3);
       expect(pool.end).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── Gate runs ─────────────────────────────────────────────────────────────
+
+  describe("gate_runs", () => {
+    beforeEach(async () => {
+      await db.addTicker("NVDA", "NVIDIA", "PUBLIC");
+    });
+
+    it("records and returns the latest gate run (including NONE verdicts)", async () => {
+      expect(await db.getLastGateRun("NVDA", "swing-trading-large-cap")).toBeUndefined();
+      expect(
+        await db.recordGateRun({
+          ticker: "NVDA",
+          skill: "swing-trading-large-cap",
+          runAt: "2026-11-10T15:00:00.000Z",
+          verdict: "NONE",
+          rsi: 26.98,
+          price: 140.5,
+        })
+      ).toBe(true);
+      expect(
+        await db.recordGateRun({
+          ticker: "NVDA",
+          skill: "swing-trading-large-cap",
+          runAt: "2026-11-10T16:00:00.000Z",
+          verdict: "NONE",
+          rsi: 27.1,
+          price: 141.0,
+        })
+      ).toBe(true);
+      const latest = await db.getLastGateRun("NVDA", "swing-trading-large-cap");
+      expect(latest).toMatchObject({
+        ticker: "NVDA",
+        skill: "swing-trading-large-cap",
+        run_at: "2026-11-10T16:00:00.000Z",
+        verdict: "NONE",
+        rsi: 27.1,
+        price: 141.0,
+      });
     });
   });
 });

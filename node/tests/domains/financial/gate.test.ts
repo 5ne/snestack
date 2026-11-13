@@ -96,4 +96,19 @@ describe("computeGateFacts", () => {
   it("knows nothing about an unrecognized skill", async () => {
     expect((await computeGateFacts(db, "some-other-skill", "INTU", opts())).lastRunAt).toBeNull();
   });
+
+  it("uses gate_runs (including NONE verdicts) as lastRunRsi/lastRunPrice even when signals is empty", async () => {
+    await db.recordGateRun({
+      ticker: "INTU",
+      skill: "swing-trading-large-cap",
+      runAt: "2026-10-07T08:00:00.000Z",
+      verdict: "NONE",
+      rsi: 26.98,
+      price: 600,
+    });
+    const f = await computeGateFacts(db, "swing-trading-large-cap", "INTU", opts());
+    expect(f.lastRunAt?.toISOString()).toBe("2026-10-07T08:00:00.000Z");
+    expect(f.lastRunRsi).toBe(26.98);
+    expect(f.lastRunPrice).toBe(600);
+  });
 });
