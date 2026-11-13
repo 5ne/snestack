@@ -111,4 +111,46 @@ describe("computeGateFacts", () => {
     expect(f.lastRunRsi).toBe(26.98);
     expect(f.lastRunPrice).toBe(600);
   });
+
+  it("skips long-term-quality for a watchlist ticker with no recorded thesis (with Buffett research guidance), and clears once a thesis is written", async () => {
+    fs.writeFileSync(path.join(reportsDir, "INTU-morningstar.pdf"), "x");
+    await db.addWatchlist("INTU", "");
+
+    // Missing brain file -> skipped with Buffett research prompt
+    const missing = await computeGateFacts(db, "long-term-quality", "INTU", opts());
+    expect(missing.noUsableContext).toContain("watchlist ticker INTU has no recorded thesis");
+    expect(missing.noUsableContext).toContain("5 Buffett owner pillars");
+    expect(evaluateGate({ rsiBelow: 40 }, { ...missing, rsi: 25 })).toEqual({
+      run: false,
+      reasons: [expect.stringContaining("no usable context")],
+    });
+
+    // Empty placeholder thesis -> still skipped
+    fs.writeFileSync(
+      brainFile,
+      "# INTU\n\n## Your thesis (compiled truth)\n\n_No thesis recorded yet. Add one via the CLI._\n"
+    );
+    expect((await computeGateFacts(db, "long-term-quality", "INTU", opts())).noUsableContext).toContain(
+      "watchlist ticker INTU has no recorded thesis"
+    );
+
+    // Swing is never blocked by a missing long-term thesis
+    expect((await computeGateFacts(db, "swing-trading-large-cap", "INTU", opts())).noUsableContext).toBeNull();
+
+    // Writing a real owner thesis clears the gate skip immediately
+    fs.writeFileSync(
+      brainFile,
+      '# INTU\n\n## Your thesis (compiled truth)\n\n> "High switching-cost SMB bookkeeping & tax ecosystem."\n'
+    );
+    expect((await computeGateFacts(db, "long-term-quality", "INTU", opts())).noUsableContext).toBeNull();
+  });
+
+  it("never skips long-term-quality for a held position even when its thesis is missing", async () => {
+    fs.writeFileSync(path.join(reportsDir, "INTU-morningstar.pdf"), "x");
+    await db.addPosition("INTU", 10, 500, "2026-06-02");
+    await db.addWatchlist("INTU", "");
+
+    const f = await computeGateFacts(db, "long-term-quality", "INTU", opts());
+    expect(f.noUsableContext).toBeNull();
+  });
 });

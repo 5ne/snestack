@@ -188,4 +188,50 @@ describe("financial contextTools (cache-read behavior)", () => {
       expect(await contextTools.brain("nvda")).toBeNull();
     });
   });
+
+  describe("thesis-coverage", () => {
+    it("summarizes portfolio + watchlist thesis coverage from the database when subject is 'all'", async () => {
+      const db = shared;
+      await db.addTicker("AAPL", "Apple", "PUBLIC");
+      await db.addTicker("GOOG", "Alphabet", "PUBLIC");
+      await db.addTicker("SPCX", "SPAC ETF", "PUBLIC");
+      await db.addPosition("AAPL", 10, 150, "2026-06-02");
+      await db.addPosition("GOOG", 5, 90, "2026-06-02");
+      await db.addWatchlist("SPCX", "");
+      await db.close();
+
+      const dir = path.join(brainRoot, "financial", "brain", "investing", "public", "companies");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "AAPL.md"),
+        "# AAPL\n\n## Your thesis (compiled truth)\n\n> \"product growth\"\n\n## History\n"
+      );
+      fs.writeFileSync(
+        path.join(dir, "GOOG.md"),
+        "# GOOG\n\n## Your thesis (compiled truth)\n\n_No thesis recorded yet. Add one via the CLI._\n\n## History\n"
+      );
+
+      const report = await contextTools["thesis-coverage"]("all");
+      expect(report).toMatchObject({
+        total: 3,
+        covered: ["AAPL"],
+        missingFile: ["SPCX"],
+        emptyThesis: ["GOOG"],
+      });
+    });
+
+    it("supports inspecting an explicit ticker or comma-separated list without hitting the database", async () => {
+      const dir = path.join(brainRoot, "financial", "brain", "investing", "public", "companies");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "NVDA.md"), "# NVDA\n\n## Your thesis\n\nAI moat.\n");
+
+      const report = await contextTools["thesis-coverage"]("nvda, crwd");
+      expect(report).toMatchObject({
+        total: 2,
+        covered: ["NVDA"],
+        missingFile: ["CRWD"],
+        emptyThesis: [],
+      });
+    });
+  });
 });

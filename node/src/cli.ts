@@ -27,6 +27,7 @@ import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
 import { resolveTickerUniverse, loadCacheAgeGetters } from "./domains/financial/cliHelpers";
+import { checkThesisCoverageFindings } from "./domains/financial/thesisCoverage";
 import { financialRunExpectations, financialRunStatsTargets } from "./domains/financial/runExpectations";
 import { computeRunStats, formatRunStats } from "./core/runStats";
 import { runDataRefresh, DATA_REFRESH_TIERS, type DataRefreshTier } from "./domains/financial/dataRefresh";
@@ -768,11 +769,13 @@ program
       process.exitCode = 1;
       return;
     }
-    const result = buildSignalsFromDir(opts.dir);
+    const config = getConfig();
+    const brainRoot = config.getBrainRoot();
+    const companiesDir = path.join(brainRoot, "financial", "brain", "investing", "public", "companies");
+    const result = buildSignalsFromDir(opts.dir, fs.existsSync(companiesDir) ? { brainRoot } : undefined);
     const evaluations = opts.dryRun ? [] : collectEvaluationsFromDir(opts.dir);
     let signals = result.signals;
     let unchangedCount = 0;
-    const config = getConfig();
     const dbUrl = config.getDatabaseUrl();
     if (opts.onlyChanged || (!opts.dryRun && evaluations.length > 0 && dbUrl)) {
       const db = await Db.open(dbUrl);
@@ -1013,7 +1016,9 @@ program
       const db = await Db.open(config.getDatabaseUrl());
       try {
         const tickers = await resolveTickerUniverse(db);
-        findings.push(...checkCacheStaleness({ now: new Date(), tickers, ...(await loadCacheAgeGetters(db, tickers)) }));
+        const checkNow = new Date();
+        findings.push(...checkCacheStaleness({ now: checkNow, tickers, ...(await loadCacheAgeGetters(db, tickers)) }));
+        findings.push(...checkThesisCoverageFindings({ now: checkNow, brainRoot, tickers }));
       } finally {
         await db.close();
       }

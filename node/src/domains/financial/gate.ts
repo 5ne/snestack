@@ -4,6 +4,7 @@ import { getConfig } from "../../core/config";
 import { Db } from "../../core/db";
 import type { GateFacts } from "../../core/gate";
 import { defaultReportsDir } from "./agents/equityAgent";
+import { buffettResearchBrief, hasRecordedThesisFile } from "./thesisCoverage";
 
 /** Signal-reasoning prefix each skill's results are recorded under (set by build-signals). */
 const SKILL_PREFIX: Record<string, string> = {
@@ -82,11 +83,23 @@ export async function computeGateFacts(
 
   // No cached Morningstar row of any age and no PDF to ingest: the live fallback can only
   // come back empty. A PDF landing in reportsDir (parsed by data-refresh) clears this.
+  // Watchlist-only tickers with no recorded owner thesis are also skipped for long-term-quality
+  // until the owner completes Buffett thesis research and records a thesis in brain/, while
+  // held positions keep running (and are labeled `[no thesis on file]` by build-signals).
   let noUsableContext: string | null = null;
   if (NEEDS_FUNDAMENTALS.has(skillName)) {
     const pdf = path.join(opts.reportsDir, `${T}-morningstar.pdf`);
     if (!(await db.getLatestFundamentals(T, "morningstar")) && !fs.existsSync(pdf)) {
       noUsableContext = `no Morningstar fundamentals cached and no report for ${T}`;
+    } else {
+      const isPosition = Boolean(await db.getPosition(T));
+      const onWatchlist =
+        !isPosition && (await db.getWatchlist()).some((w) => w.ticker.toUpperCase() === T);
+      if (onWatchlist && !hasRecordedThesisFile(opts.brainFile)) {
+        noUsableContext =
+          `watchlist ticker ${T} has no recorded thesis in brain/investing/public/companies/${T}.md — ` +
+          `skipping verdict until thesis is recorded (${buffettResearchBrief(T)})`;
+      }
     }
   }
 

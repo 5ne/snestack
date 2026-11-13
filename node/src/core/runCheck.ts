@@ -44,7 +44,7 @@ export interface Finding {
   severity: Severity;
   domain: string;
   date: string;
-  code: "missing_run" | "incomplete_run" | "failed" | "degraded" | "model_errors" | "usage_limit" | "api_fallback" | "api_credit_exhausted" | "cost_anomaly" | "cache_stale" | "database_unreachable" | "host_outage" | "brain_root_unreadable";
+  code: "missing_run" | "incomplete_run" | "failed" | "degraded" | "model_errors" | "usage_limit" | "api_fallback" | "api_credit_exhausted" | "cost_anomaly" | "cache_stale" | "missing_thesis" | "database_unreachable" | "host_outage" | "brain_root_unreadable";
   message: string;
 }
 
