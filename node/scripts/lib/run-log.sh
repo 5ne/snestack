@@ -18,11 +18,60 @@
 # rl_finish writes run.json, calls rl_failure_hook (if the script defines one) when the run failed,
 # publishes the folder, and exits nonzero if any step failed.
 
+RL_LOCK_OWNED=0
+RL_LOCK_DIR=""
+
+rl_release_lock() {
+  if [ "${RL_LOCK_OWNED:-0}" -eq 1 ] && [ -n "${RL_LOCK_DIR:-}" ]; then
+    rm -rf "$RL_LOCK_DIR" 2>/dev/null || true
+    RL_LOCK_OWNED=0
+  fi
+}
+
+# Acquire a per-script directory lock so overlapping cron/launchd runs exit
+# cleanly instead of piling up on the database. Removes stale locks whose PID
+# is no longer alive.
+rl_acquire_lock() {
+  local locks_root="${SNESTACK_STAGING_ROOT:-$HOME/Library/Logs/snestack}/locks"
+  RL_LOCK_DIR="$locks_root/$RL_SCRIPT.lock"
+  mkdir -p "$locks_root"
+
+  if ! mkdir "$RL_LOCK_DIR" 2>/dev/null; then
+    # Give a concurrent winner a brief moment to write its pid file.
+    local i=0
+    while [ ! -f "$RL_LOCK_DIR/pid" ] && [ "$i" -lt 5 ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    local lock_pid=""
+    [ -f "$RL_LOCK_DIR/pid" ] && lock_pid="$(cat "$RL_LOCK_DIR/pid" 2>/dev/null || true)"
+    if [ -n "$lock_pid" ] && [[ "$lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
+      echo "Skipped: $RL_SCRIPT is already running (pid $lock_pid)" >&2
+      return 1
+    fi
+    # Stale lock (dead PID or missing pid file): remove and try once more.
+    rm -rf "$RL_LOCK_DIR" 2>/dev/null || true
+    if ! mkdir "$RL_LOCK_DIR" 2>/dev/null; then
+      lock_pid="$(cat "$RL_LOCK_DIR/pid" 2>/dev/null || true)"
+      echo "Skipped: $RL_SCRIPT is already running (pid ${lock_pid:-unknown})" >&2
+      return 1
+    fi
+  fi
+
+  echo "$$" > "$RL_LOCK_DIR/pid"
+  RL_LOCK_OWNED=1
+  return 0
+}
+
 rl_init() {
   RL_SCRIPT="$1"
   RL_PUBLISH_DIR="$2"
   RL_DRY_RUN_FLAG=""
   [ "${3:-}" = "--dry-run" ] && RL_DRY_RUN_FLAG="--dry-run"
+  if ! rl_acquire_lock; then
+    exit 0
+  fi
+  trap rl_release_lock EXIT
   # Staged outside ~/Documents and the Drive folder: run outputs have come back empty from synced locations.
   RUN_DIR="${SNESTACK_STAGING_ROOT:-$HOME/Library/Logs/snestack}/runs/$RL_SCRIPT/$(basename "$RL_PUBLISH_DIR")"
   rm -rf "$RUN_DIR"
@@ -75,5 +124,6 @@ rl_finish() {
   else
     echo "WARNING: could not publish the run record to $RL_PUBLISH_DIR; it is still at $RUN_DIR" >&2
   fi
+  rl_release_lock
   exit "$rc"
 }
