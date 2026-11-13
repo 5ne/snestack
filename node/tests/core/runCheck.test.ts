@@ -4,6 +4,8 @@ import * as path from "path";
 import {
   evaluateRuns,
   checkCacheStaleness,
+  checkStaleDryRuns,
+  readStaleDryRunDays,
   isFinnhubFundamentalsFresh,
   elapsedMarketMs,
   type RunExpectation,
@@ -328,5 +330,39 @@ describe("checkCacheStaleness", () => {
     const tuesday = new Date(2026, 8, 8, 7, 0, 0);
     expect(elapsedMarketMs(friday.getTime(), tuesday.getTime())).toBe(17 * 60 * 60 * 1000);
     expect(isFinnhubFundamentalsFresh(friday.toISOString(), tuesday)).toBe(true);
+  });
+});
+
+describe("checkStaleDryRuns", () => {
+  it("reads stale_dryrun_days from the reference file", () => {
+    expect(readStaleDryRunDays()).toBeGreaterThan(0);
+  });
+
+  it("reports count and size of *-dryrun directories older than N days without deleting them", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-dryrun-"));
+    try {
+      const oldDir = path.join(tmp, "2026-10-01-dryrun");
+      const freshDir = path.join(tmp, "2026-10-29-dryrun");
+      const realDir = path.join(tmp, "2026-10-01");
+      fs.mkdirSync(oldDir, { recursive: true });
+      fs.mkdirSync(freshDir, { recursive: true });
+      fs.mkdirSync(realDir, { recursive: true });
+      fs.writeFileSync(path.join(oldDir, "run.jsonl"), "x".repeat(2048));
+      fs.writeFileSync(path.join(freshDir, "run.jsonl"), "y".repeat(512));
+      fs.writeFileSync(path.join(realDir, "run.jsonl"), "z".repeat(4096));
+
+      const findings = checkStaleDryRuns({
+        now: new Date(2026, 9, 31, 12, 0, 0),
+        runsRoots: [tmp, tmp], // duplicate roots should be deduplicated
+        maxAgeDays: 7,
+      });
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({ severity: "warn", domain: "_system", code: "stale_dryrun" });
+      expect(findings[0].message).toContain("1 stale *-dryrun directory");
+      expect(findings[0].message).toContain("2.0 KB");
+      expect(fs.existsSync(oldDir)).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

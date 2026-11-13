@@ -22,7 +22,7 @@ import {
 } from "./domains/financial/tools/signalBuilder";
 import { writeVerified } from "./core/safeWrite";
 import { buildRunReport, formatRunReportText } from "./core/runReport";
-import { evaluateRuns, checkCacheStaleness, dayString, type RunExpectation } from "./core/runCheck";
+import { evaluateRuns, checkCacheStaleness, checkStaleDryRuns, dayString, type RunExpectation } from "./core/runCheck";
 import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
 import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
 import { TraderAgent } from "./domains/financial/agents/traderAgent";
@@ -1034,6 +1034,16 @@ program
       expectations,
       brainRoot,
     });
+    if (!findings.some((f) => f.code === "brain_root_unreadable")) {
+      const dryRunRoots = [
+        ...expectations.map((e) => e.runsRoot),
+        ...financialRunStatsTargets(brainRoot).map((t) => t.runsRoot),
+        path.join(brainRoot, "_system", "runs", "pm"),
+        path.join(brainRoot, "_system", "runs", "eng"),
+        path.join(brainRoot, "_system", "runs", "reflect"),
+      ];
+      findings.push(...checkStaleDryRuns({ now: new Date(), runsRoots: dryRunRoots }));
+    }
 
     const config = getConfig();
     try {
