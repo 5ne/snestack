@@ -949,7 +949,12 @@ program
     // so no travel run is expected. Add a { name: "travel-backfill", runsRoot: <brain>/travel/_runs, ... }
     // expectation back here if it's ever rescheduled.
     const expectations: RunExpectation[] = financialRunExpectations(brainRoot);
-    const findings = evaluateRuns({ now: new Date(), days: Math.max(1, parseInt(opts.days, 10) || 3), expectations });
+    const findings = evaluateRuns({
+      now: new Date(),
+      days: Math.max(1, parseInt(opts.days, 10) || 3),
+      expectations,
+      brainRoot,
+    });
 
     const config = getConfig();
     try {
