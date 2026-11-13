@@ -250,18 +250,33 @@ export function finalizeRun(dir: string, scriptExitCode: number | null = null): 
   return summary;
 }
 
+const PG_PROP_RE =
+  /^(length|severity|code|detail|hint|position|internalPosition|internalQuery|where|schema|table|column|dataType|constraint|file|line|routine):\s/;
+
 /**
  * A short, useful error string from a step's stderr log: the last few lines that
- * aren't routine info/debug logging or stack frames (where the actual failure
- * message lives, not the `at Command._chainOrCall ...` tail), capped to the end
- * of the text. Null if the log is empty.
+ * aren't routine info/debug logging, stack frames, or Node `util.inspect` pg
+ * error property dumps (`line: undefined, | routine: undefined | }`), capped
+ * to `maxChars`. If a pg `code:` property was dumped, include it in the summary.
+ * Null if the log is empty.
  */
 export function extractErrorSummary(text: string, maxChars = 400): string | null {
   const lines = text
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
-  const meaningful = lines.filter((l) => !/\[(info|debug|verbose)\]/.test(l) && !/^at\s/.test(l));
-  const picked = (meaningful.length ? meaningful : lines).slice(-3).join(" | ");
-  return picked ? picked.slice(-maxChars) : null;
+  let pgCode: string | null = null;
+  for (const l of lines) {
+    const m = /^code:\s*['"]?([A-Za-z0-9_]+)['"]?,?$/.exec(l);
+    if (m) pgCode = m[1];
+  }
+  const meaningful = lines.filter(
+    (l) => !/\[(info|debug|verbose)\]/.test(l) && !/^at\s/.test(l) && !PG_PROP_RE.test(l) && l !== "}"
+  );
+  let picked = (meaningful.length ? meaningful : lines).slice(-3).join(" | ");
+  if (!picked) return null;
+  if (pgCode && !picked.includes(pgCode)) {
+    picked = `[${pgCode}] ${picked}`;
+  }
+  return picked.slice(-maxChars);
 }

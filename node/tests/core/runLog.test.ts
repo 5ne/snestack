@@ -181,4 +181,23 @@ describe("extractErrorSummary", () => {
   it("returns null for an empty log", () => {
     expect(extractErrorSummary("  \n\n")).toBeNull();
   });
+  it("drops pg util.inspect property dumps and surfaces the message and code", () => {
+    const log = [
+      "error: max clients reached in session mode - max clients are limited to pool_size: 15",
+      "    at Parser.parseErrorMessage (/x/node_modules/pg-protocol/dist/parser.js:287:98)",
+      "    at Parser.handlePacket (/x/node_modules/pg-protocol/dist/parser.js:126:29) {",
+      "  length: 112,",
+      "  severity: 'FATAL',",
+      "  code: 'EMAXCONNSESSION',",
+      "  file: 'pooler.c',",
+      "  line: undefined,",
+      "  routine: undefined",
+      "}",
+    ].join("\n");
+    const summary = extractErrorSummary(log);
+    expect(summary).toContain("EMAXCONNSESSION");
+    expect(summary).toContain("max clients reached in session mode");
+    expect(summary).not.toContain("line: undefined");
+    expect(summary).not.toContain("routine: undefined");
+  });
 });

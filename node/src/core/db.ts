@@ -469,5 +469,9 @@ export class Db {
 
 /** Never let a connection string (which embeds the password) reach a log or error message. */
 function scrub(e: unknown): string {
-  return String(e).replace(/postgres(ql)?:\/\/[^\s'"]+/gi, "postgres://<redacted>");
+  const code = (e as { code?: unknown })?.code;
+  const raw = e instanceof Error ? e.message : String(e);
+  const firstLine = raw.split("\n")[0]?.trim() || raw;
+  const msg = typeof code === "string" && code && !firstLine.includes(code) ? `[${code}] ${firstLine}` : firstLine;
+  return msg.replace(/postgres(ql)?:\/\/[^\s'"]+/gi, "postgres://<redacted>");
 }
