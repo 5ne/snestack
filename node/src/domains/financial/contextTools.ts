@@ -9,6 +9,7 @@ import { EquityAgent } from "./agents/equityAgent";
 import { quoteDataFromCache, equityDataFromCache } from "./fundamentalsCache";
 import { resolveTickerUniverse } from "./cliHelpers";
 import { companyBrainPath, evaluateThesisCoverage } from "./thesisCoverage";
+import { loadTickerDataQualityFromDb, loadUniverseDataQualityFromDb } from "./dataQuality";
 
 const logger = getLogger("financial/contextTools");
 
@@ -103,6 +104,21 @@ export const contextTools: ContextToolMap = {
     try {
       const tickers = await resolveTickerUniverse(db);
       return evaluateThesisCoverage(brainRoot, tickers);
+    } finally {
+      await db.close();
+    }
+  },
+
+  "data-quality": async (subject) => {
+    const config = getConfig();
+    const db = await Db.open(config.getDatabaseUrl());
+    try {
+      const trimmed = subject.trim();
+      const isFullUniverse = trimmed === "" || trimmed === "*" || trimmed.toLowerCase() === "all";
+      if (isFullUniverse) {
+        return await loadUniverseDataQualityFromDb(db);
+      }
+      return await loadTickerDataQualityFromDb(db, trimmed);
     } finally {
       await db.close();
     }

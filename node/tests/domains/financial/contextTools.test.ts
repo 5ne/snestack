@@ -234,4 +234,47 @@ describe("financial contextTools (cache-read behavior)", () => {
       });
     });
   });
+
+  describe("data-quality", () => {
+    it("reads cached rows only (never calling QuoteAgent or EquityAgent) and surfaces cross-source conflicts", async () => {
+      const db = shared;
+      await db.addTicker("DELL", "Dell", "PUBLIC");
+      await db.addTicker("MSFT", "Microsoft", "PUBLIC");
+      await db.addWatchlist("DELL", "AI");
+      await db.addPosition("MSFT", 10, 370, "2026-06-01");
+      const today = new Date().toISOString().split("T")[0];
+      await db.addQuote("MSFT", today, 410, 415, 405, 412, 1000, 52, 400, 390, new Date().toISOString());
+      await db.addFundamentals({
+        ...emptyFundamentalsFields,
+        ticker: "DELL",
+        as_of_date: today,
+        source: "finnhub",
+        revenue_growth: 0.49,
+      });
+      await db.addFundamentals({
+        ...emptyFundamentalsFields,
+        ticker: "DELL",
+        as_of_date: today,
+        source: "morningstar",
+        revenue_growth: -0.136,
+      });
+      await db.close();
+
+      const single = await contextTools["data-quality"]("dell");
+      expect(QuoteAgent).not.toHaveBeenCalled();
+      expect(EquityAgent).not.toHaveBeenCalled();
+      expect(single).toMatchObject({
+        ticker: "DELL",
+        ok: false,
+        flags: [expect.objectContaining({ kind: "cross_source_conflict", metric: "revenue_growth" })],
+      });
+
+      const universe = await contextTools["data-quality"]("all");
+      expect(universe).toMatchObject({
+        total: 2,
+        clean: ["MSFT"],
+        flagged: [expect.objectContaining({ ticker: "DELL", ok: false })],
+      });
+    });
+  });
 });

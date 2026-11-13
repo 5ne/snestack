@@ -1,7 +1,7 @@
 ---
 name: long-term-quality
 domain: financial
-requires: [quote, fundamentals, brain]
+requires: [quote, fundamentals, brain, data-quality]
 model: normal
 references: [quality-bar]
 # Run only when something worth a fresh look has happened: RSI at a level that matters
@@ -32,6 +32,7 @@ verdict: true
 2. Price/technical snapshot (`QuoteAgent`): current price, RSI-14, 50-day MA, 200-day MA.
 3. This ticker's brain file (`brain/investing/public/companies/{TICKER}.md`) — the user's own stated thesis (quoted verbatim there) and the history of past calls on this name.
 4. `skills/references/quality-bar.md` for the current numeric defaults — read it fresh each time rather than hardcoding numbers here, since the user tunes it directly.
+5. `DATA-QUALITY` (`data-quality` context tool): deterministic flags for cross-source Finnhub vs. Morningstar metric conflicts, stale Morningstar report dates, and anomalous cost bases. When a flag is present, cite it concisely rather than re-deriving or reconciling the two sources yourself.
 
 ## Judgment process
 
