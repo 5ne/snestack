@@ -40,24 +40,25 @@ npm run dev -- organize-reports
 
 # Full nightly long-term-quality pipeline (data-dump -> gated run-skill long-term-quality
 # per ticker -> build-signals -> notify/notify-summary).
-./scripts/daily-analysis.sh
+./src/domains/financial/scripts/daily-analysis.sh
 ```
 
-Six cron jobs together make up the split-cadence pipeline (`npm run build` first against each — all six scripts run the built CLI, not `npm run dev`). The market trades on US/Eastern hours regardless of where the cron daemon runs, so the times below are given as Pacific-time wall-clock values, converted to still land within 9:30am-4pm ET market hours — **cron interprets its time fields in the machine's own local timezone** (macOS's built-in cron has no `CRON_TZ` support; check `/etc/localtime` to confirm yours), so adjust the hour numbers below if your machine isn't on Pacific time:
+Four cron jobs together make up the split-cadence financial pipeline (`npm run build` first — all scripts run the built CLI, not `npm run dev`; run `snestack scripts` to list all registered domain scripts). The market trades on US/Eastern hours regardless of where the cron daemon runs, so the times below are given as Pacific-time wall-clock values, converted to still land within 9:30am-4pm ET market hours — **cron interprets its time fields in the machine's own local timezone** (macOS's built-in cron has no `CRON_TZ` support; check `/etc/localtime` to confirm yours), so adjust the hour numbers below if your machine isn't on Pacific time:
 
 | Script | Cadence (Pacific) | What it does |
 | --- | --- | --- |
-| `scripts/data-refresh-intraday.sh` | every 30 min, 6:30am-1pm PT (market hours) | Live quote price only (skips fundamentals) |
-| `scripts/data-refresh-daily.sh` | 2pm PT, nightly | Quote + RSI/MA + Finnhub fundamentals; Morningstar re-parse on Mondays only |
-| `scripts/daily-analysis.sh` | 2:30pm PT, nightly, after `data-refresh-daily.sh` | `long-term-quality` skill for every ticker, email + signal history |
-| `scripts/swing-check.sh` | hourly, 7am-1pm PT (market hours) | `swing-trading-large-cap` skill for every ticker, its own email + signal history |
+| `src/domains/financial/scripts/data-refresh-intraday.sh` | every 30 min, 6:30am-1pm PT (market hours) | Live quote price only (skips fundamentals) |
+| `src/domains/financial/scripts/data-refresh-daily.sh` | 2pm PT, nightly | Quote + RSI/MA + Finnhub fundamentals; Morningstar re-parse on Mondays only |
+| `src/domains/financial/scripts/daily-analysis.sh` | 2:30pm PT, nightly, after `data-refresh-daily.sh` | `long-term-quality` skill for every ticker, email + signal history |
+| `src/domains/financial/scripts/swing-check.sh` | hourly, 7am-1pm PT (market hours) | `swing-trading-large-cap` skill for every ticker, its own email + signal history |
 
 ```cron
 # crontab -e  (adjust the <repo> path; times are Pacific/local as described above)
-*/30 6-13 * * 1-5 cd <repo>/node && ./scripts/data-refresh-intraday.sh >> logs/data-refresh-intraday.cron.log 2>&1
-0 14 * * 1-5 cd <repo>/node && ./scripts/data-refresh-daily.sh >> logs/data-refresh-daily.cron.log 2>&1
-30 14 * * 1-5 cd <repo>/node && ./scripts/daily-analysis.sh >> logs/daily-analysis.cron.log 2>&1
-0 7-13 * * 1-5 cd <repo>/node && ./scripts/swing-check.sh >> logs/swing-check.cron.log 2>&1
+# (Thin exec shims also remain in ./scripts/*.sh for backwards compatibility.)
+*/30 6-13 * * 1-5 cd <repo>/node && ./src/domains/financial/scripts/data-refresh-intraday.sh >> logs/data-refresh-intraday.cron.log 2>&1
+0 14 * * 1-5 cd <repo>/node && ./src/domains/financial/scripts/data-refresh-daily.sh >> logs/data-refresh-daily.cron.log 2>&1
+30 14 * * 1-5 cd <repo>/node && ./src/domains/financial/scripts/daily-analysis.sh >> logs/daily-analysis.cron.log 2>&1
+0 7-13 * * 1-5 cd <repo>/node && ./src/domains/financial/scripts/swing-check.sh >> logs/swing-check.cron.log 2>&1
 ```
 
 Each script supports `--dry-run` (runs everything but emails/records nothing, output goes to a `-dryrun` directory) and `--tickers A,B,C` (overrides the positions+watchlist default). `snestack run-check` summarizes recent runs across the first four — see `node/src/core/runCheck.ts`; it doesn't yet have an expectation for `reflect-check.sh` itself (a reasonable follow-up, not required for the initial build).
@@ -148,7 +149,7 @@ Two ways to run `catalog-trip-year` — see `src/domains/travel/skills/catalog-t
 - **Automated** (lower fidelity, runs unattended): requires its own Gmail OAuth consent, separate from the calendar domain's.
   1. In the same Google Cloud project as above, enable the **Gmail API** (Calendar and Gmail are separate APIs even on one project/OAuth client).
   2. Run `snestack travel auth` — same flow as `calendar auth`, but for the `gmail.readonly` scope, saved to `SNESTACK_GOOGLE_GMAIL_REFRESH_TOKEN` (a separate token, since the calendar one was never granted Gmail access).
-  3. Run `snestack travel catalog <year>` (the nightly cron wrappers `scripts/travel-catalog-nightly.sh` and `scripts/travel-catalog-backfill.sh` are deprecated and unscheduled — API cost) — fetches Gmail + Timeline context deterministically, runs the skill in one model call, and writes to `<SNESTACK_BRAIN_ROOT>/travel/<year>/.nightly-draft/`. That's a staging directory, not the canonical files — review and move what's good into place yourself.
+  3. Run `snestack travel catalog <year>` (the nightly cron wrappers `src/domains/travel/scripts/travel-catalog-nightly.sh` and `src/domains/travel/scripts/travel-catalog-backfill.sh` are deprecated and unscheduled — API cost) — fetches Gmail + Timeline context deterministically, runs the skill in one model call, and writes to `<SNESTACK_BRAIN_ROOT>/travel/<year>/.nightly-draft/`. That's a staging directory, not the canonical files — review and move what's good into place yourself.
 
 ## Environment Variables
 
