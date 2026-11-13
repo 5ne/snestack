@@ -126,8 +126,10 @@ done <<< "$TICKERS"
 
 # Step 3: build the signals array from each write-up's VERDICT line (deterministic, no model call).
 # A write-up without a valid verdict is reported as an error but doesn't block the valid ones.
+BUILD_FLAGS=""
+[ "$DRY_RUN" -eq 1 ] && BUILD_FLAGS="--dry-run"
 RL_ERR_FILE="$RUN_DIR/build-signals.log" rl_step build-signals all \
-  node dist/cli.js build-signals --dir "$RUN_DIR" > "$RUN_DIR/signals.json" 2> "$RUN_DIR/build-signals.log" || true
+  node dist/cli.js build-signals --dir "$RUN_DIR" $BUILD_FLAGS > "$RUN_DIR/signals.json" 2> "$RUN_DIR/build-signals.log" || true
 
 # Step 4: send the batch email and record signals in the financial database (dry run: preview only).
 # On a quiet day (every call gated off, or nothing to report) there is nothing to send.

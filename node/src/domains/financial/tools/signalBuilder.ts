@@ -58,20 +58,67 @@ const SKILL_PREFIX: Record<string, string> = {
 };
 const FILE_RE = /^([A-Za-z0-9.\-]+?)-(long-term-quality|swing-trading-large-cap)\.md$/;
 
+export interface EvaluatedVerdict {
+  ticker: string;
+  skill: string;
+  verdict: string;
+  rsi: number | null;
+  price: number | null;
+}
+
 /** Tickers flagged isWatchlist in <dir>/data-dump.json (tolerates log lines before the JSON array). */
-export function readWatchlistTickers(dir: string): Set<string> {
-  const watch = new Set<string>();
+function readDumpEntries(dir: string): Array<{ ticker: string; isWatchlist?: boolean; quote?: { close?: number; rsi?: number | null } }> {
   const file = path.join(dir, "data-dump.json");
-  if (!fs.existsSync(file)) return watch;
+  if (!fs.existsSync(file)) return [];
   try {
     const lines = fs.readFileSync(file, "utf8").split("\n");
     const start = lines.findIndex((l) => l === "[");
-    const arr = JSON.parse(lines.slice(start < 0 ? 0 : start).join("\n")) as Array<{ ticker: string; isWatchlist?: boolean }>;
-    arr.forEach((e) => e.isWatchlist && watch.add(e.ticker));
+    return JSON.parse(lines.slice(start < 0 ? 0 : start).join("\n"));
   } catch {
-    // an unreadable dump just means every ticker is treated as a position
+    return [];
+  }
+}
+
+export function readWatchlistTickers(dir: string): Set<string> {
+  const watch = new Set<string>();
+  for (const e of readDumpEntries(dir)) {
+    if (e.isWatchlist) watch.add(e.ticker);
   }
   return watch;
+}
+
+/**
+ * Collect every valid verdict in <dir> (including NONE) with the ticker's RSI
+ * and price from data-dump.json so the gate can track the last evaluated run
+ * even when no BUY/SELL/HOLD signal was emitted.
+ */
+export function collectEvaluationsFromDir(dir: string): EvaluatedVerdict[] {
+  const dumpByTicker = new Map<string, { rsi: number | null; price: number | null }>();
+  for (const e of readDumpEntries(dir)) {
+    dumpByTicker.set(e.ticker.toUpperCase(), {
+      rsi: e.quote?.rsi ?? null,
+      price: e.quote?.close ?? null,
+    });
+  }
+  const evaluations: EvaluatedVerdict[] = [];
+  for (const name of fs.readdirSync(dir).sort()) {
+    const m = FILE_RE.exec(name);
+    if (!m) continue;
+    const [, rawTicker, skill] = m;
+    const ticker = rawTicker.toUpperCase();
+    const verdict = parseVerdict(fs.readFileSync(path.join(dir, name), "utf8"));
+    if (!verdict) continue;
+    if (!["BUY", "SELL", "HOLD", "NONE"].includes(verdict.label)) continue;
+    const quote = dumpByTicker.get(ticker);
+    evaluations.push({
+      ticker,
+      skill,
+      verdict: verdict.label,
+      rsi: quote?.rsi ?? null,
+      price: quote?.price ?? null,
+    });
+  }
+  return evaluations;
 }
 
 /**

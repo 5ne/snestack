@@ -3,7 +3,12 @@ import * as os from "os";
 import * as path from "path";
 import { openTestDb } from "../../../helpers/testDb";
 import { Db } from "../../../../src/core/db";
-import { buildSignalsFromDir, filterUnchangedSignals, type BuiltSignal } from "../../../../src/domains/financial/tools/signalBuilder";
+import {
+  buildSignalsFromDir,
+  collectEvaluationsFromDir,
+  filterUnchangedSignals,
+  type BuiltSignal,
+} from "../../../../src/domains/financial/tools/signalBuilder";
 
 describe("buildSignalsFromDir", () => {
   let dir: string;
@@ -55,6 +60,22 @@ describe("buildSignalsFromDir", () => {
     write("signals.json", "[]");
     write("INTU-long-term-quality.log", "stderr");
     expect(buildSignalsFromDir(dir)).toEqual({ signals: [], noSignal: [], errors: [] });
+  });
+
+  it("collectEvaluationsFromDir captures NONE verdicts with quote RSI and price from data-dump.json", () => {
+    write(
+      "data-dump.json",
+      JSON.stringify([
+        { ticker: "RIVN", quote: { close: 12.34, rsi: 15.8 } },
+        { ticker: "GOOG", quote: { close: 175.0, rsi: 14.87 } },
+      ])
+    );
+    write("RIVN-swing-trading-large-cap.md", "No setup.\nVERDICT: NONE | 0.97 | Weak bounce\n");
+    write("GOOG-swing-trading-large-cap.md", "Oversold.\nVERDICT: BUY | 0.85 | Oversold quality\n");
+    expect(collectEvaluationsFromDir(dir)).toEqual([
+      { ticker: "GOOG", skill: "swing-trading-large-cap", verdict: "BUY", rsi: 14.87, price: 175.0 },
+      { ticker: "RIVN", skill: "swing-trading-large-cap", verdict: "NONE", rsi: 15.8, price: 12.34 },
+    ]);
   });
 });
 

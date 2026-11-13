@@ -14,7 +14,11 @@ import { authorizeGmail } from "./domains/travel/setup";
 import { parseMultiFileOutput, writeStagedCatalogFiles, writeCatalogFilesToDir } from "./domains/travel/tools/fileWriter";
 import { nextBackfillYear, BACKFILL_START_YEAR, BACKFILL_END_YEAR } from "./domains/travel/tools/backfill";
 import { logRunEvent, finalizeRun, currentRunDir, extractErrorSummary, readRunEvents } from "./core/runLog";
-import { buildSignalsFromDir, filterUnchangedSignals } from "./domains/financial/tools/signalBuilder";
+import {
+  buildSignalsFromDir,
+  collectEvaluationsFromDir,
+  filterUnchangedSignals,
+} from "./domains/financial/tools/signalBuilder";
 import { writeVerified } from "./core/safeWrite";
 import { buildRunReport, formatRunReportText } from "./core/runReport";
 import { evaluateRuns, checkCacheStaleness, dayString, type RunExpectation } from "./core/runCheck";
@@ -726,22 +730,39 @@ program
     "With --only-changed: still treat a same-recommendation signal as changed if confidence moved at least this much (0-1)",
     "0.1"
   )
-  .action(async (opts: { dir: string; onlyChanged?: boolean; confidenceMove: string }) => {
+  .option("--dry-run", "Do not persist gate_runs records to the database")
+  .action(async (opts: { dir: string; onlyChanged?: boolean; confidenceMove: string; dryRun?: boolean }) => {
     if (!fs.existsSync(opts.dir)) {
       console.error(`Directory not found: ${opts.dir}`);
       process.exitCode = 1;
       return;
     }
     const result = buildSignalsFromDir(opts.dir);
+    const evaluations = opts.dryRun ? [] : collectEvaluationsFromDir(opts.dir);
     let signals = result.signals;
     let unchangedCount = 0;
-    if (opts.onlyChanged) {
-      const config = getConfig();
-      const db = await Db.open(config.getDatabaseUrl());
+    const config = getConfig();
+    const dbUrl = config.getDatabaseUrl();
+    if (opts.onlyChanged || (!opts.dryRun && evaluations.length > 0 && dbUrl)) {
+      const db = await Db.open(dbUrl);
       try {
-        const filtered = await filterUnchangedSignals(db, result.signals, parseFloat(opts.confidenceMove));
-        signals = filtered.changed;
-        unchangedCount = filtered.unchanged.length;
+        if (opts.onlyChanged) {
+          const filtered = await filterUnchangedSignals(db, result.signals, parseFloat(opts.confidenceMove));
+          signals = filtered.changed;
+          unchangedCount = filtered.unchanged.length;
+        }
+        if (!opts.dryRun && evaluations.length > 0) {
+          const runAt = new Date().toISOString();
+          for (const ev of evaluations) {
+            let { rsi, price } = ev;
+            if (rsi == null || price == null) {
+              const q = await db.getLatestQuote(ev.ticker);
+              if (rsi == null) rsi = q?.rsi ?? null;
+              if (price == null) price = q?.close ?? null;
+            }
+            await db.recordGateRun({ ticker: ev.ticker, skill: ev.skill, runAt, verdict: ev.verdict, rsi, price });
+          }
+        }
       } finally {
         await db.close();
       }

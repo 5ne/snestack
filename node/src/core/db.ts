@@ -72,6 +72,17 @@ export interface SignalRow {
   created_at: string;
 }
 
+export interface GateRunRow {
+  id: number;
+  ticker: string;
+  skill: string;
+  run_at: string;
+  verdict: string;
+  rsi: number | null;
+  price: number | null;
+  created_at: string;
+}
+
 /** Anything with pg's `query` shape — a real `pg.Pool` or a test double (pg-mem). */
 export interface PgPoolLike {
   query(text: string, values?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -179,9 +190,20 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_signals_date ON signals(date);
   CREATE INDEX IF NOT EXISTS idx_signals_ticker ON signals(ticker);
   CREATE INDEX IF NOT EXISTS idx_fundamentals_ticker ON fundamentals(ticker, source);
+  CREATE TABLE IF NOT EXISTS gate_runs (
+    id SERIAL PRIMARY KEY,
+    ticker TEXT NOT NULL REFERENCES tickers(symbol),
+    skill TEXT NOT NULL,
+    run_at TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    rsi DOUBLE PRECISION,
+    price DOUBLE PRECISION,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_gate_runs_ticker_skill ON gate_runs(ticker, skill, run_at DESC);
 `;
 
-const TABLES = ["tickers", "positions", "watchlist", "quotes", "fundamentals", "signals"];
+const TABLES = ["tickers", "positions", "watchlist", "quotes", "fundamentals", "signals", "gate_runs"];
 
 /**
  * Postgres-backed store (Supabase in production). Same method surface as the
@@ -459,6 +481,31 @@ export class Db {
 
   getSignalById(id: number): Promise<SignalRow | undefined> {
     return this.one("SELECT * FROM signals WHERE id = $1", [id]);
+  }
+
+  // ── Gate runs (every evaluated verdict, including NONE) ────────────────────
+
+  recordGateRun(row: {
+    ticker: string;
+    skill: string;
+    runAt: string;
+    verdict: string;
+    rsi: number | null;
+    price: number | null;
+  }): Promise<boolean> {
+    return this.write(
+      `INSERT INTO gate_runs (ticker, skill, run_at, verdict, rsi, price, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [row.ticker, row.skill, row.runAt, row.verdict, row.rsi, row.price, new Date().toISOString()]
+    );
+  }
+
+  getLastGateRun(ticker: string, skill: string): Promise<GateRunRow | undefined> {
+    return this.one(
+      `SELECT * FROM gate_runs WHERE ticker = $1 AND skill = $2
+       ORDER BY run_at DESC, id DESC LIMIT 1`,
+      [ticker, skill]
+    );
   }
 
   /** Close the connection pool. */
