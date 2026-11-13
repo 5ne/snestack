@@ -109,8 +109,8 @@ node/src/
 
 ## Adding a new domain
 
-1. Create `node/src/domains/<name>/` with `skills/` and a `contextTools.ts` exporting `contextTools: ContextToolMap`.
-2. Register it in `node/src/config/domains.json` (`skillsDir`, `contextToolsModule`).
+1. Create `node/src/domains/<name>/` with `skills/`, a `contextTools.ts` exporting `contextTools: ContextToolMap`, and (optionally) an `api.ts` exporting `domainApi: DomainApiModule` for domain-specific HTTP routes + CLI subcommands.
+2. Register it in `node/src/config/domains.json` (`skillsDir`, `contextToolsModule`, and optional `scriptsDir` / `apiModule`).
 3. No changes to `core/` should be necessary — if you find yourself editing `core/`, that's a sign something domain-specific leaked in there.
 
 ## Adding a deterministic tool (financial domain)
@@ -121,20 +121,13 @@ node/src/
 4. Add tests in `node/tests/domains/financial/agents/`.
 5. Expose it through `contextTools.ts` if a skill should be able to `require` it.
 
-## Adding a New CLI Command
+## Adding a New Isomorphic API + CLI Operation
 
-1. Add a `commander` subcommand in `cli.ts`:
-```ts
-program
-  .command("mycommand")
-  .description("Description")
-  .option("--option <value>", "Option help")
-  .action(async (opts) => {
-    // Your logic
-  });
-```
+`snestack` is isomorphic: CLI commands and Web UIs share the same HTTP API handlers (`node/src/core/api/` for domain-agnostic harness routes, `node/src/domains/<domain>/api.ts` for domain routes).
 
-2. Add tests in `node/tests/cli.test.ts` (spawns the real CLI as a smoke test).
+1. Add an `ApiRoute` entry (`method`, `pattern`, `summary`, `handler`) to `domains/<domain>/api.ts` (or `core/api/coreRoutes.ts` if strictly domain-agnostic).
+2. Wire the matching Commander subcommand in `registerCli(program, ctx)` calling `ctx.getClient()` and `ctx.output(res, () => { ... })` so both `--json`, `--api-url`, and human CLI output stay 1:1 symmetric.
+3. Add tests in `node/tests/core/api.test.ts` (or domain API tests) and `node/tests/cli.test.ts`.
 
 ## Testing Guidelines
 

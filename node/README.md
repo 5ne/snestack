@@ -16,9 +16,23 @@ cp .env.example .env
 # Edit .env with your API keys
 ```
 
-## Running the CLI
+## Running the CLI & Isomorphic HTTP API
+
+Every capability in `snestack` is **isomorphic**: the CLI (`snestack <command>`) and HTTP JSON API (`snestack serve`) share the exact same route handlers (`src/core/api/` + each domain's `api.ts`). Anything a Web UI can do over HTTP, the CLI can do from the terminal, and vice versa.
+
+- **In-process default (zero daemon required for cron):** When `SNESTACK_API_URL` / `--api-url` is unset, CLI commands dispatch directly through the API router in-process.
+- **HTTP server & remote CLI mode:** Run `snestack serve` (defaults to `127.0.0.1:4700`, or `0.0.0.0:$PORT` when `PORT` is set alongside `SNESTACK_API_TOKEN`). Pass `--api-url <url>` (or set `SNESTACK_API_URL`) to route any CLI command over HTTP, and `--json` on any command for structured JSON output.
+- **Self-documenting route catalog:** Run `snestack routes` (or `GET /api/routes`) to list every core and domain endpoint.
 
 ```bash
+
+# Start the HTTP API server (loopback by default; Bearer auth when SNESTACK_API_TOKEN is set)
+npm run dev -- serve --addr 127.0.0.1:4700
+
+# Inspect registered API endpoints, domains, and skills (human or --json)
+npm run dev -- routes
+npm run dev -- --json domains
+npm run dev -- skills
 
 # First-time setup
 npm run dev -- setup
@@ -177,6 +191,9 @@ Two ways to run `catalog-trip-year` — see `src/domains/travel/skills/catalog-t
 | `SNESTACK_GOOGLE_CLIENT_SECRET` | No | Calendar domain — Google OAuth client secret |
 | `SNESTACK_GOOGLE_REFRESH_TOKEN` | No | Calendar domain — written by `snestack calendar auth`, not set by hand |
 | `SNESTACK_GOOGLE_GMAIL_REFRESH_TOKEN` | No | Travel domain — written by `snestack travel auth`, not set by hand (separate token from the calendar one above; same `SNESTACK_GOOGLE_CLIENT_ID`/`_SECRET`, different scope) |
+| `SNESTACK_API_URL` | No | Optional `snestack serve` base URL (e.g. `http://127.0.0.1:4700`); when unset, CLI dispatches through the same API router in-process |
+| `SNESTACK_API_TOKEN` | When binding non-loopback host | Bearer token required on `/api/*` requests (except `GET /api/health` readiness probe) |
+| `SNESTACK_API_HOST`, `SNESTACK_API_PORT` | No | Bind host/port for `snestack serve` (defaults to `127.0.0.1` and `4700`, or `0.0.0.0:$PORT` when `PORT` is set) |
 
 
 ## Model-call backend (`SNESTACK_EXECUTOR`)

@@ -128,6 +128,10 @@ export class Config {
   static readonly SMS_PHONE = "SNESTACK_SMS_PHONE";
   static readonly BRAIN_ROOT = "SNESTACK_BRAIN_ROOT";
   static readonly DATABASE_URL = "SNESTACK_DATABASE_URL";
+  static readonly API_URL = "SNESTACK_API_URL";
+  static readonly API_TOKEN = "SNESTACK_API_TOKEN";
+  static readonly API_HOST = "SNESTACK_API_HOST";
+  static readonly API_PORT = "SNESTACK_API_PORT";
   // Root of the shared Google Drive-synced folder — the one directory setting
   // for all of a domain's shared data. Each domain's brain lives under
   // <root>/<domain>/brain/ (e.g. <root>/financial/brain/), and the financial
@@ -258,6 +262,18 @@ export class Config {
 
   getSmsPhone(): string | undefined {
     return Config.get(Config.SMS_PHONE);
+  }
+
+  /** Optional remote HTTP API server URL (e.g. "http://127.0.0.1:4700"); when unset, CLI dispatches in-process. */
+  getApiUrl(): string | undefined {
+    const v = Config.get(Config.API_URL)?.trim();
+    return v ? v : undefined;
+  }
+
+  /** Optional Bearer token protecting `snestack serve` and sent by HTTP API clients. */
+  getApiToken(): string | undefined {
+    const v = Config.get(Config.API_TOKEN)?.trim();
+    return v ? v : undefined;
   }
 
   /**

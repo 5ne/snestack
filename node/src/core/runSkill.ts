@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { loadSkillFile } from "./skillLoader";
-import { getDomainConfig, loadContextTools, loadGateFacts } from "./domainRegistry";
+import { getDomainConfig, loadContextTools, loadGateFacts, resolveDomainSkillsDir } from "./domainRegistry";
 import { evaluateGate, type GateDecision } from "./gate";
 import { parseVerdict, type Verdict } from "./verdict";
 import { logRunEvent } from "./runLog";
@@ -41,11 +41,6 @@ export interface AssembledSkillPrompt {
   verdictRequired: boolean;
 }
 
-/** Where this domain's skill markdown actually lives on disk (always under src/, even in a compiled build). */
-function resolveSkillsDir(skillsDirRelativeToSrc: string): string {
-  return path.join(process.cwd(), "src", skillsDirRelativeToSrc);
-}
-
 /**
  * Load a skill's frontmatter + body and resolve its `requires`/`references` via
  * the domain's context tools into a system + user prompt — everything
@@ -59,8 +54,8 @@ export async function assembleSkillPrompt(
   skillName: string,
   subject: string
 ): Promise<AssembledSkillPrompt> {
-  const domainConfig = getDomainConfig(domain);
-  const skillsDir = resolveSkillsDir(domainConfig.skillsDir);
+  getDomainConfig(domain);
+  const skillsDir = resolveDomainSkillsDir(domain);
   const skillPath = path.join(skillsDir, `${skillName}.md`);
   if (!fs.existsSync(skillPath)) {
     throw new Error(`Skill not found: ${domain}/${skillName} (looked in ${skillPath})`);
@@ -172,7 +167,7 @@ export async function runSkill(
 export async function evaluateSkillGate(domain: string, skillName: string, subject: string): Promise<GateDecision> {
   let decision: GateDecision;
   try {
-    const skillPath = path.join(resolveSkillsDir(getDomainConfig(domain).skillsDir), `${skillName}.md`);
+    const skillPath = path.join(resolveDomainSkillsDir(domain), `${skillName}.md`);
     const { frontmatter } = loadSkillFile(skillPath);
     const factsFn = frontmatter.gate ? await loadGateFacts(domain) : null;
     decision =
