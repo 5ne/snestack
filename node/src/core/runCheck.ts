@@ -351,6 +351,98 @@ export function evaluateRuns(opts: { now: Date; days: number; expectations: RunE
   return remaining;
 }
 
+export const FINNHUB_FUNDAMENTALS_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+
+/** Observed date for a fixed-date US holiday (Sat -> Fri, Sun -> Mon). */
+function observedHoliday(year: number, month: number, day: number): string {
+  const d = new Date(year, month, day);
+  if (d.getDay() === 6) d.setDate(d.getDate() - 1);
+  else if (d.getDay() === 0) d.setDate(d.getDate() + 1);
+  return dayString(d);
+}
+
+/** Nth weekday of a month (1-indexed; weekday 0=Sun..6=Sat), or last if n < 0. */
+function nthWeekdayOfMonth(year: number, month: number, weekday: number, n: number): string {
+  if (n > 0) {
+    const first = new Date(year, month, 1).getDay();
+    const day = 1 + ((weekday - first + 7) % 7) + (n - 1) * 7;
+    return dayString(new Date(year, month, day));
+  }
+  const lastDate = new Date(year, month + 1, 0);
+  const diff = (lastDate.getDay() - weekday + 7) % 7;
+  lastDate.setDate(lastDate.getDate() - diff);
+  return dayString(lastDate);
+}
+
+/** Anonymous Gregorian Easter algorithm -> Good Friday (2 days before Easter). */
+function goodFriday(year: number): string {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31) - 1; // 0-indexed
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  const gf = new Date(year, month, day - 2);
+  return dayString(gf);
+}
+
+function usMarketHolidays(year: number): Set<string> {
+  return new Set([
+    observedHoliday(year, 0, 1),          // New Year's Day
+    nthWeekdayOfMonth(year, 0, 1, 3),     // MLK Jr. Day
+    nthWeekdayOfMonth(year, 1, 1, 3),     // Presidents' Day
+    goodFriday(year),                     // Good Friday
+    nthWeekdayOfMonth(year, 4, 1, -1),    // Memorial Day
+    observedHoliday(year, 5, 19),         // Juneteenth
+    observedHoliday(year, 6, 4),          // Independence Day
+    nthWeekdayOfMonth(year, 8, 1, 1),     // Labor Day
+    nthWeekdayOfMonth(year, 10, 4, 4),    // Thanksgiving
+    observedHoliday(year, 11, 25),        // Christmas
+  ]);
+}
+
+export function isUsTradingDay(d: Date): boolean {
+  const dow = d.getDay();
+  if (dow === 0 || dow === 6) return false;
+  return !usMarketHolidays(d.getFullYear()).has(dayString(d));
+}
+
+/**
+ * Elapsed milliseconds between `fromMs` and `toMs` counting only US trading days
+ * (weekdays excluding US market holidays). Used so Friday's Finnhub fundamentals
+ * remain fresh on Monday morning instead of tripping the 48h safety-net window.
+ */
+export function elapsedMarketMs(fromMs: number, toMs: number): number {
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return Infinity;
+  if (toMs <= fromMs) return 0;
+  let total = 0;
+  let cursor = fromMs;
+  while (cursor < toMs) {
+    const d = new Date(cursor);
+    const nextMidnight = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+    const chunkEnd = Math.min(toMs, nextMidnight);
+    if (isUsTradingDay(d)) {
+      total += chunkEnd - cursor;
+    }
+    cursor = chunkEnd;
+  }
+  return total;
+}
+
+export function isFinnhubFundamentalsFresh(fetchedAt: string | null | undefined, now: Date = new Date()): boolean {
+  if (!fetchedAt) return false;
+  const age = elapsedMarketMs(Date.parse(fetchedAt), now.getTime());
+  return Number.isFinite(age) && age <= FINNHUB_FUNDAMENTALS_MAX_AGE_MS;
+}
+
 /**
  * Checks whether any tracked ticker's latest cached fundamentals/quote row is
  * older than its tier's safety-net max-age (see domains/financial/contextTools.ts,
@@ -366,8 +458,8 @@ export function checkCacheStaleness(opts: {
 }): Finding[] {
   const findings: Finding[] = [];
   const date = dayString(opts.now);
+  const nowMs = opts.now.getTime();
   const QUOTE_STALE_MS = 48 * 60 * 60 * 1000;
-  const FINNHUB_STALE_MS = 48 * 60 * 60 * 1000;
   const MORNINGSTAR_STALE_MS = 21 * 24 * 60 * 60 * 1000;
 
   const staleTickers = (ageMs: (ticker: string) => number | null, thresholdMs: number): string[] =>
@@ -390,8 +482,11 @@ export function checkCacheStaleness(opts: {
   report("quotes", "48h", staleTickers((t) => opts.getLatestQuoteAge(t), QUOTE_STALE_MS));
   report(
     "finnhub fundamentals",
-    "48h",
-    staleTickers((t) => opts.getLatestFundamentalsAge(t, "finnhub"), FINNHUB_STALE_MS)
+    "48h trading",
+    staleTickers((t) => {
+      const wallAge = opts.getLatestFundamentalsAge(t, "finnhub");
+      return wallAge == null ? null : elapsedMarketMs(nowMs - wallAge, nowMs);
+    }, FINNHUB_FUNDAMENTALS_MAX_AGE_MS)
   );
   report(
     "morningstar fundamentals",
