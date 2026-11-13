@@ -34,7 +34,7 @@ import { runDataRefresh, DATA_REFRESH_TIERS, type DataRefreshTier } from "./doma
 import { equityDataFromCache } from "./domains/financial/fundamentalsCache";
 import { computeTickerDataQuality, loadDataQualityTolerances } from "./domains/financial/dataQuality";
 import type { Signal } from "./core/models";
-import { getDomainConfig } from "./core/domainRegistry";
+import { getDomainConfig, getDomainScriptsDir, listAllDomainScripts, listDomainScripts } from "./core/domainRegistry";
 
 const program = new Command();
 
@@ -1068,6 +1068,27 @@ travel
     if (year !== null) console.log(year);
   });
 
+program
+  .command("scripts")
+  .description("List scheduled automation scripts registered by each domain in config/domains.json")
+  .option("--domain <d>", "Only show scripts for this domain")
+  .action((opts: { domain?: string }) => {
+    const nodeDir = path.resolve(__dirname, "..");
+    const byDomain = opts.domain
+      ? { [opts.domain]: listDomainScripts(opts.domain, nodeDir) }
+      : listAllDomainScripts(nodeDir);
+    let total = 0;
+    for (const [domain, files] of Object.entries(byDomain)) {
+      if (files.length === 0) continue;
+      const dir = getDomainScriptsDir(domain, nodeDir);
+      const relDir = dir ? path.relative(nodeDir, dir) : "";
+      for (const f of files) {
+        console.log(`${domain}  ${path.join(relDir, f)}`);
+        total++;
+      }
+    }
+    if (total === 0) console.log("No domain scripts registered.");
+  });
 
 program.parseAsync(process.argv).catch((e) => {
   console.error(e);

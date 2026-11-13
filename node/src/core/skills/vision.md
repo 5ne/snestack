@@ -191,12 +191,14 @@ not the skill actually ran.
 
 ### What `core/` expects of every domain — the actual contract
 
-A domain registers itself in `config/domains.json` with exactly two fields:
+A domain registers itself in `config/domains.json` with two required fields
+and an optional `scriptsDir`:
 
 ```json
 "<domain>": {
   "skillsDir": "domains/<domain>/skills",
-  "contextToolsModule": "domains/<domain>/contextTools"
+  "contextToolsModule": "domains/<domain>/contextTools",
+  "scriptsDir": "domains/<domain>/scripts"
 }
 ```
 
@@ -225,33 +227,15 @@ provide:
      Promise<GateFacts>`, supplying whatever a skill's `gate:` config needs
      to evaluate (RSI, last-run timestamp, etc.). Only needed if any skill
      in the domain declares a `gate:`.
-4. **Scheduled automation — and this is a real gap, not a convention.**
-   There is no `domains/<domain>/scripts/` directory, no registration for
-   it in `config/domains.json`, and nothing in `domainRegistry.ts` that
-   knows a script exists. Every cron-run shell script
-   (`data-refresh-daily.sh`, `data-refresh-intraday.sh`,
-   `daily-analysis.sh`, `swing-check.sh`, `travel-catalog-nightly.sh`,
-   `travel-catalog-backfill.sh`, plus the cross-domain `pm-daily.sh` and `eng-daily.sh`)
-   sits flat in one top-level `node/scripts/`, grouped only by filename
-   prefix — financial's and travel's scripts live side by side with each
-   other and with the one script that's legitimately cross-domain. The
-   only shared code across them is `scripts/lib/run-log.sh`, a bash
-   wrapper around `core/runLog.ts`; the actual shape each one follows
-   (parse `--dry-run`/`--tickers`, call the domain's own ingestion command,
-   chain `data-dump` → `run-skill --gated --out` per subject →
-   `build-signals` → `notify`/`notify-summary`, stage under
-   `~/Library/Logs/snestack/runs/` then publish to `<brain>/...`) is
-   copy-pasted into each new script by hand, not expressed once and
-   reused. `run-skill`/`gate`/`verdict`/`runLog` are the real, registered
-   harness primitives a script calls into; the script itself is unregistered
-   glue outside the domain contract entirely. A new domain wanting its own
-   cron automation today has to hand-write a shell script following the
-   existing ones' shape by eye, in the same shared `node/scripts/`
-   directory — there is nothing to extend, only something to imitate. This
-   is a legitimate candidate for harness-level work (a real `scripts/`-per-
-   domain convention, or a thin TS runner that replaces the copy-pasted
-   shell shape) — but it's exactly that: a candidate, not something this
-   file should claim already exists.
+4. **`domains/<domain>/scripts/*.sh`** (optional) — registered via
+   `scriptsDir` in `config/domains.json` and discoverable through
+   `domainRegistry.ts` (`listDomainScripts` / `listAllDomainScripts`) and
+   `snestack scripts`. Shared cron bootstrap (`rl_bootstrap`,
+   `rl_default_failure_hook`, per-script locking, and staging/publishing)
+   lives in `scripts/lib/run-log.sh`. Top-level `node/scripts/` holds
+   `scripts/lib/`, diagnostic scripts (`agy-cli-test.sh`,
+   `claude-cli-test.sh`), and thin `exec` compatibility shims for existing
+   cron entries.
 5. **Deterministic ingestion code** (optional, domain-owned, no fixed
    shape `core/` enforces) — financial's `agents/` (API-calling, one class
    per data source), `tools/` (PDF parsing, file organizing), and

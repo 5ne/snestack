@@ -21,6 +21,32 @@
 RL_LOCK_OWNED=0
 RL_LOCK_DIR=""
 
+# Bootstrap a cron/scheduled script: load nvm + Homebrew/local PATH, cd into
+# node/, verify dist/cli.js is built, and resolve BRAIN_ROOT.
+rl_bootstrap() {
+  local node_dir="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$NVM_DIR/nvm.sh" >/dev/null
+  fi
+  export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+  cd "$node_dir"
+  if [ ! -f dist/cli.js ]; then
+    echo "dist/cli.js not found — run 'npm run build' first" >&2
+    exit 1
+  fi
+  BRAIN_ROOT="$(node -e 'console.log(require("./dist/core/config").getConfig().getBrainRoot())')"
+}
+
+# Standard failure hook: email a run summary if the run failed before any
+# signal email went out (skipped in --dry-run).
+rl_default_failure_hook() {
+  [ "${DRY_RUN:-0}" -eq 1 ] && return 0
+  [ -e "$RUN_DIR/.email-sent" ] && return 0
+  node dist/cli.js notify-summary --dir "$RUN_DIR" > "$RUN_DIR/failure-email.out" 2> "$RUN_DIR/failure-email.log" || true
+}
+
 rl_release_lock() {
   if [ "${RL_LOCK_OWNED:-0}" -eq 1 ] && [ -n "${RL_LOCK_DIR:-}" ]; then
     rm -rf "$RL_LOCK_DIR" 2>/dev/null || true
