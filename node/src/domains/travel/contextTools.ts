@@ -17,19 +17,23 @@ import { searchTravelEmailsForYear } from "./tools/gmailClient";
  */
 export const contextTools: ContextToolMap = {
   timeline: async (subject) => {
-    const year = parseYear(subject);
-    return timelineForYear(year);
+    const { year, since } = parseYearSubject(subject);
+    return timelineForYear(year, since ? { since } : undefined);
   },
   gmail: async (subject) => {
-    const year = parseYear(subject);
+    const { year } = parseYearSubject(subject);
     return searchTravelEmailsForYear(year);
   },
 };
 
-function parseYear(subject: string): number {
-  const year = parseInt(subject, 10);
-  if (!Number.isInteger(year) || subject.length !== 4) {
+function parseYearSubject(subject: string): { year: number; since?: string } {
+  const [yearPart, sincePart] = subject.split("@");
+  const year = parseInt(yearPart, 10);
+  if (!Number.isInteger(year) || yearPart.length !== 4) {
     throw new Error(`travel domain subject must be a 4-digit year, got "${subject}"`);
   }
-  return year;
+  if (sincePart !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(sincePart)) {
+    throw new Error(`travel --since date must be YYYY-MM-DD, got "${sincePart}"`);
+  }
+  return { year, since: sincePart };
 }

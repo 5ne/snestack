@@ -2,7 +2,11 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { resetConfig } from "../../../../src/core/config";
-import { timelineForYear } from "../../../../src/domains/travel/tools/timelineClient";
+import {
+  timelineForYear,
+  parseLastIndexedTripEndDate,
+  listExistingTripFiles,
+} from "../../../../src/domains/travel/tools/timelineClient";
 
 const SNESTACK_VARS = ["SNESTACK_BRAIN_ROOT"];
 
@@ -83,5 +87,35 @@ describe("timelineForYear", () => {
     expect(ctx.clusters[0].visits[0].mapUrl).toBe(
       "https://www.google.com/maps/search/?api=1&query=37.5,-122.5&query_place_id=abc123"
     );
+  });
+
+  it("filters clusters to those ending after --since", () => {
+    writeTimeline([
+      visit("2024-05-01T09:00:00-07:00", "2024-05-01T18:00:00-07:00", "place-a", 1, 1),
+      visit("2024-09-10T09:00:00-07:00", "2024-09-10T18:00:00-07:00", "place-b", 2, 2),
+    ]);
+    const ctx = timelineForYear(2024, { since: "2024-08-08" });
+    expect(ctx.clusters).toHaveLength(1);
+    expect(ctx.clusters[0].startDate).toBe("2024-09-10");
+  });
+
+  it("parses the latest trip end date from 00-index-<year>.md and lists existing trip files", () => {
+    const indexMd = [
+      "# Trip Catalog — 2026",
+      "## Trips taken in 2026",
+      "| Dates | Trip | Nights | File |",
+      "|---|---|---|---|",
+      "| Feb 27–Mar 1 | Austin | 2 | `2026-02-austin.md` |",
+      "| Aug 2–8 | Oahu | 6 | `2026-08-oahu.md` |",
+      "## Booked / upcoming (no files yet)",
+      "- **Oct 18–21, 2026 — Augusta**",
+    ].join("\n");
+    expect(parseLastIndexedTripEndDate(indexMd, 2026)).toBe("2026-08-08");
+
+    const yearDir = path.join(brainRoot, "travel", "2026");
+    fs.mkdirSync(yearDir, { recursive: true });
+    fs.writeFileSync(path.join(yearDir, "00-index-2026.md"), indexMd);
+    fs.writeFileSync(path.join(yearDir, "2026-08-oahu.md"), "# Oahu");
+    expect(listExistingTripFiles(yearDir)).toEqual(["00-index-2026.md", "2026-08-oahu.md"]);
   });
 });

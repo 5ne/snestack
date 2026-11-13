@@ -117,7 +117,7 @@ function findRoutinePlaceIds(visits: Array<{ placeId: string; startTime: string 
 }
 
 /** Filter to a year's away-from-home visits and group into trip-shaped clusters by time gap. */
-export function timelineForYear(year: number): TimelineContext {
+export function timelineForYear(year: number, opts?: { since?: string }): TimelineContext {
   const allVisits = loadVisits();
 
   const datasetCoversFrom = allVisits.length
@@ -175,12 +175,85 @@ export function timelineForYear(year: number): TimelineContext {
   }
   flush();
 
+  const filteredClusters = opts?.since ? clusters.filter((c) => c.endDate > opts.since!) : clusters;
+
   return {
     year,
     datasetCoversFrom,
     datasetCoversTo,
     hasCoverageForYear,
     routinePlaceIds: [...routinePlaceIds],
-    clusters,
+    clusters: filteredClusters,
   };
+}
+
+const MONTHS: Record<string, number> = {
+  jan: 1, january: 1,
+  feb: 2, february: 2,
+  mar: 3, march: 3,
+  apr: 4, april: 4,
+  may: 5,
+  jun: 6, june: 6,
+  jul: 7, july: 7,
+  aug: 8, august: 8,
+  sep: 9, sept: 9, september: 9,
+  oct: 10, october: 10,
+  nov: 11, november: 11,
+  dec: 12, december: 12,
+};
+
+/**
+ * Parse the latest end date (YYYY-MM-DD) from the "Trips taken" table in
+ * `00-index-<year>.md` (e.g. `| Aug 2–8 | ... |` -> `2026-08-08`).
+ * Returns null if no trip rows can be parsed.
+ */
+export function parseLastIndexedTripEndDate(indexContent: string, year: number): string | null {
+  let inTripsTable = false;
+  let latest: string | null = null;
+  const pad = (n: number) => String(n).padStart(2, "0");
+
+  for (const rawLine of indexContent.split("\n")) {
+    const line = rawLine.trim();
+    if (/^##\s+Trips taken/i.test(line)) {
+      inTripsTable = true;
+      continue;
+    }
+    if (inTripsTable && line.startsWith("## ")) break;
+    if (!inTripsTable || !line.startsWith("|")) continue;
+    if (/^\|\s*Dates\s*\|/i.test(line) || /^\|\s*[-:]+/.test(line)) continue;
+
+    const firstCell = line.split("|")[1]?.trim() ?? "";
+    const parts = firstCell.split(/[–-]/).map((s) => s.trim()).filter(Boolean);
+    if (parts.length === 0) continue;
+
+    const startMatch = /^([A-Za-z]+)\s+(\d{1,2})/.exec(parts[0]);
+    if (!startMatch) continue;
+    const startMonth = MONTHS[startMatch[1].toLowerCase()];
+    if (!startMonth) continue;
+
+    let endMonth = startMonth;
+    let endDay = parseInt(startMatch[2], 10);
+    if (parts.length > 1) {
+      const endWithMonth = /^([A-Za-z]+)\s+(\d{1,2})/.exec(parts[parts.length - 1]);
+      const endDayOnly = /^(\d{1,2})$/.exec(parts[parts.length - 1]);
+      if (endWithMonth) {
+        endMonth = MONTHS[endWithMonth[1].toLowerCase()] ?? startMonth;
+        endDay = parseInt(endWithMonth[2], 10);
+      } else if (endDayOnly) {
+        endDay = parseInt(endDayOnly[1], 10);
+      }
+    }
+    const iso = `${year}-${pad(endMonth)}-${pad(endDay)}`;
+    if (!latest || iso > latest) latest = iso;
+  }
+  return latest;
+}
+
+/** List existing markdown trip files in `<brain>/travel/<year>/` (sorted). */
+export function listExistingTripFiles(yearDir: string): string[] {
+  if (!fs.existsSync(yearDir)) return [];
+  return fs
+    .readdirSync(yearDir)
+    .filter((f) => f.endsWith(".md"))
+    .sort();
 }

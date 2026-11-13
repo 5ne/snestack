@@ -13,6 +13,7 @@ import { authorizeGoogleCalendar } from "./domains/calendar/setup";
 import { authorizeGmail } from "./domains/travel/setup";
 import { parseMultiFileOutput, writeStagedCatalogFiles, writeCatalogFilesToDir } from "./domains/travel/tools/fileWriter";
 import { nextBackfillYear, BACKFILL_START_YEAR, BACKFILL_END_YEAR } from "./domains/travel/tools/backfill";
+import { listExistingTripFiles, parseLastIndexedTripEndDate } from "./domains/travel/tools/timelineClient";
 import { logRunEvent, finalizeRun, currentRunDir, extractErrorSummary, readRunEvents } from "./core/runLog";
 import {
   buildSignalsFromDir,
@@ -538,7 +539,9 @@ travel
       "Maps access. Writes to stdout, or --out <file>."
   )
   .option("--out <path>", "Write the assembled prompt to a file instead of stdout")
-  .action(async (year: string, opts: { out?: string }) => {
+  .option("--since <date>", "Delta mode: only include Timeline clusters ending after YYYY-MM-DD")
+  .option("--delta", "Delta mode: infer --since from the last trip in 00-index-<year>.md")
+  .action(async (year: string, opts: { out?: string; since?: string; delta?: boolean }) => {
     if (!validateEnv()) {
       process.exitCode = 1;
       return;
@@ -548,8 +551,36 @@ travel
       process.exitCode = 1;
       return;
     }
+    if (opts.since && !/^\d{4}-\d{2}-\d{2}$/.test(opts.since)) {
+      console.error(`Expected --since in YYYY-MM-DD format, got "${opts.since}"`);
+      process.exitCode = 1;
+      return;
+    }
     try {
-      const { userPrompt } = await assembleSkillPrompt("travel", "catalog-trip-year", year);
+      const yearDir = path.join(getConfig().getBrainRoot(), "travel", year);
+      let sinceDate = opts.since;
+      if (!sinceDate && opts.delta) {
+        const indexPath = path.join(yearDir, `00-index-${year}.md`);
+        if (fs.existsSync(indexPath)) {
+          sinceDate = parseLastIndexedTripEndDate(fs.readFileSync(indexPath, "utf8"), parseInt(year, 10)) ?? undefined;
+        }
+        if (!sinceDate) {
+          console.error(`Could not infer --since from ${indexPath}; pass --since YYYY-MM-DD explicitly.`);
+          process.exitCode = 1;
+          return;
+        }
+      }
+      const subject = sinceDate ? `${year}@${sinceDate}` : year;
+      let { userPrompt } = await assembleSkillPrompt("travel", "catalog-trip-year", subject);
+      if (sinceDate) {
+        const existingFiles = listExistingTripFiles(yearDir);
+        const fileList = existingFiles.length ? existingFiles.map((f) => `- ${f}`).join("\n") : "- (none yet)";
+        userPrompt +=
+          `\n\n## DELTA MODE (since ${sinceDate})\n` +
+          `Only Timeline clusters ending after ${sinceDate} are included above. ` +
+          `Search Gmail only for trips after ${sinceDate}, append new trip files, and update \`00-index-${year}.md\` without rewriting existing trips.\n` +
+          `Existing files in \`travel/${year}/\`:\n${fileList}\n`;
+      }
       if (opts.out) {
         fs.writeFileSync(opts.out, userPrompt, "utf8");
         console.error(`Wrote assembled prompt to ${opts.out}`);
