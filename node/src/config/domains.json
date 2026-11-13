@@ -1,7 +1,8 @@
 {
   "financial": {
     "skillsDir": "domains/financial/skills",
-    "contextToolsModule": "domains/financial/contextTools"
+    "contextToolsModule": "domains/financial/contextTools",
+    "scriptsDir": "domains/financial/scripts"
   },
   "calendar": {
     "skillsDir": "domains/calendar/skills",
@@ -9,6 +10,7 @@
   },
   "travel": {
     "skillsDir": "domains/travel/skills",
-    "contextToolsModule": "domains/travel/contextTools"
+    "contextToolsModule": "domains/travel/contextTools",
+    "scriptsDir": "domains/travel/scripts"
   }
 }
