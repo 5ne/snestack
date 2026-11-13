@@ -35,19 +35,6 @@ import { equityDataFromCache } from "./domains/financial/fundamentalsCache";
 import { computeTickerDataQuality, loadDataQualityTolerances } from "./domains/financial/dataQuality";
 import type { Signal } from "./core/models";
 import { getDomainConfig } from "./core/domainRegistry";
-import {
-  listProposals,
-  findProposalBySlug,
-  setProposalStatus,
-  setProposalField,
-  readProposalFile,
-  type ProposalStatus,
-} from "./core/featureRequests";
-import { sendEmail } from "./core/email";
-import { eligibleForAutoApprove, changedPathViolations, diffLooksSecret, MAX_AUTO_APPROVALS_PER_RUN } from "./core/autoMerge";
-import { buildRoleEmail, type Role } from "./core/roleNotify";
-import { decideRoleGate, recordRoleRun } from "./core/roleGate";
-import domainsConfig from "./config/domains.json";
 
 const program = new Command();
 
@@ -55,11 +42,6 @@ function formatCliError(e: unknown): string {
   if (e instanceof ExecutorError) return `[${e.code}] ${e.message}`;
   return e instanceof Error ? e.message : String(e);
 }
-
-const REGISTERED_DOMAINS = Object.keys(domainsConfig);
-// Cross-domain (harness-level) proposals live under <brain>/_system/feature-requests/ (see core/skills/pm.md).
-// `_system` isn't a runnable domain; only `feature` commands see it.
-const FEATURE_DOMAINS = [...REGISTERED_DOMAINS, "_system"];
 
 program
   .name("snestack")
@@ -1038,8 +1020,6 @@ program
       const dryRunRoots = [
         ...expectations.map((e) => e.runsRoot),
         ...financialRunStatsTargets(brainRoot).map((t) => t.runsRoot),
-        path.join(brainRoot, "_system", "runs", "pm"),
-        path.join(brainRoot, "_system", "runs", "eng"),
         path.join(brainRoot, "_system", "runs", "reflect"),
       ];
       findings.push(...checkStaleDryRuns({ now: new Date(), runsRoots: dryRunRoots }));
@@ -1088,230 +1068,6 @@ travel
     if (year !== null) console.log(year);
   });
 
-const feature = program.command("feature").description("Manage feature-request proposals (written by the PM role) (proposed -> approved -> in-progress -> done)");
-
-feature
-  .command("list")
-  .description("List feature-request proposals")
-  .option("--domain <d>", "Only this domain (default: every registered domain)")
-  .option("--status <s>", "Only this status: proposed | approved | in-progress | done")
-  .action(async (opts: { domain?: string; status?: string }) => {
-    const brainRoot = getConfig().getBrainRoot();
-    const domains = opts.domain ? [opts.domain] : FEATURE_DOMAINS;
-    const rows = domains.flatMap((d) => listProposals(brainRoot, d));
-    const filtered = opts.status ? rows.filter((r) => r.status === opts.status) : rows;
-    if (filtered.length === 0) {
-      console.log("No feature-request proposals found.");
-      return;
-    }
-    for (const p of filtered) {
-      console.log(`${p.slug}  [${p.status}]  ${p.domain}  impact=${p.impact ?? "?"} effort=${p.effort ?? "?"}  ${p.title}${p.autoApproved ? "  (auto-approved)" : ""}`);
-    }
-  });
-
-/** Finds a proposal by slug, searching every registered domain unless `domainHint` narrows it. Throws on an ambiguous match. */
-function findProposalAnyDomain(
-  brainRoot: string,
-  slug: string,
-  domainHint?: string
-): { domain: string; file: string } | null {
-  const domains = domainHint ? [domainHint] : FEATURE_DOMAINS;
-  const matches = domains
-    .map((domain) => ({ domain, proposal: findProposalBySlug(brainRoot, domain, slug) }))
-    .filter((m): m is { domain: string; proposal: NonNullable<ReturnType<typeof findProposalBySlug>> } => m.proposal != null);
-  if (matches.length === 0) return null;
-  if (matches.length > 1) {
-    throw new Error(`"${slug}" exists in multiple domains (${matches.map((m) => m.domain).join(", ")}) — pass --domain to disambiguate`);
-  }
-  return { domain: matches[0].domain, file: matches[0].proposal.file };
-}
-
-function setStatusCommand(
-  id: string,
-  domainHint: string | undefined,
-  status: ProposalStatus,
-  label: string,
-  requireCurrent?: ProposalStatus
-): void {
-  const brainRoot = getConfig().getBrainRoot();
-  try {
-    const found = findProposalAnyDomain(brainRoot, id, domainHint);
-    if (!found) {
-      console.error(`feature ${label}: no proposal found with id "${id}"`);
-      process.exitCode = 1;
-      return;
-    }
-    if (requireCurrent) {
-      const current = readProposalFile(found.file)?.status;
-      if (current !== requireCurrent) {
-        console.error(`feature ${label}: "${id}" is ${current ?? "unreadable"}, not ${requireCurrent} — nothing changed`);
-        process.exitCode = 1;
-        return;
-      }
-    }
-    setProposalStatus(found.file, status);
-    console.log(`${found.domain}/${id}: -> ${status}`);
-  } catch (e) {
-    console.error(`feature ${label}: ${e}`);
-    process.exitCode = 1;
-  }
-}
-
-feature
-  .command("approve <id>")
-  .description("Mark a proposal approved (a human decision; nothing has started) — <id> is its filename without the .md extension (see `feature list`)")
-  .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
-  .action(async (id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "approved", "approve"));
-
-feature
-  .command("start <id>")
-  .description("Mark an approved proposal in-progress (run by whoever picks the work up, e.g. the eng skill) — refuses anything not currently approved")
-  .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
-  .action(async (id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "in-progress", "start", "approved"));
-
-feature
-  .command("done <id>")
-  .description("Mark a proposal done — <id> is its filename without the .md extension (see `feature list`)")
-  .option("--domain <d>", "Domain the id belongs to, if it's ambiguous across domains")
-  .action(async (id: string, opts: { domain?: string }) => setStatusCommand(id, opts.domain, "done", "done"));
-
-feature
-  .command("auto-approve")
-  .description(
-    "Approve proposed, PM-written proposals that pass the low-risk policy (core/autoMerge.ts): small effort, low/medium impact, " +
-      `nothing on the risk list. At most ${MAX_AUTO_APPROVALS_PER_RUN} per run. Marks them auto_approved so eng may auto-merge them.`
-  )
-  .option("--dry-run", "Print what would be approved without changing anything")
-  .action(async (opts: { dryRun?: boolean }) => {
-    const brainRoot = getConfig().getBrainRoot();
-    const proposed = FEATURE_DOMAINS.flatMap((d) => listProposals(brainRoot, d)).filter((p) => p.status === "proposed");
-    let approved = 0;
-    for (const p of proposed) {
-      const d = eligibleForAutoApprove(p);
-      if (!d.ok) {
-        console.log(`needs owner: ${p.slug} (${d.reasons.join("; ")})`);
-        continue;
-      }
-      if (approved >= MAX_AUTO_APPROVALS_PER_RUN) {
-        console.log(`needs owner: ${p.slug} (eligible, but the per-run cap of ${MAX_AUTO_APPROVALS_PER_RUN} is reached)`);
-        continue;
-      }
-      if (!opts.dryRun) {
-        setProposalField(p.file, "auto_approved", "true");
-        setProposalStatus(p.file, "approved");
-      }
-      approved++;
-      console.log(`${opts.dryRun ? "would auto-approve" : "auto-approved"}: ${p.slug} [${p.domain}] ${p.title}`);
-    }
-    if (proposed.length === 0) console.log("No proposed requests.");
-  });
-
-feature
-  .command("merge-check")
-  .description(
-    "Exit 0 only if an eng branch is safe to auto-merge: every changed path is on the allowlist and the diff has no credentials. " +
-      "Prints each violation otherwise (exit 1)."
-  )
-  .requiredOption("--paths <file>", "File with one changed path per line (git diff --name-only main...branch)")
-  .option("--diff <file>", "Unified diff of the branch to scan for secrets")
-  .action(async (opts: { paths: string; diff?: string }) => {
-    const paths = fs.readFileSync(opts.paths, "utf8").split("\n");
-    const bad = changedPathViolations(paths);
-    for (const b of bad) console.log(`not auto-mergeable path: ${b}`);
-    const secret = opts.diff ? diffLooksSecret(fs.readFileSync(opts.diff, "utf8")) : false;
-    if (secret) console.log("diff contains something that looks like a credential");
-    if (paths.filter((p) => p.trim()).length === 0) console.log("empty change set");
-    if (bad.length || secret || paths.filter((p) => p.trim()).length === 0) process.exitCode = 1;
-    else console.log("auto-mergeable");
-  });
-
-program
-  .command("role-notify")
-  .description(
-    "Email the owner about a finished PM or eng run (new proposals with their approve commands, the eng report, or a failure). " +
-      "Sends nothing (exit 0) for a quiet PM run."
-  )
-  .requiredOption("--role <r>", "pm | eng")
-  .option("--report <path>", "The session's final message (report.md)")
-  .option("--before <path>", "PM: file listing proposal slugs that existed before the session (first column of `feature list`)")
-  .option("--merge-file <path>", "eng: the auto-merge log (merge.txt)")
-  .option("--failed", "The session failed")
-  .option("--error-file <path>", "Stderr/error text to include when --failed")
-  .option("--html-out <file>", "Also write the HTML body to this file (to preview it)")
-  .option("--dry-run", "Build the email but print it instead of sending")
-  .action(async (opts: { role: string; report?: string; before?: string; mergeFile?: string; failed?: boolean; errorFile?: string; htmlOut?: string; dryRun?: boolean }) => {
-    if (opts.role !== "pm" && opts.role !== "eng") {
-      console.error("role-notify: --role must be pm or eng");
-      process.exitCode = 1;
-      return;
-    }
-    const readIf = (f?: string): string => {
-      try {
-        return f ? fs.readFileSync(f, "utf8") : "";
-      } catch {
-        return "";
-      }
-    };
-    const before = new Set(
-      readIf(opts.before)
-        .split("\n")
-        .map((l) => l.trim().split(/\s+/)[0])
-        .filter(Boolean)
-    );
-    const brainRoot = getConfig().getBrainRoot();
-    const newProposals =
-      opts.role === "pm" && !opts.failed ? FEATURE_DOMAINS.flatMap((d) => listProposals(brainRoot, d)).filter((p) => !before.has(p.slug)) : [];
-    const email = buildRoleEmail({
-      role: opts.role as Role,
-      failed: Boolean(opts.failed),
-      failureReason: readIf(opts.errorFile),
-      report: readIf(opts.report),
-      newProposals,
-      mergeLog: readIf(opts.mergeFile),
-    });
-    if (!email) {
-      console.log("Nothing new — no email sent.");
-      return;
-    }
-    if (opts.htmlOut) fs.writeFileSync(opts.htmlOut, email.html);
-    if (opts.dryRun) {
-      console.log(`Subject: ${email.subject}\n\n${email.text}`);
-      return;
-    }
-    if (!validateEnv()) {
-      process.exitCode = 1;
-      return;
-    }
-    const ok = await sendEmail(email.subject, email.text, email.html);
-    console.log(ok ? "Email sent." : "Email failed to send.");
-    if (!ok) process.exitCode = 1;
-  });
-
-program
-  .command("role-gate")
-  .description(
-    "Deterministic gate for the PM role: exit 0 = run it, exit 4 = skip (no new run records and the last run is recent). " +
-      "With --record, stamp a successful run instead."
-  )
-  .requiredOption("--role <r>", "pm | eng")
-  .option("--force", "Always run")
-  .option("--record", "Record that the role just ran successfully")
-  .action(async (opts: { role: string; force?: boolean; record?: boolean }) => {
-    if (opts.role !== "pm" && opts.role !== "eng") {
-      console.error("role-gate: --role must be pm or eng");
-      process.exitCode = 1;
-      return;
-    }
-    const brainRoot = getConfig().getBrainRoot();
-    if (opts.record) {
-      recordRoleRun(brainRoot, opts.role as Role, new Date());
-      console.log(`Recorded ${opts.role} run.`);
-      return;
-    }
-    const d = decideRoleGate(brainRoot, opts.role as Role, { force: opts.force });
-    console.log(`${d.run ? "RUN" : "SKIP"}: ${d.reasons.join("; ")}`);
-    if (!d.run) process.exitCode = 4;
-  });
 
 program.parseAsync(process.argv).catch((e) => {
   console.error(e);

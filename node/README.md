@@ -51,8 +51,6 @@ Six cron jobs together make up the split-cadence pipeline (`npm run build` first
 | `scripts/data-refresh-daily.sh` | 2pm PT, nightly | Quote + RSI/MA + Finnhub fundamentals; Morningstar re-parse on Mondays only |
 | `scripts/daily-analysis.sh` | 2:30pm PT, nightly, after `data-refresh-daily.sh` | `long-term-quality` skill for every ticker, email + signal history |
 | `scripts/swing-check.sh` | hourly, 7am-1pm PT (market hours) | `swing-trading-large-cap` skill for every ticker, its own email + signal history |
-| `scripts/pm-daily.sh` | 4pm PT, nightly | PM role: an agentic `claude -p` session writes new `status: proposed` feature requests into the brain (replaces the PM scheduled task and the removed `improve-self` loop) |
-| `scripts/eng-daily.sh` | 5pm PT, nightly, after the PM run | eng role: implements `approved` requests on an `eng/<slug>` branch with tests (replaces the eng scheduled task); no model call if nothing is approved |
 
 ```cron
 # crontab -e  (adjust the <repo> path; times are Pacific/local as described above)
@@ -136,19 +134,6 @@ snestack data-refresh --tier intraday --tickers NVDA,TSLA   # live price only, s
 snestack data-refresh --tier weekly           # re-parse the current Morningstar PDF per ticker
 ```
 
-### Feature requests (PM and eng roles)
-
-Self-improvement is done by two agentic roles, not by a skill inside the harness (the old `improve-self` skill, `snestack reflect`, `reflect-notify` and `reflect-check.sh` were removed). `scripts/pm-daily.sh` (the PM role) reads recent run records, dedups against `snestack feature list`, and writes new `status: proposed` files under `<brain>/<domain>/feature-requests/` (cross-domain ones under `<brain>/_system/feature-requests/`). You review them and approve; `scripts/eng-daily.sh` (the eng role) then implements `approved` ones on an `eng/<slug>` branch. See "PM and eng role scripts" below.
-
-**The hard safety line:** the PM role only writes proposal files; the eng role never pushes or merges; turning anything into running code stays a human step.
-
-```bash
-snestack feature list                   # every proposal, any domain/status
-snestack feature list --domain financial --status proposed
-snestack feature approve 2026-10-13-add-retry-backoff-to-data-refresh   # proposed -> approved (then `feature start <id>` -> in-progress)
-snestack feature done 2026-10-13-add-retry-backoff-to-data-refresh      # -> done
-```
-
 ### Calendar domain setup (Google Calendar, read-only)
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create (or reuse) a project, enable the **Google Calendar API**, then create an **OAuth client ID** of type **Desktop app** under Credentials.
@@ -203,19 +188,3 @@ Every model call goes through `runPrompt()` in `src/core/executor.ts`, which exe
 - **Chain & fallback telemetry:** `model_call` events carry `backend`; subscription CLI calls (`agy-cli`, `claude-cli`) log `billing: "subscription"`, `est_cost_usd: 0` and `api_equivalent_usd` (usage trend, not a charge). When a step fails and another step follows in `SNESTACK_EXECUTOR`, `executor_fallback` is logged (`subscription_fallbacks` when falling back between subscription CLIs like `agy-cli>claude-cli>fail`; `api_fallbacks` + a `run-check` `api_fallback` warning only when a call reaches metered `claude-api`). Ending a chain with `>fail` (e.g. `agy-cli>fail`) stops immediately on failure with zero fallback. Calls run one at a time per CLI backend.
 - **Cron & smoke test:** run cron jobs under your macOS user account (`HOME` preserved so `agy` reads `~/.gemini/`, with `~/.local/bin` on `PATH`). Verify with `SNESTACK_EXECUTOR="agy-cli>fail" npx ts-node src/cli.ts executor-check` or `./scripts/agy-cli-test.sh "ping"`.
 
-
-## PM and eng role scripts (`pm-daily.sh`, `eng-daily.sh`)
-
-Times are Pacific wall-clock; macOS cron uses the machine's local timezone, so adjust the hours if it is not on Pacific. Both run an agentic `claude -p` session on the Claude subscription from the repo root (so `CLAUDE.md` loads), with the prompts in `scripts/prompts/` and the shared runner in `scripts/lib/claude-agent.sh`. Unlike the executor, these sessions have tools, restricted by an allow list; `git push`, `git merge`, `rm`, `curl` and any read or write of `.env` are always denied. There is no API fallback (an agent session isn't a single stateless call): a usage-limit or login failure fails the run and the next day's run tries again. `ANTHROPIC_API_KEY` is stripped from the child env. **Notifications and gating:** after each run, `role-notify` emails you (via the existing Gmail settings): the PM run sends one email listing any *new* proposals with their `feature approve` commands (silence if there are none); the eng run sends its report; any failed run (including a subscription usage limit) emails the failure. The PM run is also gated: `role-gate --role pm` skips the session, with no model call, unless a new `run.json` has appeared under any domain's `signals/` or `runs/` since the last successful PM run, or that run is 7+ days old (`pm-daily.sh --force` bypasses it). The marker is `<brain>/_system/runs/pm/.last-run.json`. Both commands can be tried without side effects: `node dist/cli.js role-gate --role pm`, `node dist/cli.js role-notify --role pm --before <slugs file> --dry-run`.
-
-**Autonomy policy (owner-approved 2026-10-31; code in `src/core/autoMerge.ts`):** low-risk work runs without you, and everything else still waits for you.
-- After the PM session, `feature auto-approve` approves up to 2 `proposed`, PM-written requests per run that are `effort: small`, `impact: low|medium`, and whose text mentions nothing on a risk list (judgment skills, the executor, cron/scripts, secrets, trading terms, gates, the database, email/notify and similar). They are tagged `auto_approved: true`; the PM email says so.
-- The eng agent builds them on `eng/<proposal-id>`. Then the *script* (the agent can't merge) merges the branch into `main` only if every changed path is on a closed allowlist (`node/tests/`, `node/README.md`, root docs, `core/runCheck|runLog|runStats|runReport.ts`, `domains/*/runExpectations.ts`), the diff contains nothing credential-like, and `typecheck` plus the full jest suite pass on the branch. It then rebuilds `dist/`, marks the request `done`, and the eng email lists what merged and what was left for you and why.
-- Never auto-merged: anything touching skills, `executor.ts`, `config.ts`, `cli.ts`, `scripts/`, package files, `CLAUDE.md`, or anything you approved by hand. Those branches wait for you as before. Pushing is off by default; set `SNESTACK_AUTO_PUSH=1` to push `main` after an auto-merge. To revert an auto-merge: `git revert -m 1 <merge commit>`. To turn the policy off, remove the `feature auto-approve` line from `pm-daily.sh`.
-
-Runs are recorded under `<brain>/_system/runs/pm|eng/<date>/` (`report.md` is the session's final message). `eng-daily.sh --dry-run` only lists approved items. Crontab:
-
-```cron
-0 16 * * * cd <repo>/node && ./scripts/pm-daily.sh >> logs/pm-daily.cron.log 2>&1
-0 17 * * * cd <repo>/node && ./scripts/eng-daily.sh >> logs/eng-daily.cron.log 2>&1
-```
