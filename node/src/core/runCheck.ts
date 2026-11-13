@@ -44,7 +44,7 @@ export interface Finding {
   severity: Severity;
   domain: string;
   date: string;
-  code: "missing_run" | "incomplete_run" | "failed" | "degraded" | "model_errors" | "usage_limit" | "api_fallback" | "api_credit_exhausted" | "cost_anomaly" | "cache_stale" | "database_unreachable" | "host_outage";
+  code: "missing_run" | "incomplete_run" | "failed" | "degraded" | "model_errors" | "usage_limit" | "api_fallback" | "api_credit_exhausted" | "cost_anomaly" | "cache_stale" | "database_unreachable" | "host_outage" | "brain_root_unreadable";
   message: string;
 }
 
@@ -294,7 +294,30 @@ const MAX_OUTAGE_GAP_DAYS = 3; // a weekend between two expected days must not s
  * N independent failures. Days where only some automations are missing stay as
  * ordinary per-automation findings.
  */
-export function evaluateRuns(opts: { now: Date; days: number; expectations: RunExpectation[] }): Finding[] {
+function isReadableDirectory(dir: string): boolean {
+  try {
+    fs.accessSync(dir, fs.constants.R_OK);
+    return fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+export function evaluateRuns(opts: { now: Date; days: number; expectations: RunExpectation[]; brainRoot?: string }): Finding[] {
+  if (opts.brainRoot && !isReadableDirectory(opts.brainRoot)) {
+    return [
+      {
+        severity: "error",
+        domain: "_host",
+        date: dayString(opts.now),
+        code: "brain_root_unreadable",
+        message:
+          `Brain root is missing or unreadable: ${opts.brainRoot} — check SNESTACK_BRAIN_ROOT ` +
+          `or whether Google Drive is mounted; skipping run-history checks.`,
+      },
+    ];
+  }
+
   const findings = evaluatePerAutomation(opts);
   const { now, days, expectations } = opts;
   const today = dayString(now);
@@ -323,20 +346,21 @@ export function evaluateRuns(opts: { now: Date; days: number; expectations: RunE
     else groups.push([d]);
   }
 
-  const covered = new Set(outageDates);
-  const remaining = findings.filter(
-    (f) => !(covered.has(f.date) && f.code === "missing_run" && expectations.some((e) => e.name === f.domain))
-  );
   const allTimes = expectations.flatMap((e) => recordedStartTimes(e.runsRoot));
   const fmt = (t: number | undefined) => (t == null ? "unknown" : new Date(t).toISOString());
   const names = expectations.map((e) => e.name).join(", ");
+  const covered = new Set<string>();
+  const outageFindings: Finding[] = [];
 
   for (const g of groups) {
     const startOfWindow = Date.parse(`${g[0]}T00:00:00`);
     const endOfWindow = Date.parse(`${g[g.length - 1]}T23:59:59`);
     const before = Math.max(...allTimes.filter((t) => t < startOfWindow), -Infinity);
+    // Require at least one earlier recorded run so an empty/uninitialized root never looks like a host outage.
+    if (!Number.isFinite(before)) continue;
+    for (const d of g) covered.add(d);
     const after = Math.min(...allTimes.filter((t) => t > endOfWindow), Infinity);
-    remaining.push({
+    outageFindings.push({
       severity: "error",
       domain: "_host",
       date: g[g.length - 1],
@@ -344,11 +368,16 @@ export function evaluateRuns(opts: { now: Date; days: number; expectations: RunE
       message:
         `Likely host outage: every automation expected on ${g.length === 1 ? g[0] : `${g[0]} to ${g[g.length - 1]}`} ` +
         `(${names}) recorded no run — one cause (machine asleep/off or cron down), not separate failures. ` +
-        `Last recorded run before: ${fmt(Number.isFinite(before) ? before : undefined)}; ` +
+        `Last recorded run before: ${fmt(before)}; ` +
         `first run after: ${fmt(Number.isFinite(after) ? after : undefined)}.`,
     });
   }
-  return remaining;
+
+  if (outageFindings.length === 0) return findings;
+  const remaining = findings.filter(
+    (f) => !(covered.has(f.date) && f.code === "missing_run" && expectations.some((e) => e.name === f.domain))
+  );
+  return [...remaining, ...outageFindings];
 }
 
 export const FINNHUB_FUNDAMENTALS_MAX_AGE_MS = 48 * 60 * 60 * 1000;

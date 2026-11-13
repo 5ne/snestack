@@ -93,6 +93,36 @@ describe("evaluateRuns", () => {
     }
   });
 
+  it("emits brain_root_unreadable and skips run checks when brainRoot does not exist", () => {
+    const missing = path.join(root, "does-not-exist");
+    const findings = evaluateRuns({
+      now,
+      days: 3,
+      expectations: [expectation(), expectation({ name: "other", runsRoot: path.join(missing, "other") })],
+      brainRoot: missing,
+    });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ severity: "error", domain: "_host", code: "brain_root_unreadable" });
+    expect(findings[0].message).toContain(missing);
+    expect(findings[0].message).toContain("SNESTACK_BRAIN_ROOT");
+  });
+
+  it("does not emit host_outage when no earlier run exists in history", () => {
+    const rootB = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-runcheck-b-"));
+    try {
+      const findings = evaluateRuns({
+        now,
+        days: 2,
+        expectations: [expectation(), expectation({ name: "financial-daily-refresh", runsRoot: rootB })],
+        brainRoot: root,
+      });
+      expect(findings.some((f) => f.code === "host_outage")).toBe(false);
+      expect(findings.some((f) => f.code === "missing_run")).toBe(true);
+    } finally {
+      fs.rmSync(rootB, { recursive: true, force: true });
+    }
+  });
+
   it("keeps a plain missing_run when only some automations are missing", () => {
     const rootB = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-runcheck-b-"));
     try {
