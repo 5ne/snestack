@@ -1,7 +1,13 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { evaluateRuns, checkCacheStaleness, type RunExpectation } from "../../src/core/runCheck";
+import {
+  evaluateRuns,
+  checkCacheStaleness,
+  isFinnhubFundamentalsFresh,
+  elapsedMarketMs,
+  type RunExpectation,
+} from "../../src/core/runCheck";
 import type { RunSummary } from "../../src/core/runLog";
 
 function summary(over: Partial<RunSummary> = {}): RunSummary {
@@ -252,5 +258,45 @@ describe("checkCacheStaleness", () => {
     expect(quoteFinding?.message).toContain("AAPL");
     const morningstarFinding = findings.find((f) => f.message.startsWith("morningstar"));
     expect(morningstarFinding?.message).toContain("NVDA");
+  });
+
+  it("treats Friday Finnhub fundamentals as fresh on Monday morning across a weekend", () => {
+    const friday = new Date(2026, 9, 30, 14, 0, 0); // Fri Oct 30, 2026 14:00
+    const monday = new Date(2026, 10, 2, 7, 0, 0);  // Mon Nov 2, 2026 07:00 (~65h wall-clock)
+    expect(isFinnhubFundamentalsFresh(friday.toISOString(), monday)).toBe(true);
+
+    const wallAgeMs = monday.getTime() - friday.getTime();
+    const findings = checkCacheStaleness({
+      now: monday,
+      tickers: ["INTU"],
+      getLatestQuoteAge: () => hoursAgoMs(1),
+      getLatestFundamentalsAge: (_t, source) => (source === "finnhub" ? wallAgeMs : daysAgoMs(1)),
+    });
+    expect(findings).toEqual([]);
+  });
+
+  it("flags Finnhub fundamentals as stale when weekday refreshes were missed (>48h trading)", () => {
+    const wednesday = new Date(2026, 9, 28, 14, 0, 0); // Wed Oct 28, 2026 14:00
+    const monday = new Date(2026, 10, 2, 7, 0, 0);     // Mon Nov 2, 2026 07:00 (Thu + Fri missed)
+    expect(isFinnhubFundamentalsFresh(wednesday.toISOString(), monday)).toBe(false);
+
+    const wallAgeMs = monday.getTime() - wednesday.getTime();
+    const findings = checkCacheStaleness({
+      now: monday,
+      tickers: ["INTU"],
+      getLatestQuoteAge: () => hoursAgoMs(1),
+      getLatestFundamentalsAge: (_t, source) => (source === "finnhub" ? wallAgeMs : daysAgoMs(1)),
+    });
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe("cache_stale");
+    expect(findings[0].message).toContain("finnhub fundamentals");
+  });
+
+  it("excludes US market holidays when measuring trading-day age", () => {
+    // Fri Sep 4, 2026 14:00 -> Tue Sep 8, 2026 07:00 (Mon Sep 7 is Labor Day)
+    const friday = new Date(2026, 8, 4, 14, 0, 0);
+    const tuesday = new Date(2026, 8, 8, 7, 0, 0);
+    expect(elapsedMarketMs(friday.getTime(), tuesday.getTime())).toBe(17 * 60 * 60 * 1000);
+    expect(isFinnhubFundamentalsFresh(friday.toISOString(), tuesday)).toBe(true);
   });
 });

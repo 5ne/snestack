@@ -3,6 +3,7 @@ import * as path from "path";
 import { getConfig } from "../../core/config";
 import { Db } from "../../core/db";
 import { getLogger } from "../../core/logger";
+import { isFinnhubFundamentalsFresh } from "../../core/runCheck";
 import type { ContextToolMap } from "../../core/contextTools";
 import { QuoteAgent } from "./agents/quoteAgent";
 import { EquityAgent } from "./agents/equityAgent";
@@ -21,7 +22,6 @@ const logger = getLogger("financial/contextTools");
  * visible rather than silently eating the cost savings this exists for.
  */
 const QUOTE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
-const FINNHUB_FUNDAMENTALS_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const MORNINGSTAR_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 
 export { gateFacts } from "./gate";
@@ -44,9 +44,8 @@ export const contextTools: ContextToolMap = {
     const db = await Db.open(config.getDatabaseUrl());
     try {
       const quoteRow = await db.getQuoteIfFresh(ticker, QUOTE_MAX_AGE_MS);
-      const fundRow = quoteRow
-        ? await db.getFundamentalsIfFresh(ticker, "finnhub", FINNHUB_FUNDAMENTALS_MAX_AGE_MS)
-        : undefined;
+      const latestFund = quoteRow ? await db.getLatestFundamentals(ticker, "finnhub") : undefined;
+      const fundRow = latestFund && isFinnhubFundamentalsFresh(latestFund.fetched_at) ? latestFund : undefined;
       if (quoteRow && fundRow) {
         return quoteDataFromCache(quoteRow, fundRow);
       }
