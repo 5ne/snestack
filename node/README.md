@@ -25,9 +25,13 @@ Every capability in `snestack` is **isomorphic**: the CLI (`snestack <command>`)
 - **Self-documenting route catalog:** Run `snestack routes` (or `GET /api/routes`) to list every core and domain endpoint.
 
 ```bash
+# Build the Web UI once, then serve both API + Web UI on http://127.0.0.1:4700
+cd ../web && npm install && npm run build && cd ../node
+npm run serve
 
-# Start the HTTP API server (loopback by default; Bearer auth when SNESTACK_API_TOKEN is set)
+# Or run Vite dev server (http://localhost:5173) proxying /api to snestack serve:
 npm run dev -- serve --addr 127.0.0.1:4700
+npm run dev:web
 
 # Inspect registered API endpoints, domains, and skills (human or --json)
 npm run dev -- routes
