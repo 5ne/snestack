@@ -224,12 +224,18 @@ export class Db {
       }
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { Pool, types } = require("pg") as typeof import("pg");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const fs = require("fs") as typeof import("fs");
+      const caPath = process.env.SNESTACK_DATABASE_CA_PATH?.trim();
+      // Supabase requires TLS; its pooler certs don't chain to a public CA bundle unless SNESTACK_DATABASE_CA_PATH is set.
+      const ssl = caPath
+        ? { ca: fs.readFileSync(caPath, "utf8"), rejectUnauthorized: true }
+        : { rejectUnauthorized: false };
       pool = new Pool({
         connectionString,
         max: 1,
         connectionTimeoutMillis: 10_000,
-        // Supabase requires TLS; its pooler certs don't chain to a public CA bundle.
-        ssl: { rejectUnauthorized: false },
+        ssl,
         // BIGINT (volume) arrives as a string by default — snestack stores volumes well inside 2^53.
         types: { getTypeParser: (oid: number, fmt?: "text" | "binary") =>
           oid === 20 ? (v: string) => Number(v) : types.getTypeParser(oid, fmt as "text") },
