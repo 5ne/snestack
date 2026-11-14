@@ -192,13 +192,14 @@ not the skill actually ran.
 ### What `core/` expects of every domain — the actual contract
 
 A domain registers itself in `config/domains.json` with two required fields
-and an optional `scriptsDir`:
+and optional `scriptsDir` / `apiModule`:
 
 ```json
 "<domain>": {
   "skillsDir": "domains/<domain>/skills",
   "contextToolsModule": "domains/<domain>/contextTools",
-  "scriptsDir": "domains/<domain>/scripts"
+  "scriptsDir": "domains/<domain>/scripts",
+  "apiModule": "domains/<domain>/api"
 }
 ```
 
@@ -236,7 +237,14 @@ provide:
    `scripts/lib/`, diagnostic scripts (`agy-cli-test.sh`,
    `claude-cli-test.sh`), and thin `exec` compatibility shims for existing
    cron entries.
-5. **Deterministic ingestion code** (optional, domain-owned, no fixed
+5. **`domains/<domain>/api.ts`** (optional) — registered via `apiModule` in
+   `config/domains.json` and exporting `domainApi: DomainApiModule` (`routes`,
+   `registerCli`, `healthHooks`). `core/api/` mounts every domain's HTTP JSON
+   routes onto `snestack serve` (and in-process `ApiRouter` dispatch when
+   `SNESTACK_API_URL` is unset), while `cli.ts` mounts `registerCli` through the
+   same `ApiClient`, keeping CLI and Web UI 100% isomorphic without `core/`
+   importing any domain module directly.
+6. **Deterministic ingestion code** (optional, domain-owned, no fixed
    shape `core/` enforces) — financial's `agents/` (API-calling, one class
    per data source), `tools/` (PDF parsing, file organizing), and
    `providers/` (`QuoteProvider`/`FundamentalsProvider` interfaces behind

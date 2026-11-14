@@ -1,1096 +1,723 @@
 #!/usr/bin/env node
 import * as fs from "fs";
-import * as path from "path";
 import { Command } from "commander";
-import { getConfig, type ModelTier } from "./core/config";
+import { getConfig } from "./core/config";
+import { loadAllDomainApis } from "./core/domainRegistry";
 import { ExecutorError } from "./core/errors";
-import { setupInteractive, validateEnv } from "./core/setup";
-import { organizeStagedReports } from "./domains/financial/tools/reportOrganizer";
-import { Db } from "./core/db";
-import { runSkill, assembleSkillPrompt, evaluateSkillGate } from "./core/runSkill";
-import { runPrompt } from "./core/executor";
-import { authorizeGoogleCalendar } from "./domains/calendar/setup";
-import { authorizeGmail } from "./domains/travel/setup";
-import { parseMultiFileOutput, writeStagedCatalogFiles, writeCatalogFilesToDir } from "./domains/travel/tools/fileWriter";
-import { nextBackfillYear, BACKFILL_START_YEAR, BACKFILL_END_YEAR } from "./domains/travel/tools/backfill";
-import { listExistingTripFiles, parseLastIndexedTripEndDate } from "./domains/travel/tools/timelineClient";
-import { logRunEvent, finalizeRun, currentRunDir, extractErrorSummary, readRunEvents } from "./core/runLog";
+import { setupInteractive } from "./core/setup";
 import {
-  buildSignalsFromDir,
-  collectEvaluationsFromDir,
-  filterUnchangedSignals,
-} from "./domains/financial/tools/signalBuilder";
-import { writeVerified } from "./core/safeWrite";
-import { buildRunReport, formatRunReportText } from "./core/runReport";
-import { evaluateRuns, checkCacheStaleness, checkStaleDryRuns, dayString, type RunExpectation } from "./core/runCheck";
-import { QuoteAgent } from "./domains/financial/agents/quoteAgent";
-import { EquityAgent, defaultReportsDir } from "./domains/financial/agents/equityAgent";
-import { TraderAgent } from "./domains/financial/agents/traderAgent";
-import { resolveTickerUniverse, loadCacheAgeGetters } from "./domains/financial/cliHelpers";
-import { checkThesisCoverageFindings } from "./domains/financial/thesisCoverage";
-import { financialRunExpectations, financialRunStatsTargets } from "./domains/financial/runExpectations";
-import { computeRunStats, formatRunStats } from "./core/runStats";
-import { runDataRefresh, DATA_REFRESH_TIERS, type DataRefreshTier } from "./domains/financial/dataRefresh";
-import { equityDataFromCache } from "./domains/financial/fundamentalsCache";
-import { computeTickerDataQuality, loadDataQualityTolerances } from "./domains/financial/dataQuality";
-import type { Signal } from "./core/models";
-import { getDomainConfig, getDomainScriptsDir, listAllDomainScripts, listDomainScripts } from "./core/domainRegistry";
-
-const program = new Command();
+  ApiHttpError,
+  createApiClient,
+  parseListenAddr,
+  startApiServer,
+  type ApiClient,
+  type CliContext,
+} from "./core/api";
+import type { RunSummary } from "./core/runLog";
+import type { Finding } from "./core/runCheck";
 
 function formatCliError(e: unknown): string {
   if (e instanceof ExecutorError) return `[${e.code}] ${e.message}`;
+  if (e instanceof ApiHttpError) return e.message;
   return e instanceof Error ? e.message : String(e);
 }
 
-program
-  .name("snestack")
-  .description("Personal decision-support harness (financial and calendar domains, more planned)")
-  .version("1.0.0");
+export interface BuildCliOptions {
+  client?: ApiClient;
+}
 
-// ── Setup ──────────────────────────────────────────────────────────────────
+export async function buildCliProgram(buildOpts: BuildCliOptions = {}): Promise<Command> {
+  const program = new Command();
 
-program
-  .command("setup")
-  .description("Interactive setup for API keys and notifications")
-  .option("--env-file <path>", "Path to .env file (default: .env)")
-  .action(async (opts: { envFile?: string }) => {
-    const ok = await setupInteractive(opts.envFile);
-    if (!ok) process.exitCode = 1;
-  });
+  program
+    .name("snestack")
+    .description("Isomorphic personal decision-support harness (CLI + HTTP API)")
+    .version("1.0.0")
+    .option("--json", "Print structured JSON output from the underlying API")
+    .option("--api-url <url>", "Send commands over HTTP to a running `snestack serve` instance (or set SNESTACK_API_URL)")
+    .option("--api-token <token>", "Bearer token for HTTP API requests (or set SNESTACK_API_TOKEN)");
 
-const calendar = program.command("calendar").description("Google Calendar domain setup");
+  let cachedClient: ApiClient | null = buildOpts.client ?? null;
 
-calendar
-  .command("auth")
-  .description(
-    "One-time OAuth consent for read-only Google Calendar access. " +
-      "Requires SNESTACK_GOOGLE_CLIENT_ID/SNESTACK_GOOGLE_CLIENT_SECRET already set — see node/README.md."
-  )
-  .option("--env-file <path>", "Path to .env file (default: .env)")
-  .action(async (opts: { envFile?: string }) => {
-    const ok = await authorizeGoogleCalendar(opts.envFile);
-    if (!ok) process.exitCode = 1;
-  });
-
-// ── Position management ────────────────────────────────────────────────────
-
-const position = program.command("position").description("Manage portfolio positions");
-
-position
-  .command("add <ticker> <shares> <cost_basis>")
-  .description("Add or update a portfolio position")
-  .option("-n, --notes <notes>", "Position notes")
-  .option(
-    "-s, --strategy <strategy>",
-    "Strategy this position is held under: long-term, swing, or both (default: long-term, or whatever it already was on update)"
-  )
-  .action(
-    async (
-      ticker: string,
-      sharesStr: string,
-      costBasisStr: string,
-      opts: { notes?: string; strategy?: string }
-    ) => {
-      const config = getConfig();
-      const db = await Db.open(config.getDatabaseUrl());
-      const shares = parseFloat(sharesStr);
-      const costBasis = parseFloat(costBasisStr);
-      if (isNaN(shares) || isNaN(costBasis)) {
-        console.error("shares and cost_basis must be numbers");
-        process.exit(1);
+  const ctx: CliContext = {
+    getClient(): ApiClient {
+      if (cachedClient) return cachedClient;
+      const globalOpts = program.opts<{ apiUrl?: string; apiToken?: string }>();
+      cachedClient = createApiClient({
+        apiUrl: globalOpts.apiUrl,
+        apiToken: globalOpts.apiToken,
+      });
+      return cachedClient;
+    },
+    isJson(): boolean {
+      return Boolean(program.opts<{ json?: boolean }>().json);
+    },
+    output(data: unknown, formatHuman: () => void): void {
+      if (this.isJson()) {
+        console.log(JSON.stringify(data, null, 2));
+      } else {
+        formatHuman();
       }
-      if (opts.strategy && !["long-term", "swing", "both"].includes(opts.strategy)) {
-        console.error("--strategy must be one of: long-term, swing, both");
-        process.exit(1);
+    },
+  };
+
+  // ── HTTP API Server (`snestack serve`) ───────────────────────────────────
+
+  program
+    .command("serve")
+    .description(
+      "Start the snestack HTTP JSON API server (defaults to 127.0.0.1:4700, or 0.0.0.0:$PORT when PORT is set)"
+    )
+    .option("--addr <addr>", "Listen address as host:port or :port (e.g. 127.0.0.1:4700)")
+    .option("--host <host>", "Bind host (default: 127.0.0.1, or 0.0.0.0 when PORT is set)")
+    .option("--port <port>", "Bind port (default: 4700, or $PORT)")
+    .option(
+      "--allow-unauthenticated-remote",
+      "Allow binding a non-loopback address without SNESTACK_API_TOKEN configured"
+    )
+    .action(
+      async (opts: {
+        addr?: string;
+        host?: string;
+        port?: string;
+        allowUnauthenticatedRemote?: boolean;
+      }) => {
+        const globalOpts = program.opts<{ apiToken?: string }>();
+        let host = opts.host;
+        let port = opts.port !== undefined ? parseInt(opts.port, 10) : undefined;
+        if (opts.addr) {
+          const parsed = parseListenAddr(opts.addr);
+          host = parsed.host;
+          port = parsed.port;
+        }
+        const running = await startApiServer({
+          host,
+          port,
+          apiToken: globalOpts.apiToken,
+          allowUnauthenticatedRemote: Boolean(opts.allowUnauthenticatedRemote),
+        });
+        if (ctx.isJson()) {
+          console.log(
+            JSON.stringify({
+              status: "listening",
+              host: running.host,
+              port: running.port,
+              url: running.url,
+              routes: running.router.listRoutes().length,
+            })
+          );
+        } else {
+          console.log(
+            `snestack API server listening on ${running.url} (${running.router.listRoutes().length} routes)`
+          );
+        }
+
+        await new Promise<void>((resolve) => {
+          const shutdown = () => {
+            running.close().finally(() => resolve());
+          };
+          process.once("SIGINT", shutdown);
+          process.once("SIGTERM", shutdown);
+        });
       }
-      // Ensure ticker exists in tickers table
-      await db.addTicker(ticker.toUpperCase(), ticker.toUpperCase(), "PUBLIC");
-      const ok = await db.addPosition(ticker.toUpperCase(), shares, costBasis, opts.notes, opts.strategy);
-      console.log(ok ? `Position added: ${ticker.toUpperCase()}` : "Failed to add position");
-      await db.close();
-    }
-  );
+    );
 
-position
-  .command("strategy <ticker> <strategy>")
-  .description("Set the strategy tag on an existing position without touching shares/cost basis (long-term, swing, or both)")
-  .action(async (ticker: string, strategy: string) => {
-    const config = getConfig();
-    const db = await Db.open(config.getDatabaseUrl());
-    if (!["long-term", "swing", "both"].includes(strategy)) {
-      console.error("strategy must be one of: long-term, swing, both");
-      process.exit(1);
-    }
-    const ok = await db.updatePositionStrategy(ticker.toUpperCase(), strategy);
-    console.log(ok ? `Strategy set: ${ticker.toUpperCase()} -> ${strategy}` : "Position not found");
-    await db.close();
-  });
+  // ── Interactive Setup & Non-Interactive Readiness ────────────────────────
 
-position
-  .command("remove <ticker>")
-  .description("Remove a portfolio position")
-  .action(async (ticker: string) => {
-    const config = getConfig();
-    const db = await Db.open(config.getDatabaseUrl());
-    const ok = await db.removePosition(ticker.toUpperCase());
-    console.log(ok ? `Position removed: ${ticker.toUpperCase()}` : "Position not found");
-    await db.close();
-  });
+  program
+    .command("setup")
+    .description("Interactive setup for API keys and notifications")
+    .option("--env-file <path>", "Path to .env file (default: .env)")
+    .action(async (opts: { envFile?: string }) => {
+      const ok = await setupInteractive(opts.envFile);
+      if (!ok) process.exitCode = 1;
+    });
 
-position
-  .command("list")
-  .description("List all positions")
-  .action(async () => {
-    const config = getConfig();
-    const db = await Db.open(config.getDatabaseUrl());
-    const positions = await db.getAllPositions();
-    if (positions.length === 0) {
-      console.log("No positions");
-    } else {
-      console.log("\nPositions:");
-      console.log("-".repeat(60));
-      positions.forEach((p) => {
+  program
+    .command("health")
+    .description("Check server/harness health and registered domains")
+    .action(async () => {
+      const res = await ctx.getClient().get<{
+        status: string;
+        version: string;
+        domains: string[];
+        authRequired: boolean;
+      }>("/api/health");
+      ctx.output(res, () => {
         console.log(
-          `  ${p.ticker.padEnd(8)} ${p.shares} shares @ $${p.cost_basis.toFixed(2)}  [${p.strategy}]`
+          `snestack v${res.version} [${res.status}] — domains: ${res.domains.join(", ")} (auth: ${
+            res.authRequired ? "token" : "loopback/open"
+          })`
         );
-        if (p.notes) console.log(`           ${p.notes}`);
       });
-    }
-    await db.close();
-  });
+    });
 
-// ── Watchlist management ───────────────────────────────────────────────────
-
-const watchlist = program.command("watchlist").description("Manage watchlist");
-
-watchlist
-  .command("add <ticker> <thesis>")
-  .description("Add ticker to watchlist")
-  .option("-n, --notes <notes>", "Additional notes")
-  .action(async (ticker: string, thesis: string, opts: { notes?: string }) => {
-    const config = getConfig();
-    const db = await Db.open(config.getDatabaseUrl());
-    await db.addTicker(ticker.toUpperCase(), ticker.toUpperCase(), "PUBLIC");
-    const ok = await db.addWatchlist(ticker.toUpperCase(), thesis, opts.notes);
-    console.log(ok ? `Watchlist added: ${ticker.toUpperCase()}` : "Failed to add watchlist item");
-    await db.close();
-  });
-
-watchlist
-  .command("remove <ticker>")
-  .description("Remove from watchlist")
-  .action(async (ticker: string) => {
-    const config = getConfig();
-    const db = await Db.open(config.getDatabaseUrl());
-    const ok = await db.removeWatchlist(ticker.toUpperCase());
-    console.log(ok ? `Removed: ${ticker.toUpperCase()}` : "Not found on watchlist");
-    await db.close();
-  });
-
-watchlist
-  .command("list")
-  .description("List watchlist")
-  .action(async () => {
-    const config = getConfig();
-    const db = await Db.open(config.getDatabaseUrl());
-    const items = await db.getWatchlist();
-    if (items.length === 0) {
-      console.log("Watchlist is empty");
-    } else {
-      console.log("\nWatchlist:");
-      console.log("-".repeat(60));
-      items.forEach((w) => {
-        console.log(`  ${w.ticker.padEnd(8)} ${w.thesis}`);
-        if (w.notes) console.log(`           ${w.notes}`);
+  program
+    .command("routes")
+    .description("List every HTTP API route registered across core and domains")
+    .option("--scope <scope>", "Filter by scope (core or domain name)")
+    .action(async (opts: { scope?: string }) => {
+      const res = await ctx.getClient().get<{
+        count: number;
+        routes: Array<{ method: string; pattern: string; summary: string; scope: string }>;
+      }>("/api/routes", { scope: opts.scope });
+      ctx.output(res, () => {
+        res.routes.forEach((r) => {
+          console.log(`${r.method.padEnd(7)} ${r.pattern.padEnd(44)} [${r.scope}] ${r.summary}`);
+        });
       });
-    }
-    await db.close();
-  });
+    });
 
-// ── Report organization ─────────────────────────────────────────────────────
+  program
+    .command("env-check")
+    .description("Check non-secret configuration and environment readiness")
+    .action(async () => {
+      const res = await ctx.getClient().get<{
+        valid: boolean;
+        missingRequired: string[];
+        executorChain: string;
+        brainRoot: string;
+        brainRootExists: boolean;
+      }>("/api/env");
+      ctx.output(res, () => {
+        console.log(`Environment valid: ${res.valid ? "yes" : "no"}`);
+        console.log(`Executor chain:    ${res.executorChain}`);
+        console.log(`Brain root:        ${res.brainRoot} (${res.brainRootExists ? "exists" : "missing"})`);
+        if (res.missingRequired.length > 0) {
+          console.log(`Missing required:  ${res.missingRequired.join(", ")}`);
+        }
+      });
+      if (!res.valid) process.exitCode = 1;
+    });
 
-program
-  .command("organize-reports")
-  .description("Organize Morningstar PDFs from staging")
-  .option("--staging-dir <dir>", "Staging directory", path.join(defaultReportsDir(), "staging"))
-  .option("--target-dir <dir>", "Target reports directory", defaultReportsDir())
-  .option("--archive-dir <dir>", "Archive directory", path.join(defaultReportsDir(), "archive"))
-  .option("--error-dir <dir>", "Error directory", path.join(defaultReportsDir(), "error"))
-  .action(
-    async (opts: {
-      stagingDir: string;
-      targetDir: string;
-      archiveDir: string;
-      errorDir: string;
-    }) => {
-      const result = await organizeStagedReports(
-        opts.stagingDir,
-        opts.targetDir,
-        opts.archiveDir,
-        opts.errorDir
+  // ── Domain & Skill Introspection ─────────────────────────────────────────
+
+  program
+    .command("domains")
+    .description("List registered domains with their skills, references, context tools, and scripts")
+    .action(async () => {
+      const res = await ctx.getClient().get<{
+        domains: Array<{
+          name: string;
+          skills: Array<{ name: string }>;
+          references: string[];
+          contextTools: string[];
+          scripts: string[];
+        }>;
+      }>("/api/domains");
+      ctx.output(res, () => {
+        res.domains.forEach((d) => {
+          console.log(
+            `${d.name.padEnd(12)} skills=[${d.skills.map((s) => s.name).join(", ")}]  tools=[${d.contextTools.join(
+              ", "
+            )}]  scripts=${d.scripts.length}`
+          );
+        });
+      });
+    });
+
+  program
+    .command("skills [domain]")
+    .description("List runnable skills across all domains or a single domain")
+    .option("--all", "Include non-runnable docs (vision, pm, eng, INDEX)")
+    .action(async (domain: string | undefined, opts: { all?: boolean }) => {
+      if (domain) {
+        const res = await ctx.getClient().get<{
+          domain: string;
+          skills: Array<{ name: string; model: string; hasGate: boolean; verdict: boolean; runnable: boolean }>;
+        }>(`/api/domains/${encodeURIComponent(domain)}/skills`, {
+          all: opts.all ? "true" : undefined,
+        });
+        ctx.output(res, () => {
+          res.skills.forEach((s) => {
+            console.log(
+              `${res.domain}/${s.name.padEnd(26)} model=${s.model.padEnd(9)} gate=${String(s.hasGate).padEnd(
+                5
+              )} verdict=${s.verdict}${s.runnable ? "" : " [doc]"}`
+            );
+          });
+        });
+        return;
+      }
+      const res = await ctx.getClient().get<{
+        domains: Array<{
+          name: string;
+          skills: Array<{ name: string; model: string; hasGate: boolean; verdict: boolean }>;
+        }>;
+      }>("/api/domains");
+      ctx.output(res, () => {
+        for (const d of res.domains) {
+          for (const s of d.skills) {
+            console.log(
+              `${d.name}/${s.name.padEnd(26)} model=${s.model.padEnd(9)} gate=${String(s.hasGate).padEnd(
+                5
+              )} verdict=${s.verdict}`
+            );
+          }
+        }
+      });
+    });
+
+  program
+    .command("skill-show <domain> <skill>")
+    .description("Inspect a skill's frontmatter, markdown body, and referenced files")
+    .action(async (domain: string, skill: string) => {
+      const res = await ctx.getClient().get<{
+        domain: string;
+        name: string;
+        frontmatter: Record<string, unknown>;
+        body: string;
+        references: Record<string, string>;
+      }>(`/api/domains/${encodeURIComponent(domain)}/skills/${encodeURIComponent(skill)}`);
+      ctx.output(res, () => {
+        console.log(`=== ${res.domain}/${res.name} ===`);
+        console.log(res.body.trim());
+      });
+    });
+
+  const referencesCmd = program.command("references").description("Inspect or update domain skill reference files");
+
+  referencesCmd
+    .command("list <domain>")
+    .description("List shared reference markdown files in a domain")
+    .action(async (domain: string) => {
+      const res = await ctx.getClient().get<{ domain: string; references: string[] }>(
+        `/api/domains/${encodeURIComponent(domain)}/references`
       );
-      if (result.failed.length) process.exitCode = 1;
-    }
-  );
+      ctx.output(res, () => {
+        if (res.references.length === 0) {
+          console.log(`No references in ${res.domain}.`);
+          return;
+        }
+        res.references.forEach((r) => console.log(`${res.domain}  ${r}`));
+      });
+    });
 
-program
-  .command("signals [ticker]")
-  .description("Show recent signals (optionally filtered by ticker)")
-  .option("-d, --days <days>", "Number of days to look back", "30")
-  .action(async (ticker: string | undefined, opts: { days: string }) => {
-    const config = getConfig();
-    const db = await Db.open(config.getDatabaseUrl());
-    const days = parseInt(opts.days, 10);
-    const signals = ticker
-      ? await db.getSignals(ticker.toUpperCase(), days)
-      : await db.getAllSignals(50);
-    if (signals.length === 0) {
-      console.log("No signals found");
-    } else {
-      console.log(`\nSignals (${signals.length}):`);
-      console.log("-".repeat(80));
-      signals.forEach((s) => {
+  referencesCmd
+    .command("show <domain> <ref>")
+    .description("Print a domain reference markdown file (e.g. financial quality-bar)")
+    .action(async (domain: string, ref: string) => {
+      const res = await ctx.getClient().get<{ content: string }>(
+        `/api/domains/${encodeURIComponent(domain)}/references/${encodeURIComponent(ref)}`
+      );
+      ctx.output(res, () => {
+        process.stdout.write(res.content);
+      });
+    });
+
+  referencesCmd
+    .command("set <domain> <ref>")
+    .description("Atomically update a domain reference markdown file from --file")
+    .requiredOption("--file <path>", "Markdown file to write into the reference")
+    .action(async (domain: string, ref: string, opts: { file: string }) => {
+      const content = fs.readFileSync(opts.file, "utf8");
+      const res = await ctx.getClient().put<{ domain: string; name: string; path: string }>(
+        `/api/domains/${encodeURIComponent(domain)}/references/${encodeURIComponent(ref)}`,
+        { content }
+      );
+      ctx.output(res, () => {
+        console.log(`Updated reference ${res.domain}/${res.name}: ${res.path}`);
+      });
+    });
+
+  program
+    .command("context <domain> <tool> <subject>")
+    .description("Resolve a single domain context tool for a subject (deterministic preview)")
+    .action(async (domain: string, tool: string, subject: string) => {
+      const res = await ctx.getClient().get<{ value: unknown }>(
+        `/api/domains/${encodeURIComponent(domain)}/context/${encodeURIComponent(tool)}`,
+        { subject }
+      );
+      if (ctx.isJson()) {
+        console.log(JSON.stringify(res, null, 2));
+      } else {
+        console.log(JSON.stringify(res.value, null, 2));
+      }
+    });
+
+  // ── Skill Execution, Gating & Assembly ───────────────────────────────────
+
+  program
+    .command("gate-skill <domain> <skill> <subject>")
+    .description("Evaluate a skill's gate triggers deterministically without calling the model")
+    .action(async (domain: string, skill: string, subject: string) => {
+      const res = await ctx.getClient().post<{
+        domain: string;
+        skill: string;
+        subject: string;
+        run: boolean;
+        reasons: string[];
+      }>(`/api/domains/${encodeURIComponent(domain)}/skills/${encodeURIComponent(skill)}/gate`, { subject });
+      ctx.output(res, () => {
         console.log(
-          `  ${s.date.split("T")[0]}  ${s.ticker.padEnd(8)} ${s.recommendation.padEnd(6)} ` +
-            `${(s.confidence * 100).toFixed(0)}%  ${s.reasoning}`
+          `gate: ${res.run ? "run" : "skip"} ${res.domain}/${res.skill} ${res.subject} - ${res.reasons.join("; ")}`
         );
       });
-    }
-    await db.close();
-  });
+      if (!res.run) process.exitCode = 4;
+    });
 
-// ── Data dump for a Claude-driven analysis (deterministic only, no model call) ─
-// This is the "fat code" half of the thin-harness/fat-skills split: it fetches
-// and computes numbers (quotes, technicals, Morningstar fundamentals) and does
-// no judgment. A Claude session reads this JSON plus domains/financial/skills/
-// and the shared brain/ (~/Documents/personal-brain/financial/brain/) and does
-// the actual BUY/SELL/HOLD reasoning — see domains/financial/skills/INDEX.md.
-
-program
-  .command("data-dump")
-  .description(
-    "Print cached quote + fundamentals data for all positions/watchlist tickers as JSON — a pure " +
-      "reporting view over what `data-refresh` last wrote, with no Finnhub/Morningstar calls of its " +
-      "own. Useful for a manual sanity check. Run `data-refresh --tier daily` (and `--tier weekly` " +
-      "for Morningstar) first if the cache is empty or stale; this command will not populate it."
-  )
-  .action(async () => {
-    const config = getConfig();
-    const db = await Db.open(config.getDatabaseUrl());
-    try {
-      const positions = await db.getAllPositions();
-      const watchlist = await db.getWatchlist();
-      const positionsByTicker = Object.fromEntries(positions.map((p) => [p.ticker, p]));
-      const watchlistByTicker = Object.fromEntries(watchlist.map((w) => [w.ticker, w]));
-      const allTickers = await resolveTickerUniverse(db);
-
-      if (allTickers.length === 0) {
-        console.log(JSON.stringify([]));
-        return;
+  program
+    .command("assemble-skill <domain> <skill> <subject>")
+    .description("Assemble a skill's full prompt (with resolved context + references) without calling the model")
+    .option("--out <file>", "Write the assembled userPrompt to a file instead of stdout")
+    .action(async (domain: string, skill: string, subject: string, opts: { out?: string }) => {
+      const res = await ctx.getClient().post<{
+        systemPrompt: string;
+        userPrompt: string;
+        tier: string;
+      }>(`/api/domains/${encodeURIComponent(domain)}/skills/${encodeURIComponent(skill)}/assemble`, { subject });
+      if (opts.out) {
+        fs.writeFileSync(opts.out, res.userPrompt, "utf8");
       }
+      ctx.output(res, () => {
+        if (!opts.out) console.log(res.userPrompt);
+      });
+    });
 
-      const tolerances = loadDataQualityTolerances();
-      const now = new Date();
-      const output = await Promise.all(allTickers.map(async (ticker) => {
-        const pos = positionsByTicker[ticker];
-        const watch = watchlistByTicker[ticker];
-        const [morningstarRow, finnhubRow, quote] = await Promise.all([
-          db.getLatestFundamentals(ticker, "morningstar"),
-          db.getLatestFundamentals(ticker, "finnhub"),
-          db.getLatestQuote(ticker),
-        ]);
-        return {
-          ticker,
-          isPosition: !!pos,
-          isWatchlist: !!watch,
-          positionStrategyTag: pos?.strategy ?? null,
-          shares: pos?.shares ?? null,
-          costBasis: pos?.cost_basis ?? null,
-          watchlistThesis: watch?.thesis ?? null,
-          quote: quote ?? null,
-          equity: morningstarRow ? equityDataFromCache(morningstarRow) : null,
-          data_quality: computeTickerDataQuality({
-            ticker,
-            finnhub: finnhubRow,
-            morningstar: morningstarRow,
-            quote,
-            position: pos,
-            tolerances,
-            now,
-          }),
-        };
-      }));
+  program
+    .command("run-skill <domain> <skill> <subject>")
+    .description(
+      "Run a named skill against a subject through the core harness (e.g. run-skill financial long-term-quality NVDA)"
+    )
+    .option(
+      "--gated",
+      "Apply the skill's own `gate:` triggers first and exit 4 without a model call when none fire (see core/gate.ts)"
+    )
+    .option(
+      "--out <file>",
+      "Write the write-up to this file (and read it back to confirm) instead of stdout. Exit 5 if the file doesn't hold what was written."
+    )
+    .action(async (domain: string, skill: string, subject: string, opts: { gated?: boolean; out?: string }) => {
+      try {
+        const res = await ctx.getClient().post<{
+          status: "ok" | "gated" | "truncated";
+          domain: string;
+          skill: string;
+          subject: string;
+          gate: { run: boolean; reasons: string[] } | null;
+          formattedText?: string;
+          result: { outputTokensUsed: number | null } | null;
+        }>(`/api/domains/${encodeURIComponent(domain)}/skills/${encodeURIComponent(skill)}/run`, {
+          subject,
+          gated: Boolean(opts.gated),
+          outFile: opts.out,
+        });
 
-      console.log(JSON.stringify(output, null, 2));
-    } finally {
-      await db.close();
-    }
-  });
-
-// ── Tiered data refresh (core of the harness/data-pipeline migration) ──────
-// The dispatch logic lives in domains/financial/dataRefresh.ts (importable
-// without triggering this file's program.parseAsync side effect below, so it
-// can be unit-tested directly) — this is just the CLI wiring around it.
-
-program
-  .command("data-refresh")
-  .description(
-    "Refresh cached quote/technicals/fundamentals for positions+watchlist tickers, scoped by tier. " +
-      "intraday: quote + RSI/MA only (skips Finnhub fundamentals). " +
-      "daily: quote + RSI/MA + Finnhub live fundamentals. " +
-      "weekly: Morningstar PDF re-parse only. " +
-      "This is the only command that calls Finnhub/Twelve Data/Morningstar — run-skill and data-dump " +
-      "read only from the cache this leaves behind."
-  )
-  .requiredOption("--tier <tier>", "intraday | daily | weekly")
-  .option("--tickers <list>", "comma-separated subset; default: all positions+watchlist")
-  .action(async (opts: { tier: string; tickers?: string }) => {
-    if (!DATA_REFRESH_TIERS.includes(opts.tier as DataRefreshTier)) {
-      console.error(`Invalid --tier "${opts.tier}" — expected one of: ${DATA_REFRESH_TIERS.join(", ")}`);
-      process.exitCode = 1;
-      return;
-    }
-    const config = getConfig();
-    const db = await Db.open(config.getDatabaseUrl());
-    try {
-      const { tickers, failed } = await runDataRefresh(opts.tier as DataRefreshTier, opts.tickers, { config, db });
-      if (failed.length > 0) {
-        console.error(`data-refresh ${opts.tier}: ${failed.length}/${tickers.length} ticker(s) failed: ${failed.join(", ")}`);
-      }
-      if (tickers.length === 0) {
-        console.log(`No tickers to refresh (no positions/watchlist entries, and no --tickers given).`);
-        return;
-      }
-      console.log(`Refreshed ${opts.tier} tier for ${tickers.length} ticker(s): ${tickers.join(", ")}`);
-    } finally {
-      await db.close();
-    }
-  });
-
-// ── Skill harness (core/runSkill) ───────────────────────────────────────────
-// The formal replacement for the manual "read data-dump JSON + skill markdown
-// + brain by hand" flow: loads the named skill's frontmatter, resolves its
-// `requires`/`references` via the domain's context tools, and runs the
-// assembled prompt through the model. Prints the model's raw reasoning —
-// still your call whether/how to turn that into a `notify --file` payload.
-
-program
-  .command("run-skill <domain> <skill> <subject>")
-  .description(
-    "Run a named skill against a subject through the core harness " +
-      "(e.g. run-skill financial long-term-quality NVDA)"
-  )
-  .option(
-    "--gated",
-    "Apply the skill's own `gate:` triggers first and exit 4 without a model call when none fire (see core/gate.ts)"
-  )
-  .option(
-    "--out <file>",
-    "Write the write-up to this file (and read it back to confirm) instead of stdout. Exit 5 if the file doesn't hold what was written."
-  )
-  .action(async (domain: string, skill: string, subject: string, opts: { gated?: boolean; out?: string }) => {
-    if (!validateEnv()) {
-      process.exitCode = 1;
-      return;
-    }
-    try {
-      if (opts.gated) {
-        const decision = await evaluateSkillGate(domain, skill, subject);
-        if (!decision.run) {
-          // Exit code 4 = skipped by the gate (not an error); automation records it as skipped.
-          console.error(`gate: skipped ${domain}/${skill} ${subject} - ${decision.reasons.join("; ")}`);
+        if (res.status === "gated" && res.gate) {
+          console.error(`gate: skipped ${domain}/${skill} ${subject} - ${res.gate.reasons.join("; ")}`);
+          if (ctx.isJson()) console.log(JSON.stringify(res, null, 2));
           process.exitCode = 4;
           return;
         }
-        console.error(`gate: running ${domain}/${skill} ${subject} - ${decision.reasons.join("; ")}`);
-      }
-      const result = await runSkill(domain, skill, subject);
-      if (!result.output.trim()) {
-        console.error(
-          `run-skill failed: model returned no text (stop_reason: ${result.stopReason}, output_tokens: ${result.outputTokensUsed})`
-        );
-        process.exitCode = 1;
-        return;
-      }
-      const text = `\n=== ${result.domain}/${result.skill} — ${result.subject} ===\n\n${result.output}\n`;
-      if (opts.out) {
-        const problem = writeVerified(opts.out, text);
-        if (problem) {
-          // Exit 5 = the model call worked but its output didn't land on disk; callers may retry.
-          console.error(`run-skill failed: ${problem}`);
-          process.exitCode = 5;
-          return;
+        if (res.gate?.run) {
+          console.error(`gate: running ${domain}/${skill} ${subject} - ${res.gate.reasons.join("; ")}`);
         }
-      } else {
-        process.stdout.write(text);
-      }
-      if (result.verdictRequired && !result.verdict) {
-        console.error('run-skill failed: the output has no valid "VERDICT: LABEL | confidence | reasoning" line');
-        process.exitCode = 1;
-        return;
-      }
-      if (result.stopReason === "max_tokens") {
-        // Exit code 3 = output kept but cut off, so automation can tell it from a clean run or a failure.
-        console.error(`run-skill warning: output truncated at max_tokens (${result.outputTokensUsed} output tokens)`);
-        process.exitCode = 3;
-      }
-    } catch (e) {
-      console.error(`run-skill failed: ${formatCliError(e)}`);
-      process.exitCode = 1;
-    }
-  });
 
-// ── Travel domain ────────────────────────────────────────────────────────
-// Two ways to run catalog-trip-year — see that skill file for the full
-// tradeoff. `travel auth` + `travel catalog` is the fully automated,
-// deterministic-fetch-then-one-model-call path (what the nightly cron runs).
-// `travel prep-catalog` is the manual path: it assembles the skill + that
-// year's Timeline clusters into one prompt for a Claude session that has
-// real Gmail + Google Maps access to search interactively.
-
-const travel = program.command("travel").description("Travel brain domain");
-
-travel
-  .command("auth")
-  .description(
-    "One-time OAuth consent for read-only Gmail access, needed before `travel catalog`. " +
-      "Requires SNESTACK_GOOGLE_CLIENT_ID/SNESTACK_GOOGLE_CLIENT_SECRET already set (the same " +
-      "Google Cloud OAuth client the calendar domain uses) and the Gmail API enabled on that " +
-      "project — see node/README.md."
-  )
-  .option("--env-file <path>", "Path to .env file (default: .env)")
-  .action(async (opts: { envFile?: string }) => {
-    const ok = await authorizeGmail(opts.envFile);
-    if (!ok) process.exitCode = 1;
-  });
-
-travel
-  .command("catalog <year>")
-  .description(
-    "Fully automated catalog-trip-year run: fetches Gmail (metadata + snippets only, via a fixed " +
-      "search) and the year's Timeline clusters deterministically, runs the skill in a single " +
-      "model call, and writes the resulting per-trip files + index to " +
-      "<SNESTACK_BRAIN_ROOT>/travel/<year>/.nightly-draft/ — a staging directory, not the " +
-      "canonical files, since this path is lower-fidelity than a manual run (see the skill file). " +
-      "Review the draft and move files into place yourself. Requires `travel auth` first. This is " +
-      "what scripts/travel-catalog-nightly.sh runs on a cron."
-  )
-  .option(
-    "--out-dir <dir>",
-    "Write the files here instead of the year's .nightly-draft/ staging directory (used by dry runs so they leave no trace in the real catalog)"
-  )
-  .action(async (year: string, opts: { outDir?: string }) => {
-    if (!validateEnv()) {
-      process.exitCode = 1;
-      return;
-    }
-    if (!/^\d{4}$/.test(year)) {
-      console.error(`Expected a 4-digit year, got "${year}"`);
-      process.exitCode = 1;
-      return;
-    }
-    try {
-      console.error(`Fetching Gmail + Timeline context and running catalog-trip-year for ${year}...`);
-      const result = await runSkill("travel", "catalog-trip-year", year);
-      const files = parseMultiFileOutput(result.output);
-      if (Object.keys(files).length === 0) {
-        console.error("No '### FILE:' blocks found in the model output — nothing written.");
-        console.error(
-          `stop_reason: ${result.stopReason}, output_tokens: ${result.outputTokensUsed}` +
-            (result.stopReason === "max_tokens"
-              ? " — ran out of budget (often to thinking, which shares the same budget) before writing " +
-                "visible text; try raising maxTokens in catalog-trip-year.md's frontmatter"
-              : "")
-        );
-        console.error("Raw output:");
-        console.error(result.output);
-        process.exitCode = 1;
-        return;
-      }
-      const written = opts.outDir
-        ? writeCatalogFilesToDir(opts.outDir, files)
-        : writeStagedCatalogFiles(getConfig().getBrainRoot(), parseInt(year, 10), files);
-      console.log(
-        `Wrote ${written.length} file(s) to ${opts.outDir ?? "the .nightly-draft/ staging directory"}:`
-      );
-      written.forEach((p) => console.log(`  ${p}`));
-      if (result.stopReason === "max_tokens") {
-        console.log(
-          `\nNote: stopped at max_tokens (${result.outputTokensUsed} output tokens) — the response may ` +
-            "have been cut off mid-file, or an expected file (e.g. the index) may be missing entirely. " +
-            "Check the files above before assuming the run is complete."
-        );
-        process.exitCode = 3;
-      }
-      console.log("\nReview before promoting into the year's canonical files.");
-    } catch (e) {
-      console.error(`travel catalog failed: ${formatCliError(e)}`);
-      process.exitCode = 1;
-    }
-  });
-
-travel
-  .command("prep-catalog <year>")
-  .description(
-    "Assemble the catalog-trip-year skill for <year> (skill body + that year's Google Maps " +
-      "Timeline clusters) into one prompt, ready to paste into a Claude session with Gmail + " +
-      "Maps access. Writes to stdout, or --out <file>."
-  )
-  .option("--out <path>", "Write the assembled prompt to a file instead of stdout")
-  .option("--since <date>", "Delta mode: only include Timeline clusters ending after YYYY-MM-DD")
-  .option("--delta", "Delta mode: infer --since from the last trip in 00-index-<year>.md")
-  .action(async (year: string, opts: { out?: string; since?: string; delta?: boolean }) => {
-    if (!validateEnv()) {
-      process.exitCode = 1;
-      return;
-    }
-    if (!/^\d{4}$/.test(year)) {
-      console.error(`Expected a 4-digit year, got "${year}"`);
-      process.exitCode = 1;
-      return;
-    }
-    if (opts.since && !/^\d{4}-\d{2}-\d{2}$/.test(opts.since)) {
-      console.error(`Expected --since in YYYY-MM-DD format, got "${opts.since}"`);
-      process.exitCode = 1;
-      return;
-    }
-    try {
-      const yearDir = path.join(getConfig().getBrainRoot(), "travel", year);
-      let sinceDate = opts.since;
-      if (!sinceDate && opts.delta) {
-        const indexPath = path.join(yearDir, `00-index-${year}.md`);
-        if (fs.existsSync(indexPath)) {
-          sinceDate = parseLastIndexedTripEndDate(fs.readFileSync(indexPath, "utf8"), parseInt(year, 10)) ?? undefined;
+        if (ctx.isJson()) {
+          console.log(JSON.stringify(res, null, 2));
+        } else if (!opts.out && res.formattedText) {
+          process.stdout.write(res.formattedText);
         }
-        if (!sinceDate) {
-          console.error(`Could not infer --since from ${indexPath}; pass --since YYYY-MM-DD explicitly.`);
-          process.exitCode = 1;
-          return;
+
+        if (res.status === "truncated") {
+          console.error(
+            `run-skill warning: output truncated at max_tokens (${res.result?.outputTokensUsed ?? "?"} output tokens)`
+          );
+          process.exitCode = 3;
         }
-      }
-      const subject = sinceDate ? `${year}@${sinceDate}` : year;
-      let { userPrompt } = await assembleSkillPrompt("travel", "catalog-trip-year", subject);
-      if (sinceDate) {
-        const existingFiles = listExistingTripFiles(yearDir);
-        const fileList = existingFiles.length ? existingFiles.map((f) => `- ${f}`).join("\n") : "- (none yet)";
-        userPrompt +=
-          `\n\n## DELTA MODE (since ${sinceDate})\n` +
-          `Only Timeline clusters ending after ${sinceDate} are included above. ` +
-          `Search Gmail only for trips after ${sinceDate}, append new trip files, and update \`00-index-${year}.md\` without rewriting existing trips.\n` +
-          `Existing files in \`travel/${year}/\`:\n${fileList}\n`;
-      }
-      if (opts.out) {
-        fs.writeFileSync(opts.out, userPrompt, "utf8");
-        console.error(`Wrote assembled prompt to ${opts.out}`);
-      } else {
-        console.log(userPrompt);
-      }
-    } catch (e) {
-      console.error(`travel prep-catalog failed: ${e}`);
-      process.exitCode = 1;
-    }
-  });
-
-program
-  .command("distill-signals")
-  .description(
-    "[No longer used by daily-analysis.sh — see build-signals] Turn a directory of run-skill output files into a notify-ready signals JSON array, " +
-      "via a single Claude call over all of them at once. Reads every " +
-      "*-long-term-quality.md / *-swing-trading-large-cap.md / *-buffett-value.md file in --dir, plus that " +
-      "dir's data-dump.json (if present) for isWatchlist flags. Prints the JSON array to " +
-      "stdout — pipe it to a file, then pass that file to `notify --file`. " +
-      "Unlike run-skill, this makes no fresh judgment of its own: it summarizes the " +
-      "judgments those skill runs already made into the schema notify expects."
-  )
-  .requiredOption("--dir <path>", "Directory containing run-skill output files (and optionally data-dump.json)")
-  .action(async (opts: { dir: string }) => {
-    if (!validateEnv()) {
-      process.exitCode = 1;
-      return;
-    }
-    const config = getConfig();
-    const dir = opts.dir;
-    if (!fs.existsSync(dir)) {
-      console.error(`Directory not found: ${dir}`);
-      process.exitCode = 1;
-      return;
-    }
-    const files = fs
-      .readdirSync(dir)
-      .filter(
-        (f) =>
-          f.endsWith("-long-term-quality.md") ||
-          f.endsWith("-swing-trading-large-cap.md") ||
-          f.endsWith("-buffett-value.md")
-      );
-    if (files.length === 0) {
-      console.error(`No *-long-term-quality.md, *-swing-trading-large-cap.md, or *-buffett-value.md files found in ${dir}`);
-      process.exitCode = 1;
-      return;
-    }
-
-    const watchlistTickers = new Set<string>();
-    const dumpPath = path.join(dir, "data-dump.json");
-    if (fs.existsSync(dumpPath)) {
-      try {
-        const raw = fs.readFileSync(dumpPath, "utf8");
-        // data-dump.json may have colored logger lines above the JSON array if it
-        // was captured with `tee`/stdout rather than redirected cleanly — the
-        // array itself always starts at a line that is exactly "[".
-        const lines = raw.split("\n");
-        const arrayStartLine = lines.findIndex((l) => l === "[");
-        if (arrayStartLine === -1) throw new Error("no JSON array found (no line is exactly '[')");
-        const arr = JSON.parse(lines.slice(arrayStartLine).join("\n")) as Array<{
-          ticker: string;
-          isWatchlist: boolean;
-        }>;
-        arr.forEach((e) => {
-          if (e.isWatchlist) watchlistTickers.add(e.ticker);
-        });
       } catch (e) {
-        console.error(`Warning: could not parse ${dumpPath} for watchlist flags: ${e}`);
-      }
-    }
-
-    const sections = files
-      .sort()
-      .map((f) => `### FILE: ${f}\n${fs.readFileSync(path.join(dir, f), "utf8")}`)
-      .join("\n\n---\n\n");
-
-    const systemPrompt =
-      "You distill a batch of already-completed investment judgment write-ups into a single " +
-      "strict JSON array for a downstream notification step. You are not re-deciding anything — " +
-      "each input file already contains a final recommendation from a domain skill; your job is " +
-      "purely mechanical extraction and format translation. Output ONLY the JSON array — no prose, " +
-      "no markdown code fences, no commentary before or after.";
-
-    const userPrompt = [
-      `WATCHLIST TICKERS (fromWatchlist should be true for these, false for all others): ${
-        [...watchlistTickers].join(", ") || "(none)"
-      }`,
-      "",
-      "For each file below, extract one JSON object:",
-      "- ticker: the ticker symbol",
-      '- recommendation: "BUY", "SELL", or "HOLD" — map the skill\'s own vocabulary onto these three ' +
-        '(e.g. "BUY-MORE"/"TACTICAL BUY" -> BUY, "TRIM"/"SELL/TRIM" -> SELL)',
-      "- confidence: your best-effort 0.0-1.0 read of how strongly the file's own reasoning supports its call",
-      "- reasoning: 1-2 sentences summarizing the file's actual reasoning, prefixed with [Long-term] or " +
-        "[Swing] depending on which file it came from",
-      "- fromWatchlist: true/false per the watchlist ticker list above",
-      "",
-      "Skip a swing-trading file entirely if it explicitly says the ticker is INELIGIBLE for the " +
-      "swing strategy (failed eligibility filter) — that is not a recommendation, don't invent one. " +
-      "A ticker can legitimately appear twice (once per skill) if both produced a call.",
-      "",
-      sections,
-    ].join("\n");
-
-    let output: string;
-    try {
-      ({ output } = await runPrompt(config.getExecutorApiKey(), systemPrompt, userPrompt, {
-        tier: "cheap",
-        maxTokens: 8000,
-        label: "financial/distill-signals",
-      }));
-    } catch (e) {
-      console.error(`distill-signals failed: ${formatCliError(e)}`);
-      process.exitCode = 1;
-      return;
-    }
-    const cleaned = output
-      .trim()
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/```\s*$/i, "");
-    try {
-      const parsed = JSON.parse(cleaned);
-      if (!Array.isArray(parsed)) throw new Error("not an array");
-      console.log(JSON.stringify(parsed, null, 2));
-    } catch (e) {
-      console.error(`Model output was not valid JSON: ${e}`);
-      console.error(output);
-      process.exitCode = 1;
-    }
-  });
-
-program
-  .command("notify-summary")
-  .description(
-    "Email a run summary built from the run's logs, for runs with no new recommendations (\"no changes today\") " +
-      "or that didn't complete cleanly (\"run had problems\"). Deterministic, no model call."
-  )
-  .requiredOption("--dir <path>", "Run directory containing run.jsonl")
-  .option("--dry-run", "Print the summary instead of emailing it")
-  .action(async (opts: { dir: string; dryRun?: boolean }) => {
-    const events = readRunEvents(opts.dir);
-    if (events.length === 0) {
-      console.error(`notify-summary: no run events found in ${opts.dir}`);
-      process.exitCode = 1;
-      return;
-    }
-    const report = buildRunReport(events);
-    if (opts.dryRun) {
-      console.log(`[dry-run] Would email a ${report.status === "failed" ? "run-problems" : "no-changes"} summary:\n`);
-      console.log(formatRunReportText(report));
-      return;
-    }
-    const config = getConfig();
-    const db = await Db.open(config.getDatabaseUrl());
-    try {
-      const trader = new TraderAgent(db, config.getGmailAddress(), config.getGmailAppPassword(), config.getNotificationEmail());
-      const ok = await trader.sendRunSummaryEmail(report);
-      console.log(ok ? "Run summary email sent" : "Run summary email failed");
-      if (!ok) process.exitCode = 1;
-    } finally {
-      await db.close();
-    }
-  });
-
-program
-  .command("build-signals")
-  .description(
-    "Build the notify-ready signals array from a run directory by reading each skill write-up's trailing " +
-      "`VERDICT:` line. Deterministic, no model call. Prints the JSON array to stdout; files with a missing " +
-      "or invalid verdict are listed on stderr and make the command exit 1 (the valid signals are still printed)."
-  )
-  .requiredOption(
-    "--dir <path>",
-    "Run directory containing *-long-term-quality.md / *-swing-trading-large-cap.md / *-buffett-value.md files"
-  )
-  .option(
-    "--only-changed",
-    "Drop any signal whose recommendation matches the last one recorded for that ticker+strategy and whose " +
-      "confidence hasn't moved by --confidence-move either — for a skill run several times a day, an unmoved " +
-      "verdict otherwise re-emails the same call every time."
-  )
-  .option(
-    "--confidence-move <pct>",
-    "With --only-changed: still treat a same-recommendation signal as changed if confidence moved at least this much (0-1)",
-    "0.1"
-  )
-  .option("--dry-run", "Do not persist gate_runs records to the database")
-  .action(async (opts: { dir: string; onlyChanged?: boolean; confidenceMove: string; dryRun?: boolean }) => {
-    if (!fs.existsSync(opts.dir)) {
-      console.error(`Directory not found: ${opts.dir}`);
-      process.exitCode = 1;
-      return;
-    }
-    const config = getConfig();
-    const brainRoot = config.getBrainRoot();
-    const companiesDir = path.join(brainRoot, "financial", "brain", "investing", "public", "companies");
-    const result = buildSignalsFromDir(opts.dir, fs.existsSync(companiesDir) ? { brainRoot } : undefined);
-    const evaluations = opts.dryRun ? [] : collectEvaluationsFromDir(opts.dir);
-    let signals = result.signals;
-    let unchangedCount = 0;
-    const dbUrl = config.getDatabaseUrl();
-    if (opts.onlyChanged || (!opts.dryRun && evaluations.length > 0 && dbUrl)) {
-      const db = await Db.open(dbUrl);
-      try {
-        if (opts.onlyChanged) {
-          const filtered = await filterUnchangedSignals(db, result.signals, parseFloat(opts.confidenceMove));
-          signals = filtered.changed;
-          unchangedCount = filtered.unchanged.length;
-        }
-        if (!opts.dryRun && evaluations.length > 0) {
-          const runAt = new Date().toISOString();
-          for (const ev of evaluations) {
-            let { rsi, price } = ev;
-            if (rsi == null || price == null) {
-              const q = await db.getLatestQuote(ev.ticker);
-              if (rsi == null) rsi = q?.rsi ?? null;
-              if (price == null) price = q?.close ?? null;
+        if (e instanceof ApiHttpError) {
+          if (e.code === "invalid_env") {
+            process.exitCode = 1;
+            return;
+          }
+          if (e.code === "write_verification_failed") {
+            console.error(`run-skill failed: ${e.message}`);
+            process.exitCode = 5;
+            return;
+          }
+          if (e.code === "missing_verdict") {
+            const details = (e.details ?? {}) as { formattedText?: string };
+            if (!opts.out && !ctx.isJson() && details.formattedText) {
+              process.stdout.write(details.formattedText);
             }
-            await db.recordGateRun({ ticker: ev.ticker, skill: ev.skill, runAt, verdict: ev.verdict, rsi, price });
+            console.error(`run-skill failed: ${e.message}`);
+            process.exitCode = 1;
+            return;
           }
         }
-      } finally {
-        await db.close();
+        console.error(`run-skill failed: ${formatCliError(e)}`);
+        process.exitCode = 1;
       }
-    }
-    console.log(JSON.stringify(signals, null, 2));
-    console.error(
-      `build-signals: ${signals.length} signals, ${result.noSignal.length} with nothing to report, ${result.errors.length} errors` +
-        (opts.onlyChanged ? `, ${unchangedCount} unchanged from last time (dropped)` : "")
-    );
-    result.errors.forEach((e) => console.error(`  ERROR ${e}`));
-    if (result.errors.length > 0) process.exitCode = 1;
-  });
-
-program
-  .command("notify")
-  .description(
-    "Send a batch email for a set of signals and record them in signal history. " +
-      "Deterministic — takes already-decided recommendations, does no judgment itself."
-  )
-  .option(
-    "--file <path>",
-    "Path to a JSON file with an array of {ticker, recommendation, confidence, reasoning, fromWatchlist?}. Reads stdin if omitted."
-  )
-  .option("--dry-run", "Print what would be sent and exit — no email, nothing recorded in the signals table")
-  .option("--run-dir <dir>", "Append a summary of this run (from its run.jsonl) to the email; defaults to $SNESTACK_RUN_DIR")
-  .action(async (opts: { file?: string; dryRun?: boolean; runDir?: string }) => {
-    if (opts.dryRun) {
-      const raw = opts.file ? fs.readFileSync(opts.file, "utf8") : fs.readFileSync(0, "utf8");
-      const preview = JSON.parse(raw) as Array<{ ticker: string; recommendation: string; confidence: number }>;
-      const tally = (r: string) => preview.filter((s) => s.recommendation === r).length;
-      console.log(
-        `[dry-run] Would email ${preview.length} signals (${tally("BUY")} BUY, ${tally("SELL")} SELL, ${tally("HOLD")} HOLD); nothing sent or recorded.`
-      );
-      preview.forEach((s) => console.log(`  ${s.ticker.padEnd(6)} ${s.recommendation.padEnd(5)} ${s.confidence}`));
-      return;
-    }
-    const config = getConfig();
-    const db = await Db.open(config.getDatabaseUrl());
-    try {
-      const raw = opts.file ? fs.readFileSync(opts.file, "utf8") : fs.readFileSync(0, "utf8");
-      const parsed = JSON.parse(raw) as Array<{
-        ticker: string;
-        recommendation: "BUY" | "SELL" | "HOLD";
-        confidence: number;
-        reasoning: string;
-        fromWatchlist?: boolean;
-      }>;
-      const signals: Signal[] = parsed.map((s) => ({
-        ticker: s.ticker.toUpperCase(),
-        recommendation: s.recommendation,
-        confidence: s.confidence,
-        reasoning: s.reasoning,
-        date: new Date(),
-        fromWatchlist: s.fromWatchlist ?? false,
-        createdAt: new Date(),
-      }));
-      const trader = new TraderAgent(
-        db,
-        config.getGmailAddress(),
-        config.getGmailAppPassword(),
-        config.getNotificationEmail()
-      );
-      const runDir = opts.runDir ?? currentRunDir();
-      const events = runDir ? readRunEvents(runDir) : [];
-      const ok = await trader.sendBatchEmail(signals, {}, {}, undefined, events.length ? buildRunReport(events) : undefined);
-      console.log(ok ? `Email sent: ${signals.length} signals` : "Email failed (signals not recorded)");
-      if (!ok) process.exitCode = 1;
-    } finally {
-      await db.close();
-    }
-  });
-
-
-// ── Run logging & health checks ─────────────────────────────────────────────
-// Automation scripts record structured run events (see core/runLog.ts) so a
-// failed, truncated or missing run can be diagnosed — by a person or a watcher
-// agent — without re-running anything.
-
-const runLog = program.command("run-log").description("Record structured events for an automation run");
-
-runLog
-  .command("event <type>")
-  .description("Append an event to the active run's run.jsonl (dir from SNESTACK_RUN_DIR unless --dir is given)")
-  .option("--dir <dir>", "Run directory (default: $SNESTACK_RUN_DIR)")
-  .option("--script <name>", "run_start: the automation's name")
-  .option("--dry-run", "run_start: mark this run as a dry run")
-  .option("--step <name>", "step: what ran, e.g. data-dump or run-skill:long-term-quality")
-  .option("--subject <s>", "step: what it ran on, e.g. a ticker or year")
-  .option("--status <s>", "step: ok | failed | truncated | skipped")
-  .option("--exit-code <n>", "step: the command's exit code")
-  .option("--duration-ms <n>", "step: how long it took")
-  .option("--error-file <path>", "step: file whose last 500 bytes become the error text")
-  .action(
-    (
-      type: string,
-      opts: {
-        dir?: string;
-        script?: string;
-        dryRun?: boolean;
-        step?: string;
-        subject?: string;
-        status?: string;
-        exitCode?: string;
-        durationMs?: string;
-        errorFile?: string;
-      }
-    ) => {
-      const fields: Record<string, unknown> = {};
-      if (opts.script) fields.script = opts.script;
-      if (type === "run_start") fields.dry_run = Boolean(opts.dryRun);
-      if (opts.step) fields.step = opts.step;
-      if (opts.subject) fields.subject = opts.subject;
-      if (opts.status) fields.status = opts.status;
-      if (opts.exitCode !== undefined) fields.exit_code = parseInt(opts.exitCode, 10);
-      if (opts.durationMs !== undefined) fields.duration_ms = parseInt(opts.durationMs, 10);
-      if (opts.errorFile && opts.status !== "ok" && fs.existsSync(opts.errorFile)) {
-        const summary = extractErrorSummary(fs.readFileSync(opts.errorFile, "utf8"));
-        // "error" is reserved for real failures; skipped/truncated steps get "detail" (e.g. the gate's reason).
-        fields[opts.status === "failed" ? "error" : "detail"] = summary;
-      }
-      logRunEvent(type, fields, opts.dir ?? currentRunDir());
-    }
-  );
-
-runLog
-  .command("finalize")
-  .description("Fold the run's events into run.json and print a one-line summary; exits 1 if the run failed")
-  .option("--dir <dir>", "Run directory (default: $SNESTACK_RUN_DIR)")
-  .option("--exit-code <n>", "The automation script's own exit code")
-  .action(async (opts: { dir?: string; exitCode?: string }) => {
-    const dir = opts.dir ?? currentRunDir();
-    if (!dir) {
-      console.error("run-log finalize: no run directory (set SNESTACK_RUN_DIR or pass --dir)");
-      process.exitCode = 1;
-      return;
-    }
-    const summary = finalizeRun(dir, opts.exitCode !== undefined ? parseInt(opts.exitCode, 10) : null);
-    const m = summary.model_calls;
-    console.error(
-      `Run ${summary.status}: ${summary.steps.ok}/${summary.steps.total} steps ok, ${summary.steps.failed} failed, ` +
-        `${summary.steps.truncated} truncated; ${m.count} model calls (${m.input_tokens} in / ${m.output_tokens} out tokens, ` +
-        `~${m.est_cost_usd == null ? "unknown cost" : "$" + m.est_cost_usd.toFixed(2)}` +
-        `${m.api_equivalent_usd ? `, subscription calls ~$${m.api_equivalent_usd.toFixed(2)} at API prices` : ""}` +
-        `${m.subscription_fallbacks ? `; ${m.subscription_fallbacks} call(s) fell back across subscription CLIs` : ""}` +
-        `${m.api_fallbacks ? `; WARNING ${m.api_fallbacks} call(s) fell back to the metered API` : ""}). Summary: ${path.join(dir, "run.json")}`
-    );
-    if (summary.status === "failed") process.exitCode = 1;
-  });
-
-program
-  .command("executor-check")
-  .description("Smoke test: send one tiny prompt through the configured executor chain (SNESTACK_EXECUTOR) and print backend, model, tokens, latency")
-  .option("--tier <t>", "cheap | normal | expensive", "cheap")
-  .action(async (opts: { tier: string }) => {
-    const config = getConfig();
-    try {
-      const tier = opts.tier as ModelTier;
-      const chainDisplay = config.getExecutorChainDisplay();
-      const r = await runPrompt(config.getExecutorApiKey(), "You are a smoke test. Reply with exactly: OK", "ping", {
-        tier,
-        maxTokens: 50,
-        label: "executor-check",
-      });
-      const usedBackend = r.backend ?? config.getExecutorBackend();
-      console.log(`chain: ${chainDisplay}`);
-      console.log(`backend: ${usedBackend}${r.fallbackFrom ? ` (fallback from ${r.fallbackFrom})` : ""}`);
-      console.log(`model: ${r.model}`);
-      console.log(`reply: ${r.output.trim().slice(0, 80)}`);
-      console.log(`tokens: ${r.inputTokensUsed ?? "?"} in / ${r.outputTokensUsed ?? "?"} out; latency ${r.latencyMs}ms; stop ${r.stopReason ?? "?"}`);
-      if (usedBackend === "agy-cli") {
-        const stripped = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
-        console.log(`Gemini API key env stripped from child: ${stripped ? "yes (was set in this shell)" : "n/a (was not set)"}`);
-      } else if (usedBackend === "claude-cli") {
-        const stripped = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
-        console.log(`Anthropic API key env stripped from child: ${stripped ? "yes (was set in this shell)" : "n/a (was not set)"}`);
-      }
-    } catch (e) {
-      console.error(`executor-check failed (${config.getExecutorChainDisplay()}): ${formatCliError(e)}`);
-      process.exitCode = 1;
-    }
-  });
-
-program
-  .command("run-check")
-  .description(
-    "Check recent automation runs for problems: missing or crashed runs, failed or truncated steps, model errors, " +
-      "cost spikes, and (for the financial domain) stale cached data despite refreshes having run. Prints " +
-      "findings; exits 1 if any are errors. Meant for a person or a watcher agent to read."
-  )
-  .option("--days <n>", "How many days back to check, including today", "3")
-  .option("--json", "Print findings as JSON")
-  .option(
-    "--cost",
-    "Instead of health findings, print a read-only cost rollup per script and per domain over 7 and 30 days: " +
-      "estimated cost, model calls, gate skip ratio, and the share of model calls that repeated the previous verdict for the same subject"
-  )
-  .action(async (opts: { days: string; json?: boolean; cost?: boolean }) => {
-    const brainRoot = getConfig().getBrainRoot();
-    if (opts.cost) {
-      const stats = computeRunStats(financialRunStatsTargets(brainRoot), new Date());
-      console.log(opts.json ? JSON.stringify({ computed_at: new Date().toISOString(), ...stats }, null, 2) : formatRunStats(stats));
-      return;
-    }
-    // The nightly travel backfill is deprecated and unscheduled (see scripts/travel-catalog-backfill.sh),
-    // so no travel run is expected. Add a { name: "travel-backfill", runsRoot: <brain>/travel/_runs, ... }
-    // expectation back here if it's ever rescheduled.
-    const expectations: RunExpectation[] = financialRunExpectations(brainRoot);
-    const findings = evaluateRuns({
-      now: new Date(),
-      days: Math.max(1, parseInt(opts.days, 10) || 3),
-      expectations,
-      brainRoot,
     });
-    if (!findings.some((f) => f.code === "brain_root_unreadable")) {
-      const dryRunRoots = [
-        ...expectations.map((e) => e.runsRoot),
-        ...financialRunStatsTargets(brainRoot).map((t) => t.runsRoot),
-        path.join(brainRoot, "_system", "runs", "reflect"),
-      ];
-      findings.push(...checkStaleDryRuns({ now: new Date(), runsRoots: dryRunRoots }));
-    }
 
-    const config = getConfig();
-    try {
-      const db = await Db.open(config.getDatabaseUrl());
-      try {
-        const tickers = await resolveTickerUniverse(db);
-        const checkNow = new Date();
-        findings.push(...checkCacheStaleness({ now: checkNow, tickers, ...(await loadCacheAgeGetters(db, tickers)) }));
-        findings.push(...checkThesisCoverageFindings({ now: checkNow, brainRoot, tickers }));
-      } finally {
-        await db.close();
+  // ── Run Logging, Run History & Health Checks ─────────────────────────────
+
+  const runsCmd = program.command("runs").description("Browse and inspect past automation runs");
+
+  runsCmd
+    .command("list", { isDefault: true })
+    .description("List recent completed automation runs across registered domains")
+    .option("--domain <d>", "Filter by domain")
+    .option("--script <s>", "Filter by script name")
+    .option("--limit <n>", "Max runs to show", "30")
+    .option("--include-dry-run", "Include -dryrun directories")
+    .action(
+      async (opts: { domain?: string; script?: string; limit: string; includeDryRun?: boolean }) => {
+        const res = await ctx.getClient().get<{
+          count: number;
+          runs: Array<{ domain: string; script: string; date: string; dir: string; summary: RunSummary }>;
+        }>("/api/runs", {
+          domain: opts.domain,
+          script: opts.script,
+          limit: parseInt(opts.limit, 10) || 30,
+          includeDryRun: opts.includeDryRun ? "true" : undefined,
+        });
+        ctx.output(res, () => {
+          if (res.runs.length === 0) {
+            console.log("No recorded runs found.");
+            return;
+          }
+          res.runs.forEach((r) => {
+            console.log(
+              `${r.date}  ${r.domain.padEnd(10)} ${r.script.padEnd(28)} [${r.summary.status}]  calls=${r.summary.model_calls.count}`
+            );
+          });
+        });
       }
-    } catch (e) {
-      // Supabase unreachable (or SNESTACK_DATABASE_URL unset): say so plainly instead of reporting a clean bill of health.
-      findings.push({
-        severity: "error",
-        domain: "financial",
-        date: dayString(new Date()),
-        code: "database_unreachable",
-        message: `Cannot read the database, so cache staleness was not checked: ${e instanceof Error ? e.message : String(e)}`,
+    );
+
+  runsCmd
+    .command("report <dir>")
+    .description("Show the structured report for a run directory")
+    .action(async (dir: string) => {
+      const res = await ctx.getClient().get<{ text: string }>("/api/runs/report", { dir });
+      ctx.output(res, () => {
+        console.log(res.text);
       });
-    }
+    });
 
-    if (opts.json) {
-      console.log(JSON.stringify({ checked_at: new Date().toISOString(), ok: findings.length === 0, findings }, null, 2));
-    } else if (findings.length === 0) {
-      console.log(`All clear: no problems in the last ${opts.days} day(s) (${dayString(new Date())}).`);
-    } else {
-      findings.forEach((f) => console.log(`${f.severity.toUpperCase().padEnd(5)} ${f.domain} ${f.date} [${f.code}] ${f.message}`));
-    }
-    if (findings.some((f) => f.severity === "error")) process.exitCode = 1;
-  });
+  const runLog = program.command("run-log").description("Record structured events for an automation run");
 
-travel
-  .command("next-year")
-  .description(
-    `Print the next year the nightly backfill should catalog (${BACKFILL_START_YEAR} down to ${BACKFILL_END_YEAR}), ` +
-      "or nothing once every year is done"
-  )
-  .action(async () => {
-    const year = nextBackfillYear(path.join(getConfig().getBrainRoot(), "travel"));
-    if (year !== null) console.log(year);
-  });
-
-program
-  .command("scripts")
-  .description("List scheduled automation scripts registered by each domain in config/domains.json")
-  .option("--domain <d>", "Only show scripts for this domain")
-  .action((opts: { domain?: string }) => {
-    const nodeDir = path.resolve(__dirname, "..");
-    const byDomain = opts.domain
-      ? { [opts.domain]: listDomainScripts(opts.domain, nodeDir) }
-      : listAllDomainScripts(nodeDir);
-    let total = 0;
-    for (const [domain, files] of Object.entries(byDomain)) {
-      if (files.length === 0) continue;
-      const dir = getDomainScriptsDir(domain, nodeDir);
-      const relDir = dir ? path.relative(nodeDir, dir) : "";
-      for (const f of files) {
-        console.log(`${domain}  ${path.join(relDir, f)}`);
-        total++;
+  runLog
+    .command("event <type>")
+    .description("Append an event to the active run's run.jsonl (dir from SNESTACK_RUN_DIR unless --dir is given)")
+    .option("--dir <dir>", "Run directory (default: $SNESTACK_RUN_DIR)")
+    .option("--script <name>", "run_start: the automation's name")
+    .option("--dry-run", "run_start: mark this run as a dry run")
+    .option("--step <name>", "step: what ran, e.g. data-dump or run-skill:long-term-quality")
+    .option("--subject <s>", "step: what it ran on, e.g. a ticker or year")
+    .option("--status <s>", "step: ok | failed | truncated | skipped")
+    .option("--exit-code <n>", "step: the command's exit code")
+    .option("--duration-ms <n>", "step: how long it took")
+    .option("--error-file <path>", "step: file whose last 500 bytes become the error text")
+    .action(
+      async (
+        type: string,
+        opts: {
+          dir?: string;
+          script?: string;
+          dryRun?: boolean;
+          step?: string;
+          subject?: string;
+          status?: string;
+          exitCode?: string;
+          durationMs?: string;
+          errorFile?: string;
+        }
+      ) => {
+        const res = await ctx.getClient().post("/api/runs/events", {
+          type,
+          dir: opts.dir,
+          script: opts.script,
+          dryRun: Boolean(opts.dryRun),
+          step: opts.step,
+          subject: opts.subject,
+          status: opts.status,
+          exitCode: opts.exitCode !== undefined ? parseInt(opts.exitCode, 10) : undefined,
+          durationMs: opts.durationMs !== undefined ? parseInt(opts.durationMs, 10) : undefined,
+          errorFile: opts.errorFile,
+        });
+        if (ctx.isJson()) {
+          console.log(JSON.stringify(res, null, 2));
+        }
       }
-    }
-    if (total === 0) console.log("No domain scripts registered.");
-  });
+    );
 
-program.parseAsync(process.argv).catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+  runLog
+    .command("finalize")
+    .description("Fold the run's events into run.json and print a one-line summary; exits 1 if the run failed")
+    .option("--dir <dir>", "Run directory (default: $SNESTACK_RUN_DIR)")
+    .option("--exit-code <n>", "The automation script's own exit code")
+    .action(async (opts: { dir?: string; exitCode?: string }) => {
+      try {
+        const res = await ctx.getClient().post<{
+          dir: string;
+          summaryPath: string;
+          summary: RunSummary;
+        }>("/api/runs/finalize", {
+          dir: opts.dir,
+          exitCode: opts.exitCode !== undefined ? parseInt(opts.exitCode, 10) : undefined,
+        });
+        const summary = res.summary;
+        const m = summary.model_calls;
+        console.error(
+          `Run ${summary.status}: ${summary.steps.ok}/${summary.steps.total} steps ok, ${summary.steps.failed} failed, ` +
+            `${summary.steps.truncated} truncated; ${m.count} model calls (${m.input_tokens} in / ${m.output_tokens} out tokens, ` +
+            `~${m.est_cost_usd == null ? "unknown cost" : "$" + m.est_cost_usd.toFixed(2)}` +
+            `${m.api_equivalent_usd ? `, subscription calls ~$${m.api_equivalent_usd.toFixed(2)} at API prices` : ""}` +
+            `${m.subscription_fallbacks ? `; ${m.subscription_fallbacks} call(s) fell back across subscription CLIs` : ""}` +
+            `${m.api_fallbacks ? `; WARNING ${m.api_fallbacks} call(s) fell back to the metered API` : ""}). Summary: ${res.summaryPath}`
+        );
+        if (ctx.isJson()) {
+          console.log(JSON.stringify(res, null, 2));
+        }
+        if (summary.status === "failed") process.exitCode = 1;
+      } catch (e) {
+        console.error(`run-log finalize: ${formatCliError(e)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  program
+    .command("executor-check")
+    .description(
+      "Smoke test: send one tiny prompt through the configured executor chain (SNESTACK_EXECUTOR) and print backend, model, tokens, latency"
+    )
+    .option("--tier <t>", "cheap | normal | expensive", "cheap")
+    .action(async (opts: { tier: string }) => {
+      try {
+        const res = await ctx.getClient().post<{
+          chain: string;
+          backend: string;
+          fallbackFrom: string | null;
+          model: string;
+          reply: string;
+          inputTokensUsed: number | null;
+          outputTokensUsed: number | null;
+          latencyMs: number;
+          stopReason: string | null;
+          envKeyStripped: { kind: "gemini" | "anthropic"; stripped: boolean } | null;
+        }>("/api/executor/check", { tier: opts.tier });
+        ctx.output(res, () => {
+          console.log(`chain: ${res.chain}`);
+          console.log(`backend: ${res.backend}${res.fallbackFrom ? ` (fallback from ${res.fallbackFrom})` : ""}`);
+          console.log(`model: ${res.model}`);
+          console.log(`reply: ${res.reply}`);
+          console.log(
+            `tokens: ${res.inputTokensUsed ?? "?"} in / ${res.outputTokensUsed ?? "?"} out; latency ${res.latencyMs}ms; stop ${res.stopReason ?? "?"}`
+          );
+          if (res.envKeyStripped?.kind === "gemini") {
+            console.log(
+              `Gemini API key env stripped from child: ${
+                res.envKeyStripped.stripped ? "yes (was set in this shell)" : "n/a (was not set)"
+              }`
+            );
+          } else if (res.envKeyStripped?.kind === "anthropic") {
+            console.log(
+              `Anthropic API key env stripped from child: ${
+                res.envKeyStripped.stripped ? "yes (was set in this shell)" : "n/a (was not set)"
+              }`
+            );
+          }
+        });
+      } catch (e) {
+        console.error(`executor-check failed (${getConfig().getExecutorChainDisplay()}): ${formatCliError(e)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  program
+    .command("run-check")
+    .description(
+      "Check recent automation runs for problems: missing or crashed runs, failed or truncated steps, model errors, cost spikes, and domain cache/thesis health."
+    )
+    .option("--days <n>", "How many days back to check, including today", "3")
+    .option(
+      "--cost",
+      "Instead of health findings, print a read-only cost rollup per script and per domain over 7 and 30 days"
+    )
+    .action(async (opts: { days: string; cost?: boolean }) => {
+      if (opts.cost) {
+        const res = await ctx.getClient().get<{
+          computed_at: string;
+          scripts: unknown[];
+          domains: unknown[];
+          formatted: string;
+        }>("/api/runs/stats");
+        if (ctx.isJson()) {
+          const { formatted: _f, ...jsonPayload } = res;
+          console.log(JSON.stringify(jsonPayload, null, 2));
+        } else {
+          console.log(res.formatted);
+        }
+        return;
+      }
+
+      const res = await ctx.getClient().get<{
+        checked_at: string;
+        date: string;
+        ok: boolean;
+        hasErrors: boolean;
+        findings: Finding[];
+      }>("/api/runs/check", { days: parseInt(opts.days, 10) || 3 });
+
+      if (ctx.isJson()) {
+        console.log(
+          JSON.stringify(
+            {
+              checked_at: res.checked_at,
+              ok: res.ok,
+              findings: res.findings,
+            },
+            null,
+            2
+          )
+        );
+      } else if (res.findings.length === 0) {
+        console.log(`All clear: no problems in the last ${opts.days} day(s) (${res.date}).`);
+      } else {
+        res.findings.forEach((f) =>
+          console.log(`${f.severity.toUpperCase().padEnd(5)} ${f.domain} ${f.date} [${f.code}] ${f.message}`)
+        );
+      }
+      if (res.hasErrors) process.exitCode = 1;
+    });
+
+  program
+    .command("scripts")
+    .description("List scheduled automation scripts registered by each domain in config/domains.json")
+    .option("--domain <d>", "Only show scripts for this domain")
+    .action(async (opts: { domain?: string }) => {
+      const res = await ctx.getClient().get<{
+        scripts: Array<{ domain: string; script: string; path: string }>;
+      }>("/api/scripts", { domain: opts.domain });
+      ctx.output(res, () => {
+        if (res.scripts.length === 0) {
+          console.log("No domain scripts registered.");
+          return;
+        }
+        res.scripts.forEach((s) => console.log(`${s.domain}  ${s.path}`));
+      });
+    });
+
+  // ── Mount Registered Domain CLI Surfaces ─────────────────────────────────
+
+  const domainApis = await loadAllDomainApis();
+  for (const mod of Object.values(domainApis)) {
+    if (mod.registerCli) {
+      mod.registerCli(program, ctx);
+    }
+  }
+
+  return program;
+}
+
+if (require.main === module) {
+  buildCliProgram()
+    .then((program) => program.parseAsync(process.argv))
+    .catch((e) => {
+      console.error(e);
+      process.exit(1);
+    });
+}

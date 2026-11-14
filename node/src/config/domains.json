@@ -2,15 +2,18 @@
   "financial": {
     "skillsDir": "domains/financial/skills",
     "contextToolsModule": "domains/financial/contextTools",
-    "scriptsDir": "domains/financial/scripts"
+    "scriptsDir": "domains/financial/scripts",
+    "apiModule": "domains/financial/api"
   },
   "calendar": {
     "skillsDir": "domains/calendar/skills",
-    "contextToolsModule": "domains/calendar/contextTools"
+    "contextToolsModule": "domains/calendar/contextTools",
+    "apiModule": "domains/calendar/api"
   },
   "travel": {
     "skillsDir": "domains/travel/skills",
     "contextToolsModule": "domains/travel/contextTools",
-    "scriptsDir": "domains/travel/scripts"
+    "scriptsDir": "domains/travel/scripts",
+    "apiModule": "domains/travel/api"
   }
 }
