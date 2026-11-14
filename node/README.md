@@ -33,6 +33,13 @@ npm run serve
 npm run dev -- serve --addr 127.0.0.1:4700
 npm run dev:web
 
+# Run persistently on macOS via launchd (and optionally expose privately on Tailscale):
+npm run service:install       # builds web/ + node/, loads LaunchAgent on 127.0.0.1:4700
+npm run service:status        # checks launchctl + http://127.0.0.1:4700/api/health
+npm run service:restart       # rebuilds and restarts LaunchAgent
+npm run service:tailscale     # optional: tailscale serve --bg 4700 -> https://<host>.<tailnet>.ts.net
+# (Tip: add SNESTACK_API_TOKEN=$(openssl rand -hex 32) to node/.env for Bearer auth defense-in-depth)
+
 # Inspect registered API endpoints, domains, and skills (human or --json)
 npm run dev -- routes
 npm run dev -- --json domains

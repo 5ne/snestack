@@ -31,6 +31,15 @@ cd ../node && npm run serve
 # Open http://127.0.0.1:4700
 ```
 
+To run `snestack serve` persistently on macOS (`launchd` LaunchAgent on `127.0.0.1:4700`, with optional private Tailscale HTTPS access across your devices while keeping `<brain>` on your local Mac):
+
+```bash
+cd node
+npm run service:install      # builds web/ + node/, loads ~/Library/LaunchAgents/com.snestack.server.plist
+npm run service:status       # verifies LaunchAgent + /api/health
+npm run service:tailscale    # optional: tailscale serve --bg 4700 (private tailnet HTTPS)
+```
+
 `brain/` and `reports/` (Morningstar PDFs) live outside the repo, in a shared Google Drive folder at `<SNESTACK_BRAIN_ROOT>/financial/` (default `~/Documents/personal-brain/financial/`) — not committed here; see `.gitignore`.
 
 ## Running a skill
