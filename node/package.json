@@ -34,12 +34,12 @@
     "dotenv": "^16.4.5",
     "google-auth-library": "^11.1.0",
     "js-yaml": "^5.4.2",
-    "nodemailer": "^6.9.14",
+    "nodemailer": "^10.6.0",
     "pdf-parse": "^1.1.1",
     "pg": "^8.23.1",
     "prompts": "^2.4.2",
     "winston": "^3.13.0",
-    "zod": "^3.23.8"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",
