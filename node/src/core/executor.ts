@@ -4,9 +4,22 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config, getConfig, type ExecutorBackend, type ModelTier } from "./config";
-import { ExecutorError } from "./errors";
+import { ExecutorError, type ExecutorErrorCode } from "./errors";
 import { logger } from "./logger";
 import { estimateCostUsd, logRunEvent } from "./runLog";
+
+const STICKY_DISABLE_CODES = new Set<ExecutorErrorCode>([
+  "login_expired",
+  "not_logged_in",
+  "misconfigured_auth",
+  "cli_missing",
+]);
+const disabledBackendsThisProcess = new Set<ExecutorBackend>();
+
+/** Reset per-process sticky backend disables (for unit tests). */
+export function resetDisabledBackendsForTests(): void {
+  disabledBackendsThisProcess.clear();
+}
 
 export interface ExecutorResult {
   output: string;
@@ -60,6 +73,10 @@ export async function runPrompt(
 
   for (let i = 0; i < chain.length; i++) {
     const backend = chain[i];
+    if (disabledBackendsThisProcess.has(backend) && i + 1 < chain.length) {
+      fallbackFrom = fallbackFrom ?? `${backend}:disabled`;
+      continue;
+    }
     const stepOpts: RunPromptOptions = fallbackFrom ? { ...opts, fallbackFrom } : opts;
     try {
       if (backend === "agy-cli") {
@@ -83,6 +100,10 @@ export async function runPrompt(
       const reason = `[${e.code}] ${e.message}`.slice(0, 300);
       const nextDesc = next === "api" ? "the metered API" : next;
       logger.warn(`${backend} failed, falling back to ${nextDesc}: ${reason}`);
+      if (STICKY_DISABLE_CODES.has(e.code)) {
+        disabledBackendsThisProcess.add(backend);
+        logger.warn(`Disabling ${backend} for remainder of process after [${e.code}]`);
+      }
       logRunEvent("executor_fallback", {
         label: opts.label ?? null,
         from: backend,

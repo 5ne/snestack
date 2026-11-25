@@ -14,6 +14,7 @@ import {
   buildCliEnv,
   classifyCliFailure,
   parseJsonEnvelope,
+  resetDisabledBackendsForTests,
   runPrompt,
 } from "../../src/core/executor";
 import { parseExecutorChain } from "../../src/core/config";
@@ -49,6 +50,7 @@ describe("runPrompt claude-cli backend", () => {
   let dir: string;
   const saved = { ...process.env };
   beforeEach(() => {
+    resetDisabledBackendsForTests();
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-cli-test-"));
     process.env.SNESTACK_RUN_DIR = dir;
     process.env.SNESTACK_RUN_ID = "run-cli";
@@ -239,6 +241,7 @@ describe("runPrompt agy-cli backend and fallback chains", () => {
   const saved = { ...process.env };
 
   beforeEach(() => {
+    resetDisabledBackendsForTests();
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-agy-test-"));
     fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "snestack-agy-home-"));
     process.env.HOME = fakeHome;
@@ -424,6 +427,26 @@ describe("runPrompt agy-cli backend and fallback chains", () => {
     const s = summarizeRun(events);
     expect(s.model_calls.api_fallbacks).toBe(1);
     expect(s.model_calls.est_cost_usd).toBeGreaterThan(0);
+  });
+
+  it("disables a backend for the remainder of the process after login_expired", async () => {
+    process.env.SNESTACK_EXECUTOR = "agy-cli>claude-cli>fail";
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-test";
+    const agyCountFile = path.join(dir, "agy-calls.txt");
+    process.env.SNESTACK_AGY_BIN = fakeAgy(
+      dir,
+      `cat >/dev/null; echo x >> '${agyCountFile}'; echo 'Error: authentication required. Run agy to log in.' >&2; exit 1`
+    );
+    process.env.SNESTACK_CLAUDE_BIN = fakeClaude(dir, `cat >/dev/null; echo '${OK_JSON}'`);
+
+    const r1 = await runPrompt("", "sys", "user", { label: "call-1" });
+    const r2 = await runPrompt("", "sys", "user", { label: "call-2" });
+
+    expect(r1.backend).toBe("claude-cli");
+    expect(r1.fallbackFrom).toBe("agy-cli:login_expired");
+    expect(r2.backend).toBe("claude-cli");
+    expect(r2.fallbackFrom).toBe("agy-cli:disabled");
+    expect(fs.readFileSync(agyCountFile, "utf8").trim().split("\n")).toHaveLength(1);
   });
 });
 
