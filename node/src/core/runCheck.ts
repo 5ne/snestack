@@ -154,7 +154,9 @@ function findingsForSummary(
       message: `${labelSuffix}The Anthropic API account is out of credit; the run stopped. Add credit; the next run picks the work up.`,
     });
   }
-  const otherErrors = Math.max(0, summary.model_calls.errors - usageLimit - exhausted - Math.max(0, rescuedFallbacks - usageLimit));
+  // Only usage_limit errors are expected to be silently absorbed by a subscription fallback;
+  // auth/missing-CLI errors (e.g. login_expired) still surface as model_errors warnings.
+  const otherErrors = Math.max(0, summary.model_calls.errors - usageLimit - exhausted);
   if (otherErrors > 0) {
     findings.push({
       severity: "warn",

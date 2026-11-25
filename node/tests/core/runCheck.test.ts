@@ -183,6 +183,27 @@ describe("evaluateRuns", () => {
     expect(codes).toEqual(expect.arrayContaining(["degraded", "model_errors"]));
   });
 
+  it("still warns on non-usage-limit model errors even when a subscription fallback rescued the call", () => {
+    writeRun(
+      "2026-10-07",
+      summary({
+        model_calls: {
+          count: 2,
+          errors: 1,
+          truncated: 0,
+          input_tokens: 1,
+          output_tokens: 1,
+          max_latency_ms: 1,
+          est_cost_usd: 0,
+          subscription_fallbacks: 1,
+          by_model: {},
+        },
+      })
+    );
+    const findings = evaluateRuns({ now, days: 1, expectations: [expectation()] });
+    expect(findings.map((f) => f.code)).toContain("model_errors");
+  });
+
   it("warns when cost is more than 2x the median of earlier runs", () => {
     ["2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06"].forEach((d) => writeRun(d, summary()));
     writeRun("2026-10-07", summary({ model_calls: { ...summary().model_calls, est_cost_usd: 1.5 } }));

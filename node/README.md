@@ -77,6 +77,16 @@ Four cron jobs together make up the split-cadence financial pipeline (`npm run b
 | `src/domains/financial/scripts/daily-analysis.sh` | 2:30pm PT, nightly, after `data-refresh-daily.sh` | `long-term-quality` skill for every ticker, email + signal history |
 | `src/domains/financial/scripts/swing-check.sh` | hourly, 7am-1pm PT (market hours) | `swing-trading-large-cap` skill for every ticker, its own email + signal history |
 
+**macOS `launchd` (recommended when using `agy-cli`):** macOS `cron` cannot access the login Keychain where `agy` stores its OAuth token. Install user LaunchAgents instead so scheduled runs execute in your GUI session:
+
+```bash
+cd <repo>/node
+npm run schedule:install   # installs com.snestack.financial.* in ~/Library/LaunchAgents
+npm run schedule:status    # verify loaded agents
+```
+
+**Linux / generic `cron`:**
+
 ```cron
 # crontab -e  (adjust the <repo> path; times are Pacific/local as described above)
 # (Thin exec shims also remain in ./scripts/*.sh for backwards compatibility.)
