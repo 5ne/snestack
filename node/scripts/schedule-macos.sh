@@ -13,7 +13,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-LOG_DIR="${SNESTACK_SCHEDULE_LOG_DIR:-$NODE_DIR/logs}"
+# Keep logs and WorkingDirectory outside TCC-protected folders (like ~/Documents)
+# because launchd's pre-exec xpcproxy opens StandardOutPath and chdirs before exec'ing /bin/bash.
+LOG_DIR="${SNESTACK_SCHEDULE_LOG_DIR:-$HOME/Library/Logs/snestack}"
 PLIST_DIR="${SNESTACK_PLIST_DIR:-$HOME/Library/LaunchAgents}"
 PREFIX="${SNESTACK_SCHEDULE_PREFIX:-com.snestack.financial}"
 
@@ -102,7 +104,7 @@ emit_schedule_intervals() {
 generate_plist() {
   local job="$1"
   local label="${PREFIX}.${job}"
-  local script_rel="./src/domains/financial/scripts/${job}.sh"
+  local script_abs="${NODE_DIR}/src/domains/financial/scripts/${job}.sh"
   local log_file="${LOG_DIR}/${job}.cron.log"
   local service_path
   service_path="$(resolve_service_path)"
@@ -117,12 +119,14 @@ generate_plist() {
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>$(xml_escape "$script_rel")</string>
+    <string>$(xml_escape "$script_abs")</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>$(xml_escape "$NODE_DIR")</string>
+  <string>$(xml_escape "$HOME")</string>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>HOME</key>
+    <string>$(xml_escape "$HOME")</string>
     <key>PATH</key>
     <string>$(xml_escape "$service_path")</string>
   </dict>
@@ -174,8 +178,9 @@ case "$CMD" in
     for job in "${JOBS[@]}"; do
       label="${PREFIX}.${job}"
       plist_path="${PLIST_DIR}/${label}.plist"
-      if launchctl print "gui/${uid}/${label}" >/dev/null 2>&1; then
-        echo "${label}: LOADED (${plist_path})"
+      if info="$(launchctl print "gui/${uid}/${label}" 2>/dev/null)"; then
+        last_exit="$(printf '%s\n' "$info" | sed -n 's/^[[:space:]]*last exit code = //p' | head -n 1)"
+        echo "${label}: LOADED (last exit: ${last_exit:-unknown}, log: ${LOG_DIR}/${job}.cron.log, plist: ${plist_path})"
       else
         echo "${label}: NOT LOADED"
       fi
