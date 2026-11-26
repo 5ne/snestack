@@ -13,6 +13,8 @@ import {
   buildAgyEnv,
   buildCliEnv,
   classifyCliFailure,
+  MAX_AGY_INLINE_PROMPT_BYTES,
+  parseAgyJsonEnvelope,
   parseJsonEnvelope,
   resetDisabledBackendsForTests,
   runPrompt,
@@ -300,14 +302,15 @@ describe("runPrompt agy-cli backend and fallback chains", () => {
     expect(r.output).toBe("clean text reply");
   });
 
-  it("strips GEMINI_API_KEY and GOOGLE_API_KEY, appends ~/.local/bin to PATH, and passes safe flags", async () => {
+  it("strips GEMINI_API_KEY and GOOGLE_API_KEY, appends ~/.local/bin to PATH, and passes full prompt via -p (never relying on stdin)", async () => {
     process.env.GEMINI_API_KEY = "AIza-secret-1";
     process.env.GOOGLE_API_KEY = "AIza-secret-2";
     const envOut = path.join(dir, "agy-env.txt");
     const argsOut = path.join(dir, "agy-args.txt");
+    const stdinOut = path.join(dir, "agy-stdin.txt");
     process.env.SNESTACK_AGY_BIN = fakeAgy(
       dir,
-      `echo "$@" > '${argsOut}'; cat >> '${argsOut}'; env > '${envOut}'; printf '%s\\n' '${AGY_OK_JSON}'`
+      `printf '%s\\n' "$@" > '${argsOut}'; cat > '${stdinOut}'; env > '${envOut}'; printf '%s\\n' '${AGY_OK_JSON}'`
     );
 
     await runPrompt("", "sys-instruction", "the-user-payload");
@@ -316,13 +319,47 @@ describe("runPrompt agy-cli backend and fallback chains", () => {
     expect(seenEnv).toContain(path.join(fakeHome, ".local", "bin"));
 
     const seenArgs = fs.readFileSync(argsOut, "utf8");
-    expect(seenArgs).toContain("-p sys-instruction --output-format json --disable-slash-commands --sandbox");
+    expect(seenArgs).toContain("-p");
+    expect(seenArgs).toContain("sys-instruction");
     expect(seenArgs).toContain("the-user-payload");
+    expect(seenArgs).toContain("--output-format\njson\n--disable-slash-commands\n--sandbox");
+    expect(fs.readFileSync(stdinOut, "utf8")).toBe("");
 
     const built = buildAgyEnv({ GEMINI_API_KEY: "x", GOOGLE_API_KEY: "y", HOME: "/Users/test", PATH: "/usr/bin" });
     expect(built.GEMINI_API_KEY).toBeUndefined();
     expect(built.GOOGLE_API_KEY).toBeUndefined();
     expect(built.PATH).toBe("/usr/bin:/Users/test/.local/bin");
+  });
+
+  it("switches to --input-format stream-json over stdin when prompt exceeds MAX_AGY_INLINE_PROMPT_BYTES", async () => {
+    const argsOut = path.join(dir, "agy-large-args.txt");
+    const stdinOut = path.join(dir, "agy-large-stdin.txt");
+    const streamOut = [
+      JSON.stringify({ event: "init", conversation_id: "conv-stream" }),
+      JSON.stringify({ event: "result", result: JSON.parse(AGY_OK_JSON) }),
+    ].join("\n");
+    process.env.SNESTACK_AGY_BIN = fakeAgy(
+      dir,
+      `printf '%s\\n' "$@" > '${argsOut}'; cat > '${stdinOut}'; printf '%s\\n' '${streamOut}'`
+    );
+
+    const largeUser = "X".repeat(MAX_AGY_INLINE_PROMPT_BYTES + 1024);
+    const r = await runPrompt("", "sys-large", largeUser);
+    expect(r.output).toBe("agy answer\nVERDICT: BUY | 0.85 | intact moat");
+    expect(r.inputTokensUsed).toBe(1000);
+
+    const seenArgs = fs.readFileSync(argsOut, "utf8");
+    expect(seenArgs).toContain("--input-format\nstream-json\n--output-format\nstream-json");
+    expect(seenArgs).not.toMatch(/^-p$/m);
+
+    const stdinLine = JSON.parse(fs.readFileSync(stdinOut, "utf8").trim()) as {
+      event: string;
+      message: { content: string };
+    };
+    expect(stdinLine.event).toBe("user");
+    expect(stdinLine.message.content).toContain("sys-large");
+    expect(stdinLine.message.content).toContain(largeUser.slice(0, 64));
+    expect(parseAgyJsonEnvelope(streamOut)).toMatchObject({ status: "SUCCESS" });
   });
 
   it("refuses to run if settings.json forces modelProvider=gemini or HOME is missing", async () => {

@@ -11,8 +11,14 @@ describe("parseVerdict", () => {
   it("takes the last verdict line when several appear", () => {
     expect(parseVerdict("VERDICT: BUY | 0.9 | first\ntext\nVERDICT: SELL | 0.4 | second")?.label).toBe("SELL");
   });
-  it("tolerates bold markers and lowercase labels", () => {
+  it("tolerates bold markers, backticks, and lowercase labels", () => {
     expect(parseVerdict("**VERDICT:** buy | 0.7 | oversold **")?.label).toBe("BUY");
+    expect(parseVerdict("`VERDICT: HOLD | 0.75 | steady compounder`")).toEqual({
+      label: "HOLD",
+      confidence: 0.75,
+      reasoning: "steady compounder",
+    });
+    expect(parseVerdict("**VERDICT: SELL** | 0.80 | moat impaired")?.label).toBe("SELL");
   });
   it("accepts a bare decimal and a trailing newline", () => {
     expect(parseVerdict("VERDICT: NONE | .5 | not eligible\n")?.confidence).toBe(0.5);
