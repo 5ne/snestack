@@ -52,13 +52,13 @@ WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 cd "$WORKDIR"
 
-ARGS=(-p "Respond directly and concisely to the prompt provided on stdin." --output-format json --disable-slash-commands --sandbox)
+ARGS=(-p "$PROMPT" --output-format json --disable-slash-commands --sandbox)
 [ -n "$MODEL_ID" ] && ARGS+=(--model "$MODEL_ID")
 
 echo "model: ${MODEL_ID:-agy-default}  (auth: Google AI Pro/Ultra OAuth, Gemini API keys stripped)" >&2
 START=$(date +%s)
 set +e
-OUT="$(printf '%s' "$PROMPT" | "$AGY_BIN" "${ARGS[@]}" 2>"$WORKDIR/err")"
+OUT="$("$AGY_BIN" "${ARGS[@]}" </dev/null 2>"$WORKDIR/err")"
 CODE=$?
 set -e
 ELAPSED=$(( $(date +%s) - START ))

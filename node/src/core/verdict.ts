@@ -14,7 +14,7 @@ export interface Verdict {
   reasoning: string;
 }
 
-const VERDICT_LINE = /^\s*\**VERDICT:\**\s*([A-Za-z_-]+)\s*\|\s*([0-9]*\.?[0-9]+)\s*\|\s*(.+?)\s*$/gm;
+const VERDICT_LINE = /^\s*[*`]*VERDICT:[*`]*\s*[*`]*([A-Za-z_-]+)[*`]*\s*\|\s*[*`]*([0-9]*\.?[0-9]+)[*`]*\s*\|\s*(.+?)\s*$/gm;
 
 /** The last well-formed VERDICT line in `output`, or null. */
 export function parseVerdict(output: string): Verdict | null {
@@ -22,7 +22,7 @@ export function parseVerdict(output: string): Verdict | null {
   for (const m of output.matchAll(VERDICT_LINE)) {
     const confidence = parseFloat(m[2]);
     if (!isFinite(confidence) || confidence < 0 || confidence > 1) continue;
-    found = { label: m[1].toUpperCase(), confidence, reasoning: m[3].replace(/\*+$/, "").trim() };
+    found = { label: m[1].toUpperCase(), confidence, reasoning: m[3].replace(/[*`]+$/, "").trim() };
   }
   return found;
 }

@@ -329,6 +329,24 @@ export function parseJsonEnvelope(rawStdout: string): Record<string, unknown> | 
 // agy-cli backend (Google Antigravity CLI on Google AI Pro / Ultra OAuth)
 // ---------------------------------------------------------------------------
 
+// Max UTF-8 byte size passed directly via `agy -p <prompt>`; larger prompts stream as NDJSON on stdin.
+export const MAX_AGY_INLINE_PROMPT_BYTES = 128_000;
+
+const AGY_NO_TOOLS_INSTRUCTION =
+  "Do not call any tools or inspect the workspace; all required inputs and reference files are already provided inline below.";
+
+/**
+ * Unwrap an `agy` JSON stdout payload: supports both `--output-format json` (single JSON envelope)
+ * and `--output-format stream-json` (NDJSON ending with `{"event":"result","result":{...}}`).
+ */
+export function parseAgyJsonEnvelope(rawStdout: string): Record<string, unknown> | null {
+  const parsed = parseJsonEnvelope(rawStdout);
+  if (parsed && parsed.event === "result" && parsed.result && typeof parsed.result === "object" && !Array.isArray(parsed.result)) {
+    return parsed.result as Record<string, unknown>;
+  }
+  return parsed;
+}
+
 // One agy call at a time per process, avoiding rate-window bursts during ticker loops.
 let agyQueue: Promise<unknown> = Promise.resolve();
 function serializeAgy<T>(fn: () => Promise<T>): Promise<T> {
@@ -411,20 +429,24 @@ export function runPromptAgy(
       const outputFormat = (process.env.SNESTACK_AGY_OUTPUT_FORMAT ?? "json").trim().toLowerCase();
       const extra = (process.env.SNESTACK_AGY_EXTRA_ARGS ?? "").split(/\s+/).filter(Boolean);
 
-      // Keep -p argument well below OS ARG_MAX by piping large payloads over stdin.
-      const inlineSystem = systemPrompt.trim().length > 0 && systemPrompt.length <= 4000;
-      const promptArg = inlineSystem
-        ? systemPrompt
-        : "Follow the system instructions and respond to the user prompt provided on stdin.";
-      const stdinPayload = inlineSystem
-        ? userPrompt
-        : [systemPrompt.trim() ? `SYSTEM INSTRUCTIONS:\n${systemPrompt.trim()}\n` : "", userPrompt].filter(Boolean).join("\n");
+      // `agy -p <prompt>` ignores stdin completely, so pass the combined system + user prompt
+      // directly to `-p` for normal payloads, and switch to `agy --input-format stream-json
+      // --output-format stream-json` (which reads NDJSON from stdin without `-p`) for large prompts.
+      const systemBlock = systemPrompt.trim()
+        ? `SYSTEM INSTRUCTIONS:\n${systemPrompt.trim()}\n${AGY_NO_TOOLS_INSTRUCTION}\n`
+        : "";
+      const combinedPrompt = [systemBlock, userPrompt].filter(Boolean).join("\n");
+      const useStreamJsonStdin =
+        outputFormat !== "text" && Buffer.byteLength(combinedPrompt, "utf8") > MAX_AGY_INLINE_PROMPT_BYTES;
+      const stdinPayload = useStreamJsonStdin
+        ? `${JSON.stringify({ event: "user", message: { content: combinedPrompt } })}\n`
+        : "";
 
       const args = [
-        "-p",
-        promptArg,
+        ...(useStreamJsonStdin
+          ? ["--input-format", "stream-json", "--output-format", "stream-json"]
+          : ["-p", combinedPrompt, ...(outputFormat === "text" ? [] : ["--output-format", "json"])]),
         ...(configuredModel ? ["--model", configuredModel] : []),
-        ...(outputFormat === "text" ? [] : ["--output-format", "json"]),
         "--disable-slash-commands",
         "--sandbox",
         ...extra,
@@ -482,7 +504,7 @@ export function runPromptAgy(
         };
       }
 
-      const parsed = parseJsonEnvelope(run.stdout);
+      const parsed = parseAgyJsonEnvelope(run.stdout);
       const statusStr = typeof parsed?.status === "string" ? parsed.status.toUpperCase() : null;
       const statusFailed = statusStr !== null && !["SUCCESS", "OK", "DONE", "COMPLETED"].includes(statusStr);
       const hasErrorField = typeof parsed?.error === "string" && parsed.error.trim().length > 0;
